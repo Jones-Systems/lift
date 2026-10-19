@@ -1,0 +1,6 @@
+{
+  "group": "wearable-direct-connections",
+  "covers": ["pending private original-session binding and explicit consent", "pending nonimportability", "scoped immutable preparation receipts", "existing-writer committed-code activation", "same-database rollback with synthetic vault metadata", "rotation replay and currentness", "disconnect fences and receipt tombstones", "public/export privacy", "HealthKit compatibility"],
+  "tests": ["services/api/tests/wearables/direct-connections/direct-connections.test.mjs"],
+  "affectedExistingTests": ["services/api/tests/wearables/ingestion.test.mjs", "services/api/tests/wearables/providers.test.mjs", "services/api/tests/wearables/suggestions.test.mjs", "services/api/tests/wearables/persistence/persistence.test.mjs", "services/api/tests/wearables/persistence/checkpoint.test.mjs"]
+}
