@@ -1,0 +1,76 @@
+name: Lift native E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full lift commit SHA to test (40 lowercase hexadecimal characters)
+        required: false
+        type: string
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lift-ios-e2e-${{ github.event_name }}-${{ inputs.source_sha || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native-e2e:
+    name: Synthetic installed-app journeys
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: xcode-27
+    timeout-minutes: 80
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      CI: '1'
+      EXPO_NO_TELEMETRY: '1'
+      EXPO_NO_DOTENV: '1'
+      MAESTRO_CLI_NO_ANALYTICS: '1'
+      MAESTRO_DISABLE_UPDATE_CHECK: 'true'
+    steps:
+      - name: Validate source identity
+        shell: bash
+        run: |
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          path: tooling
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Select runner Java 17
+        shell: bash
+        run: |
+          test -n "$JAVA_HOME_17_arm64"
+          test -x "$JAVA_HOME_17_arm64/bin/java"
+          "$JAVA_HOME_17_arm64/bin/java" -version
+          echo "JAVA_HOME=$JAVA_HOME_17_arm64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_arm64/bin" >> "$GITHUB_PATH"
+      - name: Check portable simulator contracts
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          python3 tooling/apps/form/scripts/ci-ios-simulator.test.py
+          python3 tooling/apps/form/scripts/ios_e2e.test.py
+      - name: Build once and run native journeys
+        timeout-minutes: 75
+        run: python3 tooling/apps/form/scripts/ci-ios-simulator.py --mode e2e --source source --output evidence --scratch-parent "$GITHUB_WORKSPACE" --sha "$SOURCE_SHA"
+      - name: Retain app and same-run journey evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: lift-ios-e2e-${{ env.SOURCE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0

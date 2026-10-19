@@ -1,0 +1,107 @@
+appId: com.jonessystems.form.private
+name: 06-settings
+---
+- runFlow: helpers/ensure-home.yaml
+- tapOn:
+    id: a-account-entry
+- extendedWaitUntil:
+    visible:
+      id: screen-settings
+    timeout: 30000
+- tapOn:
+    id: a-mode-advanced
+- assertVisible:
+    id: a-mode-advanced
+    checked: true
+- tapOn:
+    id: a-mode-basic
+- assertVisible:
+    id: a-mode-basic
+    checked: true
+- scrollUntilVisible:
+    element:
+      id: a-row-name
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- assertVisible: "${E2E_EXPECTED_NAME}"
+- tapOn:
+    id: a-row-name
+- extendedWaitUntil:
+    visible:
+      id: screen-account
+    timeout: 30000
+- tapOn:
+    id: a-back
+- extendedWaitUntil:
+    visible:
+      id: screen-settings
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: a-unit-load
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn: "${E2E_EXPECTED_LOAD_UNIT}"
+- assertVisible:
+    text: "${E2E_EXPECTED_LOAD_UNIT}"
+    checked: true
+- scrollUntilVisible:
+    element:
+      id: a-row-privacy
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: a-row-privacy
+- extendedWaitUntil:
+    visible:
+      id: screen-settings-privacy
+    timeout: 30000
+- assertVisible:
+    id: a-privacy-title
+- tapOn:
+    id: a-back
+- stopApp
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible:
+      id: screen-today
+    timeout: 30000
+- tapOn:
+    id: a-account-entry
+- extendedWaitUntil:
+    visible:
+      id: screen-settings
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: a-row-name
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- assertVisible: "${E2E_EXPECTED_NAME}"
+- scrollUntilVisible:
+    element:
+      id: a-unit-load
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- assertVisible:
+    text: "${E2E_EXPECTED_LOAD_UNIT}"
+    checked: true
+- takeScreenshot: 06-settings
+- scrollUntilVisible:
+    element:
+      id: a-back
+    direction: UP
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: a-back
+- extendedWaitUntil:
+    visible:
+      id: screen-today
+    timeout: 30000

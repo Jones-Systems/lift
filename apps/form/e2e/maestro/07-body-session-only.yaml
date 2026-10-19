@@ -1,0 +1,77 @@
+appId: com.jonessystems.form.private
+name: 07-body-session-only
+---
+- runFlow: helpers/ensure-home.yaml
+- scrollUntilVisible:
+    element:
+      id: a-entry-body
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: a-entry-body
+- runFlow: helpers/body-setup.yaml
+- runFlow: helpers/body-measurement.yaml
+- takeScreenshot: 07-body-session-only-results
+- tapOn:
+    id: body-done
+- extendedWaitUntil:
+    visible:
+      id: screen-today
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: a-entry-body
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: a-entry-body
+- runFlow: helpers/body-setup.yaml
+- assertNotVisible:
+    id: "body-added-.+"
+- assertNotVisible: "170.0 cm"
+- runFlow: helpers/body-measurement.yaml
+- pressKey: Home
+- launchApp:
+    stopApp: false
+- extendedWaitUntil:
+    visible:
+      id: body-overview
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: body-cleared
+    timeout: 30000
+- assertNotVisible:
+    id: "body-result-.+"
+- assertNotVisible: "170.0 cm"
+- takeScreenshot: 07-body-session-only-background
+- runFlow: helpers/body-setup.yaml
+- runFlow: helpers/body-measurement.yaml
+- stopApp
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible:
+      id: screen-today
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: a-entry-body
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: a-entry-body
+- runFlow: helpers/body-setup.yaml
+- assertNotVisible:
+    id: "body-added-.+"
+- assertNotVisible: "170.0 cm"
+- takeScreenshot: 07-body-session-only
+- tapOn:
+    id: a-footer-secondary
+- extendedWaitUntil:
+    visible:
+      id: screen-today
+    timeout: 30000

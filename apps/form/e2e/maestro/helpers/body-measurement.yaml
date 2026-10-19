@@ -1,0 +1,52 @@
+appId: com.jonessystems.form.private
+---
+- extendedWaitUntil:
+    visible:
+      id: body-measure
+    timeout: 30000
+- tapOn:
+    id: body-construct-stature
+- scrollUntilVisible:
+    element:
+      id: body-value-input
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: body-value-input
+- inputText: "170"
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: body-by-self
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: body-by-self
+- scrollUntilVisible:
+    element:
+      id: body-tool-tape
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: body-tool-tape
+- tapOn:
+    id: body-measure-commit
+- scrollUntilVisible:
+    element:
+      id: body-added-stature:none
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- assertVisible: "170.0 cm"
+- tapOn:
+    id: a-footer-secondary
+- extendedWaitUntil:
+    visible:
+      id: body-results
+    timeout: 30000
+- assertVisible:
+    id: "body-result-stature:none"
+- assertVisible: "170.0 cm"

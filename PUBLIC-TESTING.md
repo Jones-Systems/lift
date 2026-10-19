@@ -33,10 +33,12 @@ contract also needs Node 24, without installed npm dependencies.
 | `form196` | API board `correction`, `board`, `persistence-races`; APP feature-board `controller` | Board correction and controller state, persistence and race regressions |
 | `form203` | APP API `community-group-role-controller`; community matching `controller` | Community role and matching controller regressions |
 | `form208` | API voice `standard-wire`, `turn-controller`; usage `standard-observation`, `standard-composition`, `live-composition`; APP Standard `wire-codec` | Wire bounds and app/API interoperability, turn and synthetic usage accounting |
-| `simulator-portable` | `python3 -B scripts/ci-ios-simulator.test.py` in `apps/form` | Portable build-driver lifecycle/diagnostic checks, without native compilation |
+| `simulator-portable` | `python3 -B scripts/ci-ios-simulator.test.py`; `python3 -B scripts/ios_e2e.test.py` in `apps/form` | Portable build-driver and E2E helper lifecycle, evidence and diagnostic checks, without native compilation |
+| `native-e2e-backend` | API `tests/e2e/native-backend.test.ts` after compilation | Real local no-Origin authentication, allowlist, onboarding, deterministic legacy first plan, persisted workout/profile state, session revocation and owned-backend cleanup |
+| `native-e2e-app` | APP integration `account-switch-session`, `settings-mode-http`, `manual-progress-session`, `runtime-lifecycle-composition` | Existing app authentication, settings and manual-session lifecycle regressions affected by the native journeys |
 
-To run a group, use `--group GROUP_ID` (repeatable). Board and Standard interop
-groups automatically include `api-compile` first: workers and app tests load
+To run a group, use `--group GROUP_ID` (repeatable). Board, Standard interop and
+both native E2E groups automatically include `api-compile` first: workers and app tests load
 fresh emitted JavaScript. Tests execute serially; intentional worker races
 remain intact. The exact argv and selected source paths are available through
 `--list` and each run's receipt. API source tests use the existing integration
@@ -81,6 +83,27 @@ It does not invoke blanket API `npm test`, the full app runner, research
 projection/grounding/catalog qualification, website or adapter suites. Those
 existing tests remain unchanged, and full private Form qualification still
 belongs in the canonical private repository. This contract provides no live
-provider, authenticated product, medical, deployment, native build or visual
-acceptance claim. Native simulator compilation and launch evidence are
-separately provided by `Lift iOS simulator` and described in `BUILD.md`.
+provider, medical, deployment, native build or visual acceptance claim. The
+native backend group proves synthetic local HTTP behavior, not installed-app
+interaction. Native simulator compilation and launch evidence are separately
+provided by `Lift iOS simulator`; installed-app synthetic journeys are provided
+by the additional E2E workflow described in `BUILD.md`.
+
+The E2E backend is test-only and starts the real API server with its real SQLite
+migrations, catalog and allowlisted `synthetic.invalid` email. Its sole product
+substitution is deterministic first-plan preparation: `Native E2E plan`, one
+`goblet-squat` catalog item, two numeric set targets. It does not qualify exercise
+prescriptions or private source material. It requires a fresh database root,
+binds API and control listeners only on `127.0.0.1`, and publishes an atomic ready
+file outside that root only after both listeners bind. Tests select random
+ports; native builds use the journey contract's fixed ports and fail on collision.
+
+The separate control listener requires the random `E2E_CONTROL_TOKEN` from the
+child environment on every request. It can revoke only the allowlisted user's
+sessions or assert final persisted state. Acceptance requires completed
+onboarding, the saved legacy plan, one completed workout with one genuinely
+edited confirmed set and one voided set, and the expected profile name/load
+unit. Responses expose only aggregate counts; neither token nor password is
+logged. Handled SIGINT/SIGTERM closes both listeners and storage before removing
+the exact owned database root; the ready file remains available as evidence.
+Startup failures also clean owned state without adopting preexisting roots.

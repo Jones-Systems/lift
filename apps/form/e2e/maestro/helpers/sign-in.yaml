@@ -1,0 +1,42 @@
+appId: com.jonessystems.form.private
+---
+- extendedWaitUntil:
+    visible:
+      id: screen-sign-in
+    timeout: 30000
+- runFlow: open-email.yaml
+- scrollUntilVisible:
+    element:
+      id: a-email-field-input
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: a-email-field-input
+- eraseText
+- inputText: "${E2E_EMAIL}"
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: a-password-field-input
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: a-password-field-input
+- eraseText
+- inputText: "${E2E_PASSWORD}"
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: a-email-submit
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: a-email-submit
+- runFlow: password-prompt.yaml
+- extendedWaitUntil:
+    visible:
+      id: screen-today
+    timeout: 30000

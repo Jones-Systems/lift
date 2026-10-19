@@ -1,0 +1,37 @@
+appId: com.jonessystems.form.private
+name: 04-restore-signout
+---
+- runFlow: helpers/ensure-home.yaml
+- stopApp
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible:
+      id: screen-today
+    timeout: 30000
+- tapOn:
+    id: a-account-entry
+- extendedWaitUntil:
+    visible:
+      id: screen-settings
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: a-sign-out
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: a-sign-out
+- extendedWaitUntil:
+    visible:
+      id: a-signout-sheet
+    timeout: 30000
+- tapOn:
+    id: a-signout-confirm
+- extendedWaitUntil:
+    visible:
+      id: screen-sign-in
+    timeout: 30000
+- runFlow: helpers/sign-in.yaml
+- takeScreenshot: 04-restore-signout

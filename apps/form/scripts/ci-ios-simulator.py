@@ -5,6 +5,7 @@ import argparse
 from collections import deque
 from contextlib import contextmanager
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -19,6 +20,12 @@ import time
 import urllib.request
 
 
+helper_spec = importlib.util.spec_from_file_location('ios_e2e', Path(__file__).with_name('ios_e2e.py'))
+e2e = importlib.util.module_from_spec(helper_spec)
+helper_spec.loader.exec_module(e2e)
+CANCELLED = False
+
+
 @contextmanager
 def owned_scratch(parent, manifest):
     path = Path(tempfile.mkdtemp(prefix='form-ios-', dir=parent))
@@ -27,6 +34,9 @@ def owned_scratch(parent, manifest):
         yield path
     finally:
         original_error = sys.exc_info()[0] is not None
+        if CANCELLED:
+            for sig in e2e.SIGNALS:
+                signal.signal(sig, signal.SIG_IGN)
         try:
             shutil.rmtree(path)
         except OSError as exc:
@@ -54,13 +64,25 @@ def run(command, *, cwd, env, log, timeout=None, check=True):
         try:
             status = process.wait(timeout=timeout)
         except BaseException:
-            if process.poll() is None:
-                os.killpg(process.pid, signal.SIGTERM)
+            if CANCELLED:
+                for sig in e2e.SIGNALS:
+                    signal.signal(sig, signal.SIG_IGN)
             try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
+                if process.poll() is None:
+                    try:
+                        os.killpg(process.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                try:
+                    process.wait(timeout=1 if CANCELLED else 10)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait(timeout=0.3 if CANCELLED else 2)
+            except (OSError, subprocess.TimeoutExpired) as cleanup_error:
+                stream.write('Child cleanup error: ' + str(cleanup_error) + '\n')
             raise
         if status and check:
             stream.flush()
@@ -254,10 +276,13 @@ def check_launch(*, device, bundle_id, pid, launch_epoch, built, cwd, env, outpu
 
 
 def interrupted(signum, _frame):
+    global CANCELLED
+    CANCELLED = True
     raise SystemExit(128 + signum)
 
 
 def build(args):
+    mode = getattr(args, 'mode', 'launch')
     source = Path(args.source).resolve()
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -265,6 +290,7 @@ def build(args):
                 'status': 'failed', 'stage': 'identity', 'configuration': 'Release',
                 'scheme': 'Form', 'architecture': 'arm64', 'signing': 'disabled',
                 'api_url': 'http://127.0.0.1:9', 'authenticated_acceptance': False,
+                'mode': mode,
                 'run_id': os.environ.get('GITHUB_RUN_ID'),
                 'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
                 'runner_image': os.environ.get('ImageOS'),
@@ -281,6 +307,10 @@ def build(args):
             raise ValueError('source checkout must be clean')
         if sys.platform != 'darwin' or capture(['uname', '-m'], cwd=source, env=env) != 'arm64':
             raise RuntimeError('requires an arm64 macOS runner')
+        if mode == 'e2e':
+            contract = e2e.load_contract(source / 'apps/form/e2e/journeys.json')
+            manifest.update(api_url=contract['api_origin'],
+                            acceptance_scope='synthetic local API and seven installed-app journeys; no private corpus or external providers')
         manifest['xcode'] = capture(['xcodebuild', '-version'], cwd=source, env=env)
         if manifest['xcode'] != 'Xcode 27.0\nBuild version 27A266a':
             raise RuntimeError('unexpected Xcode toolchain; requalify the image')
@@ -295,7 +325,7 @@ def build(args):
                        CP_CACHE_DIR=str(scratch / 'cocoapods-cache'),
                        COCOAPODS_DISABLE_STATS='true',
                        EXPO_NO_DOTENV='1', EXPO_NO_TELEMETRY='1', CI='1',
-                       EXPO_PUBLIC_FORM_API_URL='http://127.0.0.1:9')
+                       EXPO_PUBLIC_FORM_API_URL=manifest['api_url'])
             archive = scratch / 'source.tar'
             subprocess.run(['git', 'archive', '--format=tar', '-o', str(archive), args.sha],
                            cwd=source, check=True)
@@ -304,6 +334,11 @@ def build(args):
             with tarfile.open(archive) as package:
                 package.extractall(tree, filter='data')
             app = tree / 'apps/form'
+            if mode == 'e2e':
+                manifest['stage'] = 'api-install'
+                manifest['api_package_lock_sha256'] = sha256(tree / 'services/api/package-lock.json')
+                run(['npm', 'ci', '--no-audit', '--no-fund'], cwd=tree / 'services/api',
+                    env=env, log=output / 'api-install.log')
             manifest['stage'] = 'install'
             run(['npm', 'ci', '--no-audit', '--no-fund'], cwd=app, env=env, log=output / 'install.log')
             autolinking = capture(['node', 'node_modules/expo-modules-autolinking/bin/expo-modules-autolinking.js',
@@ -344,7 +379,7 @@ def build(args):
             manifest['embedded_js_sha256'] = sha256(bundle)
             manifest['executable_sha256'] = sha256(built / 'Form')
             manifest['stage'] = 'package'
-            zipped = output / 'Form-simulator-arm64.zip'
+            zipped = output / ('Form-e2e-simulator-arm64.zip' if mode == 'e2e' else 'Form-simulator-arm64.zip')
             run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(built), str(zipped)],
                 cwd=app, env=env, log=output / 'package.log')
             manifest['archive_sha256'] = sha256(zipped)
@@ -357,34 +392,47 @@ def build(args):
             for command in [['boot', device], ['bootstatus', device, '-b'],
                             ['install', device, str(built)]]:
                 run(['xcrun', 'simctl', *command], cwd=app, env=env, log=output / 'simulator.log')
-            manifest['stage'] = 'launch'
-            bundle_id = 'com.jonessystems.form.private'
-            launch_epoch = time.time()
-            manifest['launch_started_epoch'] = launch_epoch
-            launched = capture(['xcrun', 'simctl', 'launch', device, bundle_id], cwd=app, env=env)
-            (output / 'launch.txt').write_text(launched + '\n')
-            manifest['launch_result'] = launched
-            pid = launched.rsplit(': ', 1)[-1]
-            if not pid.isdigit():
-                raise RuntimeError('simctl did not return an app process ID')
-            time.sleep(15)
-            check_launch(device=device, bundle_id=bundle_id, pid=pid, launch_epoch=launch_epoch,
-                         built=built, cwd=app, env=env, output=output, manifest=manifest)
-            manifest.update(status='passed', stage='complete', process_alive_after_seconds=15)
+            if mode == 'e2e':
+                manifest['stage'] = 'journeys'
+                e2e.execute(tree=tree, scratch=scratch, output=output, device=device, env=env, manifest=manifest)
+                manifest.update(status='passed', stage='complete', authenticated_acceptance=True)
+            else:
+                manifest['stage'] = 'launch'
+                bundle_id = 'com.jonessystems.form.private'
+                launch_epoch = time.time()
+                manifest['launch_started_epoch'] = launch_epoch
+                launched = capture(['xcrun', 'simctl', 'launch', device, bundle_id], cwd=app, env=env)
+                (output / 'launch.txt').write_text(launched + '\n')
+                manifest['launch_result'] = launched
+                pid = launched.rsplit(': ', 1)[-1]
+                if not pid.isdigit():
+                    raise RuntimeError('simctl did not return an app process ID')
+                time.sleep(15)
+                check_launch(device=device, bundle_id=bundle_id, pid=pid, launch_epoch=launch_epoch,
+                             built=built, cwd=app, env=env, output=output, manifest=manifest)
+                manifest.update(status='passed', stage='complete', process_alive_after_seconds=15)
     except BaseException as exc:
         manifest['error'] = str(exc)
         raise
     finally:
-        if device:
-            for operation in ['shutdown', 'delete']:
-                result = subprocess.run(['xcrun', 'simctl', operation, device], capture_output=True, text=True)
-                if result.returncode:
-                    manifest.setdefault('cleanup_errors', []).append(operation + ': ' + result.stderr.strip())
+        with e2e.cleanup_signals(CANCELLED):
+            if device:
+                for operation in ['shutdown', 'delete']:
+                    try:
+                        result = subprocess.run(['xcrun', 'simctl', operation, device], capture_output=True,
+                                                text=True, timeout=1 if CANCELLED else 20)
+                        if result.returncode:
+                            manifest.setdefault('cleanup_errors', []).append(operation + ': ' + result.stderr.strip())
+                    except (OSError, subprocess.TimeoutExpired) as exc:
+                        manifest.setdefault('cleanup_errors', []).append(operation + ': ' + str(exc))
         manifest['scratch_removed'] = not Path(manifest.get('scratch_root', '/')).exists()
         cleanup_failed = bool(manifest.get('cleanup_errors')) and manifest['status'] == 'passed'
         if cleanup_failed:
             manifest['status'] = 'failed'
-        (output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+        if mode == 'e2e':
+            e2e.write_evidence_manifest(output, manifest)
+        else:
+            (output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
         print('Build manifest:\n' + json.dumps(manifest, indent=2), flush=True)
         if cleanup_failed:
             raise RuntimeError('simulator cleanup failed; see manifest')
@@ -394,6 +442,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for option in ['source', 'output', 'scratch-parent', 'sha']:
         parser.add_argument('--' + option, required=True)
+    parser.add_argument('--mode', choices=['launch', 'e2e'], default='launch')
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, interrupted)
     build(parser.parse_args())

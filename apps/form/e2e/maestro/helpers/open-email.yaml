@@ -1,0 +1,20 @@
+appId: com.jonessystems.form.private
+---
+- runFlow:
+    when:
+      visible:
+        id: a-signin-email
+    commands:
+      - tapOn:
+          id: a-signin-email
+- runFlow:
+    when:
+      visible:
+        id: a-signin-email-link
+    commands:
+      - tapOn:
+          id: a-signin-email-link
+- extendedWaitUntil:
+    visible:
+      id: screen-email
+    timeout: 30000

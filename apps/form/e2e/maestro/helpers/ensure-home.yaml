@@ -1,0 +1,17 @@
+appId: com.jonessystems.form.private
+---
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible:
+      id: "screen-(today|sign-in)"
+    timeout: 30000
+- runFlow:
+    when:
+      visible:
+        id: screen-sign-in
+    file: sign-in.yaml
+- extendedWaitUntil:
+    visible:
+      id: screen-today
+    timeout: 30000

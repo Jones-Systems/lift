@@ -21,7 +21,7 @@ HELPER = "scripts/run-public-checks.py"
 HARNESS_TEST = "scripts/run-public-checks.test.py"
 SOURCE_HOOK = "scripts/integration/source-hook.mjs"
 SOURCE_RESOLVER = "scripts/integration/source-resolution.mjs"
-GROUP_IDS = ("runner-contract", "api-compile", "app-static", "form104-139", "form196", "form203", "form208", "simulator-portable")
+GROUP_IDS = ("runner-contract", "api-compile", "app-static", "form104-139", "form196", "form203", "form208", "simulator-portable", "native-e2e-backend", "native-e2e-app")
 BASELINE_HEALTH = (
     "tests/wearables/app.test.mjs", "tests/wearables/ingestion.test.mjs",
     "tests/wearables/providers.test.mjs", "tests/wearables/suggestions.test.mjs",
@@ -34,11 +34,16 @@ BASELINE_HEALTH = (
     "tests/direct-provider-transport/auth-state.test.mjs",
 )
 APP_TESTS = {
+    "native-e2e-app": ("src/integration/tests/account-switch-session.test.cjs",
+                       "src/integration/tests/settings-mode-http.test.cjs",
+                       "src/integration/tests/manual-progress-session.test.cjs",
+                       "src/integration/tests/runtime-lifecycle-composition.test.cjs"),
     "form196": ("src/features/feature-board/tests/controller.test.cjs",),
     "form203": ("src/api/tests/community-group-role-controller.test.cjs", "src/community/matching/__tests__/controller.test.cjs"),
     "form208": ("src/voice-coaching/standard/tests/wire-codec.test.cjs",),
 }
 API_TESTS = {
+    "native-e2e-backend": ("tests/e2e/native-backend.test.ts",),
     "form196": ("tests/community/board/correction.test.ts", "tests/community/board/board.test.ts", "tests/community/board/persistence-races.test.ts"),
     "form208": ("tests/voice-coaching/standard-wire.test.ts", "tests/voice-coaching/turn-controller.test.ts",
                 "tests/usage-limits/standard-observation.test.ts", "tests/usage-limits/standard-composition.test.ts",
@@ -54,8 +59,8 @@ def selection(root, requested):
     chosen = set(requested or GROUP_IDS)
     if chosen - set(GROUP_IDS):
         raise ValueError("Unknown public check group")
-    # APP interop and the board's worker load fresh emitted API JavaScript.
-    if chosen & {"form196", "form208"}:
+    # Interop, native E2E smoke tests and board workers load fresh emitted API JavaScript.
+    if chosen & {"form196", "form208", "native-e2e-backend", "native-e2e-app"}:
         chosen.add("api-compile")
     groups = [group for group in GROUP_IDS if group in chosen]
     health = sorted(str(path.relative_to(root / API)) for directory in
@@ -88,10 +93,14 @@ def selection(root, requested):
         elif group == "simulator-portable":
             test = "scripts/ci-ios-simulator.test.py"
             add(group, APP, [sys.executable, "-B", test], [test, "scripts/ci-ios-simulator.py"])
+            test = "scripts/ios_e2e.test.py"
+            add(group, APP, [sys.executable, "-B", test], [test, "scripts/ios_e2e.py"])
         else:
             if group in API_TESTS:
                 sources = API_TESTS[group]
                 emitted = ["dist/" + source.removesuffix(".ts") + ".js" for source in sources]
+                if group == "native-e2e-backend":
+                    sources = (*sources, "tests/e2e/native-backend.ts", SOURCE_HOOK, SOURCE_RESOLVER)
                 add(group, API, ["node", "--test", "--test-concurrency=1", *emitted], sources)
             if group in APP_TESTS:
                 sources = APP_TESTS[group]

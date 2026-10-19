@@ -149,6 +149,7 @@ export function TextAnswer(props: TextAnswerProps) {
       {label ? <Txt role="meta" tone="secondary">{label}</Txt> : null}
       <View testID={testID} style={[s.answer, outline, !onMic && s.answerNoMic, focused && s.answerFocused, error && s.answerError, label ? s.answerLabelled : null]}>
         <TextInput
+          testID={testID ? `${testID}-input` : undefined}
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}

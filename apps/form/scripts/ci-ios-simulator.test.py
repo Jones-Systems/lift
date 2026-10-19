@@ -285,5 +285,81 @@ with ci.owned_scratch(parent, {}) as scratch:
         self.assertNotIn('screenshot_sha256', manifest)
 
 
+    def test_launch_default_and_e2e_each_build_once_with_distinct_api_and_archive(self):
+        from types import SimpleNamespace
+        import tarfile
+        for mode in ('launch', 'e2e'):
+            with self.subTest(mode=mode):
+                source = self.parent / (mode + '-source')
+                app = source / 'apps/form'
+                (app / 'ios').mkdir(parents=True)
+                (app / 'package-lock.json').write_text('{}')
+                (app / 'package.json').write_text('{}')
+                (app / 'ios/Podfile.lock').write_text('locked')
+                (source / 'services/api').mkdir(parents=True)
+                (source / 'services/api/package-lock.json').write_text('{}')
+                (app / 'e2e').mkdir()
+                (app / 'e2e/journeys.json').write_text((Path(__file__).parents[1] / 'e2e/journeys.json').read_text())
+                output = self.parent / (mode + '-evidence')
+                args = SimpleNamespace(source=str(source), output=str(output),
+                                       scratch_parent=str(self.parent), sha='a' * 40)
+                if mode == 'e2e':
+                    args.mode = mode
+                calls = []
+                def capture(command, **kwargs):
+                    if command[:2] == ['git', 'rev-parse']: return args.sha
+                    if command[:2] == ['git', 'status']: return ''
+                    if command == ['uname', '-m']: return 'arm64'
+                    if command == ['xcodebuild', '-version']: return 'Xcode 27.0\nBuild version 27A266a'
+                    if command[:3] == ['xcrun', 'simctl', 'create']: return 'owned-device'
+                    if command[:3] == ['xcrun', 'simctl', 'launch']: return 'com.jonessystems.form.private: 123'
+                    if 'resolve' in command: return 'FormSpeech FormStoreKit FormHealth FormPhotoCapture FormVoice'
+                    return 'version'
+                def native(command, **kwargs):
+                    if command[:2] == ['git', 'archive']:
+                        with tarfile.open(command[4], 'w') as archive:
+                            archive.add(source / 'apps', arcname='apps')
+                            archive.add(source / 'services', arcname='services')
+                    calls.append(command)
+                    return subprocess.CompletedProcess(command, 0, '', '')
+                def run(command, *, cwd, env, log, **kwargs):
+                    self.assertEqual(env['EXPO_PUBLIC_FORM_API_URL'],
+                                     'http://127.0.0.1:47621' if mode == 'e2e' else 'http://127.0.0.1:9')
+                    calls.append(command)
+                    if command[0] == 'xcodebuild':
+                        built = Path(command[command.index('-derivedDataPath') + 1]) / 'Build/Products/Release-iphonesimulator/Form.app'
+                        built.mkdir(parents=True)
+                        (built / 'main.jsbundle').write_text('bundle')
+                        (built / 'Form').write_text('executable')
+                    if command[0] == 'ditto': Path(command[-1]).write_text('archive fixture')
+                    log.write_text('fixture command completed')
+                    return 0
+                actual_hash = ci.sha256
+                def digest(path):
+                    if path.name == 'expo-template.tgz':
+                        return '6b19d4235ab57c66fac699de7a2c57fe0ea277bf8a355ed45b2a37258bd93366'
+                    return actual_hash(path)
+                with patch.object(ci, 'capture', side_effect=capture), patch.object(ci, 'run', side_effect=run), \
+                     patch.object(ci.subprocess, 'run', side_effect=native), patch.object(ci.sys, 'platform', 'darwin'), \
+                     patch.object(ci.urllib.request, 'urlretrieve'), patch.object(ci, 'sha256', side_effect=digest), \
+                     patch.object(ci.time, 'sleep'), patch.object(ci, 'check_launch') as launch, \
+                     patch.object(ci.e2e, 'execute') as journeys, redirect_stdout(io.StringIO()):
+                    ci.build(args)
+                manifest = json.loads((output / 'manifest.json').read_text())
+                self.assertEqual(manifest['status'], 'passed')
+                self.assertEqual(manifest['mode'], mode)
+                self.assertTrue(manifest['scratch_removed'])
+                self.assertEqual(manifest['authenticated_acceptance'], mode == 'e2e')
+                archive = 'Form-e2e-simulator-arm64.zip' if mode == 'e2e' else 'Form-simulator-arm64.zip'
+                self.assertTrue((output / archive).is_file())
+                self.assertEqual(sum(c[0] == 'xcodebuild' for c in calls), 1)
+                self.assertEqual(sum(c[:3] == ['xcrun', 'simctl', 'install'] for c in calls), 1)
+                self.assertEqual(sum(c[:2] == ['npm', 'ci'] for c in calls), 2 if mode == 'e2e' else 1)
+                self.assertEqual(launch.call_count, int(mode == 'launch'))
+                self.assertEqual(journeys.call_count, int(mode == 'e2e'))
+                self.assertEqual(calls[-2:], [['xcrun', 'simctl', 'shutdown', 'owned-device'],
+                                             ['xcrun', 'simctl', 'delete', 'owned-device']])
+
+
 if __name__ == '__main__':
     unittest.main()
