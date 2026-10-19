@@ -38,5 +38,11 @@
     "services/api/tests/training-feedback/donor-loader.mjs"
   ],
   "history": "Fresh snapshot; no source Git history copied",
-  "scope": "Native simulator builds; backend research projection requires omitted private corpus"
+  "scope": "Native simulator builds; backend research projection requires omitted private corpus",
+  "public_adjustments": {
+    "apps/form/.gitignore": "Anchor generated native directories at the app root; preserve all local native-module sources.",
+    ".github/workflows/form-ios-simulator.yml": "Public repo dispatch defaults, one-day artifacts and lifecycle checks.",
+    "apps/form/src/api/client.ts": "Disabled loopback API default.",
+    "apps/form/app.json": "Remove private host exception."
+  }
 }
