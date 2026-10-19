@@ -5,6 +5,7 @@ from contextlib import redirect_stdout
 import io
 import json
 import os
+import plistlib
 from pathlib import Path
 import signal
 import subprocess
@@ -321,6 +322,11 @@ with ci.owned_scratch(parent, {}) as scratch:
                             archive.add(source / 'apps', arcname='apps')
                             archive.add(source / 'services', arcname='services')
                     calls.append(command)
+                    if command[:2] == ['codesign', '--display']:
+                        entitlements = {'application-identifier': 'com.jonessystems.form.private',
+                                        'keychain-access-groups': ['com.jonessystems.form.private']}
+                        return subprocess.CompletedProcess(command, 0, plistlib.dumps(entitlements).decode(),
+                                                           'Identifier=com.jonessystems.form.private\nSignature=adhoc\n')
                     return subprocess.CompletedProcess(command, 0, '', '')
                 def run(command, *, cwd, env, log, **kwargs):
                     self.assertEqual(env['EXPO_PUBLIC_FORM_API_URL'],
@@ -331,11 +337,17 @@ with ci.owned_scratch(parent, {}) as scratch:
                         built.mkdir(parents=True)
                         (built / 'main.jsbundle').write_text('bundle')
                         (built / 'Form').write_text('executable')
+                        (built / 'Info.plist').write_bytes(plistlib.dumps({
+                            'CFBundleIdentifier': 'com.jonessystems.form.private',
+                            'CFBundleExecutable': 'Form', 'CFBundleSupportedPlatforms': ['iPhoneSimulator']}))
+                    if command[:2] == ['codesign', '--force']:
+                        (Path(command[-1]) / 'Form').write_text('signed executable')
                     if command[0] == 'ditto': Path(command[-1]).write_text('archive fixture')
                     log.write_text('fixture command completed')
                     return 0
                 actual_hash = ci.sha256
                 def digest(path):
+                    if path.name == 'Form': calls.append(['hash-executable', path.read_text()])
                     if path.name == 'expo-template.tgz':
                         return '6b19d4235ab57c66fac699de7a2c57fe0ea277bf8a355ed45b2a37258bd93366'
                     return actual_hash(path)
@@ -348,6 +360,29 @@ with ci.owned_scratch(parent, {}) as scratch:
                 manifest = json.loads((output / 'manifest.json').read_text())
                 self.assertEqual(manifest['status'], 'passed')
                 self.assertEqual(manifest['mode'], mode)
+                signing = [c for c in calls if c[0] == 'codesign']
+                if mode == 'e2e':
+                    self.assertEqual(len(signing), 3, 'E2E must sign, verify and read back its signature')
+                    sign, verify, readback = signing
+                    self.assertEqual(sign[1:4], ['--force', '--sign', '-'])
+                    self.assertIn('--entitlements', sign)
+                    self.assertEqual(verify[1:3], ['--verify', '--strict'])
+                    self.assertIn('--entitlements', readback)
+                    hash_index = next(i for i, c in enumerate(calls) if c[0] == 'hash-executable')
+                    zip_index = next(i for i, c in enumerate(calls) if c[0] == 'ditto')
+                    install_index = next(i for i, c in enumerate(calls) if c[:3] == ['xcrun', 'simctl', 'install'])
+                    self.assertLess(calls.index(readback), hash_index)
+                    self.assertLess(hash_index, zip_index)
+                    self.assertLess(zip_index, install_index)
+                    self.assertEqual(calls[hash_index][1], 'signed executable')
+                    self.assertEqual(manifest['signing'], 'ad-hoc-simulator')
+                    self.assertTrue(manifest['signing_verified'])
+                    self.assertEqual(manifest['signing_entitlements'], {
+                        'application-identifier': 'com.jonessystems.form.private',
+                        'keychain-access-groups': ['com.jonessystems.form.private']})
+                else:
+                    self.assertEqual(signing, [])
+                    self.assertEqual(manifest['signing'], 'disabled')
                 self.assertTrue(manifest['scratch_removed'])
                 self.assertEqual(manifest['authenticated_acceptance'], mode == 'e2e')
                 archive = 'Form-e2e-simulator-arm64.zip' if mode == 'e2e' else 'Form-simulator-arm64.zip'
@@ -359,6 +394,67 @@ with ci.owned_scratch(parent, {}) as scratch:
                 self.assertEqual(journeys.call_count, int(mode == 'e2e'))
                 self.assertEqual(calls[-2:], [['xcrun', 'simctl', 'shutdown', 'owned-device'],
                                              ['xcrun', 'simctl', 'delete', 'owned-device']])
+
+
+    def test_e2e_signing_rejects_unverified_or_incorrect_readback(self):
+        bundle_id = 'com.jonessystems.form.private'
+        expected = {'application-identifier': bundle_id, 'keychain-access-groups': [bundle_id]}
+        valid_xml = plistlib.dumps(expected).decode()
+        valid_details = 'Identifier=' + bundle_id + '\nSignature=adhoc\n'
+        cases = [
+            ('missing', plistlib.dumps({}).decode(), valid_details, 0, None),
+            ('wrong-app', plistlib.dumps(dict(expected, **{'application-identifier': 'other.app'})).decode(), valid_details, 0, None),
+            ('extra-group', plistlib.dumps(dict(expected, **{'keychain-access-groups': [bundle_id, 'other.app']})).decode(), valid_details, 0, None),
+            ('extra-entitlement', plistlib.dumps(dict(expected, **{'get-task-allow': True})).decode(), valid_details, 0, None),
+            ('malformed', 'not a plist', valid_details, 0, None),
+            ('empty', '', valid_details, 0, None),
+            ('non-adhoc', valid_xml, valid_details.replace('adhoc', 'developer'), 0, None),
+            ('wrong-identifier', valid_xml, valid_details.replace(bundle_id, 'other.app'), 0, None),
+            ('failed-readback', valid_xml, valid_details, 1, None),
+            ('failed-verify', valid_xml, valid_details, 0, '--verify'),
+            ('failed-sign', valid_xml, valid_details, 0, '--force'),
+        ]
+        built = self.parent / 'Form.app'
+        built.mkdir()
+        (built / 'Info.plist').write_bytes(plistlib.dumps({
+            'CFBundleIdentifier': bundle_id, 'CFBundleExecutable': 'Form',
+            'CFBundleSupportedPlatforms': ['iPhoneSimulator']}))
+        for name, xml, details, status, failure in cases:
+            with self.subTest(name=name):
+                manifest = {}
+                def run(command, **kwargs):
+                    if '--entitlements' in command:
+                        path = Path(command[command.index('--entitlements') + 1])
+                        self.assertEqual(plistlib.loads(path.read_bytes()), expected)
+                    if failure in command:
+                        raise subprocess.CalledProcessError(1, command)
+                    return 0
+                result = subprocess.CompletedProcess(['codesign'], status, xml, details)
+                with patch.object(ci, 'run', side_effect=run), \
+                        patch.object(ci.subprocess, 'run', return_value=result):
+                    with self.assertRaises((RuntimeError, ValueError, subprocess.CalledProcessError)):
+                        ci.sign_e2e_simulator(built, scratch=self.parent, cwd=self.parent,
+                                              env={}, output=self.parent, manifest=manifest)
+                self.assertFalse(manifest['signing_verified'])
+                self.assertEqual(manifest['signing'], 'ad-hoc-simulator-unverified')
+
+    def test_e2e_signing_rejects_other_app_or_device_build_before_mutation(self):
+        built = self.parent / 'Form.app'
+        built.mkdir()
+        for key, value in [('CFBundleIdentifier', 'other.app'),
+                           ('CFBundleExecutable', 'Other'),
+                           ('CFBundleSupportedPlatforms', ['iPhoneOS'])]:
+            with self.subTest(key=key):
+                info = {'CFBundleIdentifier': 'com.jonessystems.form.private',
+                        'CFBundleExecutable': 'Form', 'CFBundleSupportedPlatforms': ['iPhoneSimulator']}
+                info[key] = value
+                (built / 'Info.plist').write_bytes(plistlib.dumps(info))
+                with patch.object(ci, 'run') as run, patch.object(ci.subprocess, 'run') as native:
+                    with self.assertRaisesRegex(RuntimeError, 'requires the Form simulator app'):
+                        ci.sign_e2e_simulator(built, scratch=self.parent, cwd=self.parent,
+                                              env={}, output=self.parent, manifest={})
+                run.assert_not_called()
+                native.assert_not_called()
 
 
 if __name__ == '__main__':

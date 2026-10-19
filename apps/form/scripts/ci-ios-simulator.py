@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import plistlib
 import re
 import shutil
 import signal
@@ -281,6 +282,38 @@ def interrupted(signum, _frame):
     raise SystemExit(128 + signum)
 
 
+def sign_e2e_simulator(built, *, scratch, cwd, env, output, manifest):
+    bundle_id = 'com.jonessystems.form.private'
+    info = plistlib.loads((built / 'Info.plist').read_bytes())
+    if (info.get('CFBundleIdentifier') != bundle_id or
+            info.get('CFBundleExecutable') != 'Form' or
+            info.get('CFBundleSupportedPlatforms') != ['iPhoneSimulator']):
+        raise RuntimeError('E2E signing requires the Form simulator app')
+    # This local simulator identity needs no developer team or provisioning profile.
+    expected = {'application-identifier': bundle_id, 'keychain-access-groups': [bundle_id]}
+    entitlements = scratch / 'e2e-simulator-entitlements.plist'
+    entitlements.write_bytes(plistlib.dumps(expected))
+    manifest.update(signing='ad-hoc-simulator-unverified', signing_verified=False)
+    run(['codesign', '--force', '--sign', '-', '--timestamp=none',
+         '--entitlements', str(entitlements), str(built)],
+        cwd=cwd, env=env, log=output / 'signing.log', timeout=60)
+    run(['codesign', '--verify', '--strict', str(built)],
+        cwd=cwd, env=env, log=output / 'signing-verification.log', timeout=30)
+    result = subprocess.run(['codesign', '--display', '--verbose=4', '--entitlements', '-', '--xml', str(built)],
+                            cwd=cwd, env=env, capture_output=True, text=True, timeout=30, check=False)
+    (output / 'signing-entitlements.plist').write_text(result.stdout)
+    (output / 'signing-details.log').write_text(result.stderr)
+    result.check_returncode()
+    actual = plistlib.loads(result.stdout.encode())
+    manifest['signing_entitlements'] = actual
+    if actual != expected:
+        raise RuntimeError('E2E signing entitlement readback mismatch')
+    details = result.stderr.splitlines()
+    if 'Signature=adhoc' not in details or 'Identifier=' + bundle_id not in details:
+        raise RuntimeError('E2E signing identity readback mismatch')
+    manifest.update(signing='ad-hoc-simulator', signing_verified=True)
+
+
 def build(args):
     mode = getattr(args, 'mode', 'launch')
     source = Path(args.source).resolve()
@@ -376,6 +409,10 @@ def build(args):
             bundle = built / 'main.jsbundle'
             if not bundle.is_file() or not bundle.stat().st_size:
                 raise RuntimeError('Release app is missing its embedded JS bundle')
+            if mode == 'e2e':
+                manifest['stage'] = 'signing'
+                sign_e2e_simulator(built, scratch=scratch, cwd=app, env=env,
+                                   output=output, manifest=manifest)
             manifest['embedded_js_sha256'] = sha256(bundle)
             manifest['executable_sha256'] = sha256(built / 'Form')
             manifest['stage'] = 'package'

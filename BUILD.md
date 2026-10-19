@@ -82,6 +82,17 @@ The requested source SHA must also contain the E2E tooling and journeys.
 `Form-e2e-simulator-arm64.zip`. This artifact requires the synthetic backend to
 exercise its authenticated paths. Default `--mode launch` retains disabled
 port 9, its process-survival check and `Form-simulator-arm64.zip`.
+After compilation, only E2E mode ad-hoc signs the simulator app with
+`application-identifier` and one `keychain-access-groups` entry, both scoped to
+`com.jonessystems.form.private`, so the real SecureStore path can use Keychain.
+This local simulator identity uses no developer account, certificate or
+provisioning profile. The driver verifies the signature and reads back the exact
+entitlements and ad-hoc identity before hashing the executable, packaging or
+installing it. Missing, malformed or mismatched readback fails the build.
+The manifest records `signing: ad-hoc-simulator` and `signing_verified: true`
+only after these checks; readback and signing logs remain in evidence. Ordinary
+launch mode retains `signing: disabled`. Native Keychain behavior is qualified
+by the hosted journeys, not by the portable signing checks.
 `apps/form/e2e/journeys.json` owns fixture inputs, expected profile values,
 journey names and screenshot basenames. The journeys cover email account
 creation/error, onboarding/first plan, workout set editing/removal/history,
