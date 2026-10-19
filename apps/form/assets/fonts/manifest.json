@@ -1,0 +1,242 @@
+[
+  {
+    "alias": "Bricolage700",
+    "file": "Bricolage700.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/bricolagegrotesque/BricolageGrotesque%5Bopsz%2Cwdth%2Cwght%5D.ttf",
+    "axes": {
+      "opsz": 32,
+      "wdth": 100,
+      "wght": 700
+    },
+    "source_sha256": "413e7357809ddd12fd80a96a8a396de0e401638d4acd3cb3e37532f0472ac682",
+    "sha256": "7675f07fbd4649d20c2e789b554479581920c54c4e8c243b254d96def2133b99",
+    "license": "bricolagegrotesque-OFL.txt",
+    "pre_native_identity_sha256": "c14ef27e9198a0e38d7f23e3fb46ce19777d024589af2e34a371855163d5f97a",
+    "native_postscript_name": "Form2Bricolage700",
+    "native_identity_transform": "Unique Form2 family/full/PostScript names; all glyph, metrics, hinting, and layout tables byte-unchanged."
+  },
+  {
+    "alias": "AtkinsonNext400",
+    "file": "AtkinsonNext400.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/atkinsonhyperlegiblenext/AtkinsonHyperlegibleNext%5Bwght%5D.ttf",
+    "axes": {
+      "wght": 400
+    },
+    "source_sha256": "5a455d1cfa099b601ab70751bb9673e8fe1854dc4500c80e1a220d0d75e31745",
+    "sha256": "bbd9d052280fa60cd65116a2dd9aa736041cb425ff45c1826ad0b6058ec75995",
+    "license": "atkinsonhyperlegiblenext-OFL.txt",
+    "pre_native_identity_sha256": "436d297cae0a49987db94a2df43a4011724e8500162c1f1b9f3216549dcdf381",
+    "native_postscript_name": "Form2AtkinsonNext400",
+    "native_identity_transform": "Unique Form2 family/full/PostScript names; all glyph, metrics, hinting, and layout tables byte-unchanged."
+  },
+  {
+    "alias": "AtkinsonNext600",
+    "file": "AtkinsonNext600.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/atkinsonhyperlegiblenext/AtkinsonHyperlegibleNext%5Bwght%5D.ttf",
+    "axes": {
+      "wght": 600
+    },
+    "source_sha256": "5a455d1cfa099b601ab70751bb9673e8fe1854dc4500c80e1a220d0d75e31745",
+    "sha256": "0be205ef139b4687b25a03068c21fe7226db8c65728625d0e95a7b2d71ead943",
+    "license": "atkinsonhyperlegiblenext-OFL.txt",
+    "pre_native_identity_sha256": "ac9139fa591a9f72680fbaa6f9f48cab8b1ea4f8829682f62c1c1f31ba2f1531",
+    "native_postscript_name": "Form2AtkinsonNext600",
+    "native_identity_transform": "Unique Form2 family/full/PostScript names; all glyph, metrics, hinting, and layout tables byte-unchanged."
+  },
+  {
+    "alias": "AtkinsonNext700",
+    "file": "AtkinsonNext700.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/atkinsonhyperlegiblenext/AtkinsonHyperlegibleNext%5Bwght%5D.ttf",
+    "axes": {
+      "wght": 700
+    },
+    "source_sha256": "5a455d1cfa099b601ab70751bb9673e8fe1854dc4500c80e1a220d0d75e31745",
+    "sha256": "807a4ab35cddc478f70fd476a005d155b6daf63643810b9c39dbaba3126ccc8c",
+    "license": "atkinsonhyperlegiblenext-OFL.txt",
+    "pre_native_identity_sha256": "3cf86d19526dfb0ccade449faa4d056962b05b6354bbe63dff536b89c6a72eb4",
+    "native_postscript_name": "Form2AtkinsonNext700",
+    "native_identity_transform": "Unique Form2 family/full/PostScript names; all glyph, metrics, hinting, and layout tables byte-unchanged."
+  },
+  {
+    "alias": "BarlowSemiCondensed600",
+    "file": "BarlowSemiCondensed600.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/barlowsemicondensed/BarlowSemiCondensed-SemiBold.ttf",
+    "axes": null,
+    "source_sha256": "bd299f4bc5b44d30be8d42e9bad3a5df7d66af1cd55d0ed72a8b8916360a1424",
+    "sha256": "a93b698c59e25eea2193e1b24125a8a69aca38214d9cf914d59457275630438a",
+    "license": "barlowsemicondensed-OFL.txt",
+    "pre_native_identity_sha256": "bd299f4bc5b44d30be8d42e9bad3a5df7d66af1cd55d0ed72a8b8916360a1424",
+    "native_postscript_name": "Form2BarlowSemiCondensed600",
+    "native_identity_transform": "Unique Form2 family/full/PostScript names; all glyph, metrics, hinting, and layout tables byte-unchanged."
+  },
+  {
+    "alias": "BarlowSemiCondensed700",
+    "file": "BarlowSemiCondensed700.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/barlowsemicondensed/BarlowSemiCondensed-Bold.ttf",
+    "axes": null,
+    "source_sha256": "5bd6757e459a110da81b44532f0f43058e2dab2401688abca84f2fdbde193cbb",
+    "sha256": "ac13b1f978f34365079bb0c1df9248476540c3a8ac15d91dec7dabc445e7b976",
+    "license": "barlowsemicondensed-OFL.txt",
+    "pre_native_identity_sha256": "5bd6757e459a110da81b44532f0f43058e2dab2401688abca84f2fdbde193cbb",
+    "native_postscript_name": "Form2BarlowSemiCondensed700",
+    "native_identity_transform": "Unique Form2 family/full/PostScript names; all glyph, metrics, hinting, and layout tables byte-unchanged."
+  },
+  {
+    "alias": "Atkinson400",
+    "file": "Atkinson400.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/atkinsonhyperlegible/AtkinsonHyperlegible-Regular.ttf",
+    "axes": null,
+    "source_sha256": "7fb917c89019896d0b52ee84b7cbb3304c18cb90b19a62f5e32712bd23e97669",
+    "sha256": "2586ce3cc537766cce6d36b17f0a99f4fce4faaedfdd29628f41ad71103c5eec",
+    "license": "atkinsonhyperlegible-OFL.txt",
+    "pre_native_identity_sha256": "7fb917c89019896d0b52ee84b7cbb3304c18cb90b19a62f5e32712bd23e97669",
+    "native_postscript_name": "Form2Atkinson400",
+    "native_identity_transform": "Unique Form2 family/full/PostScript names; all glyph, metrics, hinting, and layout tables byte-unchanged."
+  },
+  {
+    "alias": "Atkinson700",
+    "file": "Atkinson700.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/atkinsonhyperlegible/AtkinsonHyperlegible-Bold.ttf",
+    "axes": null,
+    "source_sha256": "5a3b0c8cc8ca545155150b4512a1fa248298df121c50d6557e651e61fbdab92f",
+    "sha256": "f54a3f0fb6a5f62db8f9f2f31942410213f575b29ee9533efeb18ed61a10a73d",
+    "license": "atkinsonhyperlegible-OFL.txt",
+    "pre_native_identity_sha256": "5a3b0c8cc8ca545155150b4512a1fa248298df121c50d6557e651e61fbdab92f",
+    "native_postscript_name": "Form2Atkinson700",
+    "native_identity_transform": "Unique Form2 family/full/PostScript names; all glyph, metrics, hinting, and layout tables byte-unchanged."
+  },
+  {
+    "alias": "SchibstedGrotesk_400Regular",
+    "file": "SchibstedGrotesk_400Regular.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/schibstedgrotesk/SchibstedGrotesk%5Bwght%5D.ttf",
+    "axes": {
+      "wght": 400
+    },
+    "source_sha256": "6ceeadf6be8e1fd7687011c7fa38ed0edd1abe967a0b73d97caec183552e823d",
+    "sha256": "3c0ee4491c313a2bfcc8cfb1a2b2611af5ad726f53aa6a54b3619971fce41652",
+    "license": "schibstedgrotesk-OFL.txt",
+    "pre_native_identity_sha256": "08ef2e7c1951e75941ce08ee06ab69d19be4f058c5f3812986f2ff78997c8727",
+    "native_postscript_name": "Form2SchibstedGrotesk400Regular",
+    "native_identity_transform": "Unique Form2 family/full/PostScript names; all glyph, metrics, hinting, and layout tables byte-unchanged."
+  },
+  {
+    "alias": "SchibstedGrotesk_500Medium",
+    "file": "SchibstedGrotesk_500Medium.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/schibstedgrotesk/SchibstedGrotesk%5Bwght%5D.ttf",
+    "axes": {
+      "wght": 500
+    },
+    "source_sha256": "6ceeadf6be8e1fd7687011c7fa38ed0edd1abe967a0b73d97caec183552e823d",
+    "sha256": "64cde3f5f91a0b6b9780a68146f826aee54724c2ed26dc6605d96ef7e25748f6",
+    "license": "schibstedgrotesk-OFL.txt",
+    "pre_native_identity_sha256": "f142222db253365f40b92fd04dea0527d949897ebd8c10bca902615e356365c9",
+    "native_postscript_name": "Form2SchibstedGrotesk500Medium",
+    "native_identity_transform": "Unique Form2 family/full/PostScript names; all glyph, metrics, hinting, and layout tables byte-unchanged."
+  },
+  {
+    "alias": "SchibstedGrotesk_600SemiBold",
+    "file": "SchibstedGrotesk_600SemiBold.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/schibstedgrotesk/SchibstedGrotesk%5Bwght%5D.ttf",
+    "axes": {
+      "wght": 600
+    },
+    "source_sha256": "6ceeadf6be8e1fd7687011c7fa38ed0edd1abe967a0b73d97caec183552e823d",
+    "sha256": "58c2464e1520ad323cefa5eb866618bf95b1310e88f3876a080fb45876409620",
+    "license": "schibstedgrotesk-OFL.txt",
+    "pre_native_identity_sha256": "3713a81f19ac5a0478627b50f61e210bf027fc90337589edd0c200c53b36c6ac",
+    "native_postscript_name": "Form2SchibstedGrotesk600SemiBold",
+    "native_identity_transform": "Unique Form2 family/full/PostScript names; all glyph, metrics, hinting, and layout tables byte-unchanged."
+  },
+  {
+    "alias": "SchibstedGrotesk_700Bold",
+    "file": "SchibstedGrotesk_700Bold.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/schibstedgrotesk/SchibstedGrotesk%5Bwght%5D.ttf",
+    "axes": {
+      "wght": 700
+    },
+    "source_sha256": "6ceeadf6be8e1fd7687011c7fa38ed0edd1abe967a0b73d97caec183552e823d",
+    "sha256": "237f57a118ceed3a825a61045ae899ee653c1db721c043dcae7cd36895d5cfc6",
+    "license": "schibstedgrotesk-OFL.txt",
+    "pre_native_identity_sha256": "e77d0e5a64e990d7b4690e4b6fea6f9846f7058c0d10446d89c8348c0c45f9ff",
+    "native_postscript_name": "Form2SchibstedGrotesk700Bold",
+    "native_identity_transform": "Unique Form2 family/full/PostScript names; all glyph, metrics, hinting, and layout tables byte-unchanged."
+  },
+  {
+    "alias": "SchibstedGrotesk_800ExtraBold",
+    "file": "SchibstedGrotesk_800ExtraBold.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/schibstedgrotesk/SchibstedGrotesk%5Bwght%5D.ttf",
+    "axes": {
+      "wght": 800
+    },
+    "source_sha256": "6ceeadf6be8e1fd7687011c7fa38ed0edd1abe967a0b73d97caec183552e823d",
+    "sha256": "06496748d54127a1bd9736b433966ea384bd8c2333ed739f2b3f8ace71172440",
+    "license": "schibstedgrotesk-OFL.txt",
+    "pre_native_identity_sha256": "639e2238c99dfb2c3b4b222bf71a582a1da5074ffd3b806b57e1d14f4afc61c5",
+    "native_postscript_name": "Form2SchibstedGrotesk800ExtraBold",
+    "native_identity_transform": "Unique Form2 family/full/PostScript names; all glyph, metrics, hinting, and layout tables byte-unchanged."
+  },
+  {
+    "alias": "SchibstedGrotesk_900Black",
+    "file": "SchibstedGrotesk_900Black.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/schibstedgrotesk/SchibstedGrotesk%5Bwght%5D.ttf",
+    "axes": {
+      "wght": 900
+    },
+    "source_sha256": "6ceeadf6be8e1fd7687011c7fa38ed0edd1abe967a0b73d97caec183552e823d",
+    "sha256": "4de176c2df31d49578a6d6a8851a7dff9bc79186e02d5b1a45a4e58664e1c596",
+    "license": "schibstedgrotesk-OFL.txt",
+    "pre_native_identity_sha256": "481865397a7d6f40c687ce97a649790b56ace0337d3742568e3a46a0b8c05ee6",
+    "native_postscript_name": "Form2SchibstedGrotesk900Black",
+    "native_identity_transform": "Unique Form2 family/full/PostScript names; all glyph, metrics, hinting, and layout tables byte-unchanged."
+  },
+  {
+    "alias": "SchibstedGrotesk_500Medium_Italic",
+    "file": "SchibstedGrotesk_500Medium_Italic.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/schibstedgrotesk/SchibstedGrotesk-Italic%5Bwght%5D.ttf",
+    "axes": {
+      "wght": 500
+    },
+    "source_sha256": "b49fedb6f3a2ff9b43e13351888641505dc8e5f300941e597eecbc3f52ba357b",
+    "sha256": "67354dedb4b1940003425ca0a9144b5f450b0ac3ed829eaac0f3fd8a818721ee",
+    "license": "schibstedgrotesk-OFL.txt",
+    "pre_native_identity_sha256": "26f8f1d280c6ba96d587977f7b8b2ab08aa5851b14348e7c730e41576bcb741c",
+    "native_postscript_name": "Form2SchibstedGrotesk500MediumItalic",
+    "native_identity_transform": "Unique Form2 family/full/PostScript names; all glyph, metrics, hinting, and layout tables byte-unchanged."
+  },
+  {
+    "alias": "IBMPlexMono_400Regular",
+    "file": "IBMPlexMono_400Regular.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/ibmplexmono/IBMPlexMono-Regular.ttf",
+    "axes": null,
+    "source_sha256": "6a3412f058c7d8dfd9170c41e85ade48e5156ecb89356110ca57a0a27734af46",
+    "sha256": "b680de57c1dc7835575558cb08166a70054f95f21dde8adf3d63eeeac0279369",
+    "license": "ibmplexmono-OFL.txt",
+    "pre_native_identity_sha256": "6a3412f058c7d8dfd9170c41e85ade48e5156ecb89356110ca57a0a27734af46",
+    "native_postscript_name": "Form2IBMPlexMono400Regular",
+    "native_identity_transform": "Unique Form2 family/full/PostScript names; all glyph, metrics, hinting, and layout tables byte-unchanged."
+  },
+  {
+    "alias": "IBMPlexMono_500Medium",
+    "file": "IBMPlexMono_500Medium.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/ibmplexmono/IBMPlexMono-Medium.ttf",
+    "axes": null,
+    "source_sha256": "a9b4c49bb299e05b5f6c481e7fb5e78943d2793249a0c8874ab574a2d1ea6755",
+    "sha256": "c6e357d61e310190e07c29f7923e554febb6d1e23eb9960e9d1364566600c675",
+    "license": "ibmplexmono-OFL.txt",
+    "pre_native_identity_sha256": "a9b4c49bb299e05b5f6c481e7fb5e78943d2793249a0c8874ab574a2d1ea6755",
+    "native_postscript_name": "Form2IBMPlexMono500Medium",
+    "native_identity_transform": "Unique Form2 family/full/PostScript names; all glyph, metrics, hinting, and layout tables byte-unchanged."
+  },
+  {
+    "alias": "IBMPlexMono_600SemiBold",
+    "file": "IBMPlexMono_600SemiBold.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/ibmplexmono/IBMPlexMono-SemiBold.ttf",
+    "axes": null,
+    "source_sha256": "d3c38e55c78f5b0f28009fddba4834ec503278936a5986032424c9bd2d23aa46",
+    "sha256": "1bd86b5953b91f17bf1386d8810255ec292076b0f8b40f3f19b8cb31271bbf3a",
+    "license": "ibmplexmono-OFL.txt",
+    "pre_native_identity_sha256": "d3c38e55c78f5b0f28009fddba4834ec503278936a5986032424c9bd2d23aa46",
+    "native_postscript_name": "Form2IBMPlexMono600SemiBold",
+    "native_identity_transform": "Unique Form2 family/full/PostScript names; all glyph, metrics, hinting, and layout tables byte-unchanged."
+  }
+]

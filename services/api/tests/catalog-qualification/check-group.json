@@ -1,0 +1,47 @@
+{
+  "schema": "form.affected-check-group/v1",
+  "id": "catalog-qualification",
+  "summary": "Retained catalog and source-native operational identity, exact and explicitly registered Domain associations, cue rights and strict coaching preferences",
+  "covers": [
+    "All 59 retained legacy exercise IDs and 177 cue slots with exact source and manifest identity",
+    "Two independent external catalogs, candidate-only mappings, source-native rights and partial discovery",
+    "Byte-pinned artifact rejection, strict legacy record round-trip, mutation isolation and actual Form consumer IDs",
+    "Only qualified coaching cues accept preferences; technical/safety cues and withheld content cannot be rewritten",
+    "Strict request and policy shape, stale policy revisions and retained replacement requests",
+    "Exact original-byte reconstruction, all 59 source-native identities and unchanged equipment AND/OR semantics",
+    "Closed trusted Domain projection, complete source tuple, currentness and retirement gates; no aliases or Open Mat collision promotion",
+    "Identity-only qualification preserves unknown axes, demands, prescriptions, rights and comparability",
+    "Default-empty trusted registration pins, exact artifact authentication and closed seven-field immutable records",
+    "Storage-compatible canonical record digests, explicit registered Domain IDs, actual row/embedded IDs and full source tuples",
+    "Synthetic-only registration acceptance, malformed authority overrides, currentness, retirement and caller mutation rejection",
+    "Authentic 58-record review candidate, full 59-ID collision accounting, descriptive pin authentication and default unavailable policy",
+    "Pure detached native grouped-equipment projection retains every literal AND/OR requirement and identity without operational acceptance"
+  ],
+  "direct_surfaces": [
+    "services/api/src/catalog-qualification/index.ts",
+    "services/api/src/catalog-qualification/retained.ts",
+    "services/api/src/catalog-qualification/validation.ts",
+    "services/api/src/catalog-qualification/cue-preferences.ts",
+    "services/api/src/catalog-qualification/native-identity.ts",
+    "services/api/src/catalog-qualification/registered-identity.ts",
+    "services/api/src/catalog.ts",
+    "docs/knowledge/catalog-cues/registrations/native-engine-v1.candidate.json",
+    "docs/knowledge/catalog-cues/registrations/native-engine-v1.review.json",
+    "docs/knowledge/catalog-cues/registrations/build-candidate.mjs",
+    "services/api/src/catalog-qualification/native-equipment.ts"
+  ],
+  "test_modules": [
+    "services/api/tests/catalog-qualification/catalog.test.ts",
+    "services/api/tests/catalog-qualification/cue-preferences.test.ts",
+    "services/api/tests/catalog-qualification/native-identity.test.ts",
+    "services/api/tests/catalog-qualification/registered-identity.test.ts",
+    "services/api/tests/catalog-qualification/registration-packet.test.ts",
+    "services/api/tests/catalog-qualification/native-equipment.test.ts"
+  ],
+  "cwd": "services/api",
+  "build": "node node_modules/typescript/bin/tsc -p tsconfig.json",
+  "reproduction": "node ../../docs/knowledge/catalog-cues/registrations/build-candidate.mjs --check",
+  "command": "node --test --test-isolation=none --test-concurrency=1 --test-reporter=tap dist/tests/catalog-qualification/catalog.test.js dist/tests/catalog-qualification/cue-preferences.test.js dist/tests/catalog-qualification/native-identity.test.js dist/tests/catalog-qualification/registered-identity.test.js dist/tests/catalog-qualification/registration-packet.test.js dist/tests/catalog-qualification/native-equipment.test.js",
+  "discovery_owner": "WS01",
+  "scratch": "No test-created files, network, providers, databases or subprocesses; shared TypeScript build owns services/api/dist"
+}

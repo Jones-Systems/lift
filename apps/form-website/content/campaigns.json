@@ -1,0 +1,50 @@
+[
+  {
+    "id": "weight-loss",
+    "eyebrow": "After weight loss \u00b7 a new chapter",
+    "title": "Make strength part of your next chapter.",
+    "description": "After weight loss, you may be thinking about strength, movement and a routine that fits your changing life. Form is being developed to help keep your goals, experience and available time in view.",
+    "focus": "Strength after weight loss",
+    "principle": "A changing body deserves context. This preview does not prescribe a program or promise a physical outcome.",
+    "details": [
+      "Describe your new starting point",
+      "Make time for strength in everyday life",
+      "Revisit the plan as your circumstances change"
+    ],
+    "goal": "strength",
+    "accent": "lime",
+    "conversionGoal": "subscribe"
+  },
+  {
+    "id": "after-illness",
+    "eyebrow": "After illness \u00b7 clinician clearance first",
+    "title": "A new starting point deserves a new plan.",
+    "description": "Returning to movement after illness can bring different questions about energy, capacity and confidence. Form's intended experience leaves room for that context, once your clinician has cleared you to exercise.",
+    "focus": "Room for your current capacity",
+    "principle": "A preview cannot assess recovery or decide what is safe for you. Your clinician's guidance comes first.",
+    "details": [
+      "Name the constraints that matter today",
+      "Make space to reconsider your available time",
+      "Bring questions about returning to exercise to your clinician"
+    ],
+    "goal": "return",
+    "accent": "clay",
+    "conversionGoal": "download"
+  },
+  {
+    "id": "clinician-cleared-injury",
+    "eyebrow": "After injury \u00b7 clinician clearance first",
+    "title": "Move forward with your boundaries in view.",
+    "description": "For people cleared by their clinician to exercise after injury, Form is developing a way to keep goals, preferences and limitations visible while planning movement. It is not rehabilitation or a substitute for your care team.",
+    "focus": "Context before intensity",
+    "principle": "Clinical clearance and any restrictions remain essential. Form does not diagnose an injury or prescribe rehabilitation.",
+    "details": [
+      "Keep clinician-set boundaries explicit",
+      "Ask for explanations of proposed changes",
+      "Treat changing symptoms as a reason to consult your care team"
+    ],
+    "goal": "return",
+    "accent": "blue",
+    "conversionGoal": "subscribe"
+  }
+]

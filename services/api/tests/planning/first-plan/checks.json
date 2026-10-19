@@ -1,0 +1,79 @@
+{
+  "schema": "form.first-plan.affected-checks/v1",
+  "group": "first-plan-selection",
+  "surfaces": [
+    "services/api/src/planning/first-plan/index.ts",
+    "services/api/src/planning/first-plan/types.ts",
+    "services/api/src/planning/first-plan/normalization.ts",
+    "services/api/src/planning/first-plan/evaluation.ts",
+    "services/api/src/planning/first-plan/source-selection.ts",
+    "services/api/src/planning/first-plan/fallback-policy.ts",
+    "services/api/src/planning/first-plan/fallback-producer.ts"
+  ],
+  "tests": [
+    "services/api/tests/planning/first-plan/selection.test.mjs",
+    "services/api/tests/planning/first-plan/normalization.test.mjs",
+    "services/api/tests/planning/first-plan/source-selection.test.mjs"
+  ],
+  "harness": "services/api/tests/planning/first-plan/resolve.mjs",
+  "command": "node --import ./services/api/tests/planning/first-plan/resolve.mjs --test --test-isolation=none --test-concurrency=1 services/api/tests/planning/first-plan/selection.test.mjs services/api/tests/planning/first-plan/normalization.test.mjs services/api/tests/planning/first-plan/source-selection.test.mjs",
+  "covers": [
+    "confirmed editable context",
+    "canonical API plan compatibility",
+    "no invented dose",
+    "qualified complete catalog mappings",
+    "bound constraint traces",
+    "supplied-order selection",
+    "infeasible versus unknown",
+    "immutable isolated adapter inputs",
+    "accepted literal four-task fallback recipe",
+    "internal policy and exact registration association binding",
+    "equipment and estimated-time limits",
+    "lossless native optional fields and unknown load",
+    "public frozen normalization before qualification",
+    "legacy hash/format compatibility",
+    "complete versioned source-prescription keys"
+  ],
+  "typecheck": {
+    "group": "first-plan-types",
+    "command": "node services/api/tests/planning/first-plan/typecheck.mjs",
+    "harness": "services/api/tests/planning/first-plan/typecheck.mjs",
+    "covers": [
+      "exported first-plan TypeScript contract",
+      "canonical imported schemas",
+      "API compiler options including strict, exactOptionalPropertyTypes and noUncheckedIndexedAccess",
+      "transitively imported source producer and selection modules",
+      "legacy/source interface separation"
+    ],
+    "environment": "Verified read-only FORM_API_NODE_MODULES; official getExePath resolves the native compiler; noEmit config is exclusively created under this test cone, at most 2 KiB, then removed after known child exit",
+    "processes": "One Node launcher and one directly supervised native compiler; no retry or wrapper fallback",
+    "scratch": "Unique .typecheck-*/tsconfig.json under services/api/tests/planning/first-plan; inode-bound exact-file cleanup after success, failure or handled SIGINT/SIGTERM and child close; preserve on unknown child exit or changed file identity",
+    "tests": [
+      "services/api/tests/planning/first-plan/contracts.typecheck.ts"
+    ]
+  },
+  "integration": "WS01 owns source-plan persistence, mount, lifecycle and shared discovery; WS28 owns source-format constraints; WS29 owns actual registrations. Policy acceptance is operational, not medical; fixture qualification remains synthetic.",
+  "fixtures": [
+    "services/api/tests/planning/first-plan/source-fixture.mjs"
+  ],
+  "dependencyGate": "Adopt WS01 schema 8169cff2e1cd8524a18cbb2d982da40ce1250a9e and WS29 registration artifact becfdaa4a0cc9802557d3785c0eb58af9629ef90 before checks; rebind donor and exact candidate through WS07.",
+  "retainedInputs": [
+    {
+      "path": "sources/businesslessons/core/research/form-knowledge-campaign-2026-10-01/inventory/legacy-movement-engine.json",
+      "revision": "7636efca55195b1dc6a5980864452575478116b7",
+      "bytes": 229763,
+      "sha256": "fc45be4e7129c39ef46d130a92d6bcf995d2dad64951b40c72fa125ca1561e4b"
+    },
+    {
+      "path": "docs/knowledge/catalog-cues/registrations/native-engine-v1.candidate.json",
+      "revision": "becfdaa4a0cc9802557d3785c0eb58af9629ef90",
+      "bytes": 77470,
+      "sha256": "c326ccbba03fcc1fe5807d20811e7cd57b87be4c2ebf0361e922028e7bb131ed",
+      "acceptedPin": {
+        "id": "form-native-engine-registration-candidate",
+        "revision": "442c5cd07f14142326af10fe0eb6d079b0e62a71-v1"
+      },
+      "authority": "Root acceptance is separate from artifact candidate-only labeling; fixture active projections remain synthetic."
+    }
+  ]
+}

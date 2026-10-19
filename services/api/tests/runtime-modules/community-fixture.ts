@@ -1,0 +1,47 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import type { FormServer } from '../../src/server.js';
+import { allFalse } from '../../src/community/index.js';
+import { request, boardInput, type User } from './fixture.js';
+export async function populateCommunity(server:FormServer,a:User,b:User) {
+ const created=await request(server,'/v1/community/groups',a,'POST',{name:'Private group',alias:'Owner',membershipDisclosureAccepted:true},'group');assert.equal(created.status,201);
+ const group=await created.json() as {id:string;memberId:string};
+ const issued=await request(server,`/v1/community/groups/${group.id}/invitations`,a,'POST',{},'invite');assert.equal(issued.status,201);
+ const invitation=await issued.json() as {id:string;token:string};
+ const joined=await request(server,'/v1/community/invitations/join',b,'POST',{token:invitation.token,alias:'Other',membershipDisclosureAccepted:true},'join');assert.equal(joined.status,201);
+ await request(server,`/v1/community/groups/${group.id}/me/sharing`,b,'PATCH',{expectedRevision:1,flags:{...allFalse(),workout:true}},'sharing');
+ const pending=await request(server,'/v1/community/board/features',a,'POST',boardInput,'board');assert.equal(pending.status,201);
+ const board=await pending.json() as {id:string;featureId:string;revision:number};
+ const detail=await (await request(server,'/v1/community/board/features/'+board.featureId,a)).json() as {feature:{revision:number}};
+ assert.equal((await request(server,'/v1/community/board/features/'+board.featureId+'/vote',a,'POST',{expectedRevision:detail.feature.revision,active:true},'vote')).status,200);
+ const db=server.db,now=new Date().toISOString(),expires=new Date(Date.now()+86400000).toISOString();
+ const run=randomUUID(),post=randomUUID(),motion=randomUUID(),notice=randomUUID(),safety=randomUUID(),enrollment=randomUUID();
+ const preferences={alias:'Owner',intent:'accountability',language:'en',goals:['consistency'],region:null,location:'anywhere',priorities:['location','goals'],relax:{broaderRegion:false,mixedGoals:false},willingHost:true,fillExistingGroups:false,membershipDisclosureAccepted:true,policyVersion:'community-v1'};
+ const snapshot={intent:'accountability',language:'en',candidates:[],exclusionsKnown:true,exclusionGeneration:1,excludedPairs:[[a.actor.accountId,b.actor.accountId]]};
+ db.transaction(()=>{
+  db.prepare("INSERT INTO community_match_enrollments VALUES(?,?,1,1,'queued',?,?,?,NULL,0)").run(enrollment,a.actor.accountId,JSON.stringify(preferences),now,now);
+  db.prepare("INSERT INTO community_group_policy VALUES(?,'matched','accountability',12,1,'community-v1',NULL)").run(group.id);
+  db.prepare("INSERT INTO community_match_runs VALUES(?,'community-v1','America/New_York','2026-10-04','accountability','en','{}',?,?,'frozen',?,?,NULL)").run(run,'a'.repeat(64),JSON.stringify(snapshot),randomUUID(),now);
+  db.prepare('INSERT INTO community_match_assignments VALUES(?,?,1,1,?,?,?,1,?,?)').run(randomUUID(),enrollment,run,group.id,a.actor.accountId,'[]',now);
+  db.prepare('INSERT INTO community_blocks VALUES(?,?,?,1,0,?)').run(randomUUID(),a.actor.accountId,b.actor.accountId,now);
+  db.prepare("INSERT INTO community_posts VALUES(?,?,1,?,1,1,'win',NULL,?,'published','community-v1',?,?)").run(post,group.id,a.actor.accountId,'OWNER-PRIVATE-POST',now,expires);
+  db.prepare("INSERT INTO community_reactions VALUES(?,?,1,'cheer',1,1,?)").run(post,b.actor.accountId,now);
+  db.prepare("INSERT INTO community_motions VALUES(?,?,1,?,1,'growth',NULL,NULL,1,1,3,3,'open',?,?,NULL)").run(motion,group.id,a.actor.accountId,now,expires);
+  db.prepare('INSERT INTO community_motion_electorate VALUES(?,?,1,1)').run(motion,b.actor.accountId);
+  db.prepare("INSERT INTO community_ballots VALUES(?,?,1,'yes',?)").run(motion,b.actor.accountId,now);
+  db.prepare("INSERT INTO community_seat_reservations VALUES(?,?,?,1,?,1,1,0,'available',?,NULL,NULL)").run(randomUUID(),motion,group.id,a.actor.accountId,expires);
+  db.prepare('INSERT INTO community_profile_shares VALUES(?,?,1,1,?,?)').run(group.id,b.actor.accountId,JSON.stringify({revision:1,flags:{age:false,sex:false,region:true,avatar:false,adherence:false,ranking:false},sexDescription:null,region:'EU',avatar:null}),now);
+  db.prepare("INSERT INTO community_safety_references VALUES(?,?,?,'post',?,?,?)").run(safety,b.actor.accountId,group.id,post,now,expires);
+  db.prepare("INSERT INTO community_reports VALUES(?,?,?,'other','Other private report','pending',1,?,?)").run(randomUUID(),b.actor.accountId,safety,now,expires);
+  db.prepare("INSERT INTO community_safety_notices VALUES(?,?,?,'Reason','rule',1,'active',?,?,?,'synthetic-binding')").run(notice,b.actor.accountId,group.id,now,expires,expires);
+  db.prepare("INSERT INTO community_appeals VALUES(?,?,?,'Other private appeal',1,'pending',?,?)").run(randomUUID(),b.actor.accountId,notice,now,expires);
+  db.prepare('INSERT INTO community_post_cursors VALUES(?,?,?,1,1,?,?,?)').run(randomUUID(),b.actor.accountId,group.id,now,post,expires);
+  const aliasSource=randomUUID();
+  db.prepare("INSERT INTO community_board_features VALUES(?,'accessibility','submitted',NULL,1,?)").run(aliasSource,now);
+  db.prepare('INSERT INTO community_board_aliases VALUES(?,?,1)').run(aliasSource,board.featureId);
+  db.prepare('INSERT INTO community_board_merge_events VALUES(?,?,?,?,1,1,?,?)').run(randomUUID(),aliasSource,board.featureId,a.actor.accountId,'Synthetic historical merge reference',now);
+  db.prepare("INSERT INTO community_board_status_events VALUES(?,?,?,'submitted','planned',1,?,NULL,?)").run(randomUUID(),board.featureId,a.actor.accountId,'Synthetic historical status reference',now);
+  db.prepare('INSERT INTO community_extension_receipts VALUES(?,?,?,?,?,?,?)').run(a.actor.accountId,'synthetic','synthetic','a'.repeat(64),post,now,expires);
+ }).immediate();
+ return {group,board,invitation,run,post,motion};
+}

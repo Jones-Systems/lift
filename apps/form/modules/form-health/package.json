@@ -1,0 +1,7 @@
+{
+  "name": "form-health",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Form-owned read-only HealthKit lifecycle and bound query source",
+  "license": "UNLICENSED"
+}

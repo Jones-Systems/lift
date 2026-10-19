@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "Form",
+    "slug": "form-private",
+    "scheme": "formprivacy",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "bundleIdentifier": "com.jonessystems.form.private",
+      "supportsTablet": false,
+      "usesAppleSignIn": true,
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Form uses your microphone when you choose to dictate an answer.",
+        "NSSpeechRecognitionUsageDescription": "Form transcribes answers on this device when supported. You review them before saving.",
+        "NSLocalNetworkUsageDescription": "Form connects to your private family training service.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-font",
+      "expo-secure-store",
+      "expo-web-browser",
+      "expo-apple-authentication",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "enableSceneSupport": true
+          }
+        }
+      ]
+    ],
+    "experiments": {
+      "baseUrl": "."
+    }
+  }
+}

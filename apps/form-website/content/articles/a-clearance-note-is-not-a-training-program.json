@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "slug": "a-clearance-note-is-not-a-training-program",
+  "siteId": "return-after-illness",
+  "title": "A clearance note is not a training program",
+  "summary": "Organize a return-to-activity conversation without treating a generic article as individualized permission.",
+  "author": "Form editorial source author (AI-assisted)",
+  "created": "2026-10-09",
+  "sections": [
+    {
+      "heading": "Identify whose decision you are using",
+      "paragraphs": [
+        "For chronic conditions and disabilities, CDC recommends professional advice about appropriate activity types and amounts. The details of a return after illness depend on the individual situation.",
+        "This guide is for someone who already has explicit clearance and individual instructions. It does not supply that clearance or judge whether recovery is complete. Start by identifying the professional who provided the instructions and the date they were given."
+      ]
+    },
+    {
+      "heading": "Keep permission and limits together",
+      "paragraphs": [
+        "On one page, place the scope of permission beside the limits, follow-up plan and contact route. Keeping only the encouraging sentence can lose the context that made the advice appropriate.",
+        "If an instruction refers to an activity or setting you do not understand, write a clarification question. Do not translate it into a more demanding plan based on what a friend did after a different illness."
+      ]
+    },
+    {
+      "heading": "Prepare a context note for the next conversation",
+      "paragraphs": [
+        "Describe the activity you are considering in concrete terms: location, available help and the scheduling commitment. Keep this organizational note separate from your medical record if that is your preference, and do not upload private details to this preview."
+      ],
+      "checklist": [
+        "Who gave the instructions, and when?",
+        "What activity or setting do the instructions cover?",
+        "Which restrictions remain in place?",
+        "What is the agreed route for questions or reassessment?"
+      ]
+    },
+    {
+      "heading": "Do not let a planning tool widen permission",
+      "paragraphs": [
+        "A worksheet can help you remember questions, but it cannot determine a safe progression, interpret new symptoms or change a clinician’s instructions. Those decisions belong to the appropriate professional.",
+        "This is original appointment-planning content with source-author editorial review only. A public return-after-illness collection remains gated on clinical editorial review and verified product boundaries."
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "title": "Chronic Conditions & Disabilities Activity",
+      "url": "https://www.cdc.gov/physical-activity-basics/guidelines/chronic-health-conditions-and-disabilities.html",
+      "publisher": "CDC",
+      "accessed": "2026-10-09",
+      "supports": "Consult a health care professional or activity specialist about appropriate types and amounts of activity for chronic conditions or disabilities."
+    }
+  ],
+  "rights": {
+    "status": "original",
+    "statement": "Original Form-owned editorial wording and planning prompts, authored for this project with AI assistance. Sources are linked for context; no source photographs, copied article text or third-party assets are reproduced."
+  },
+  "provenance": {
+    "kind": "original",
+    "origin": "WEB-A3 editorial source lane",
+    "note": "Original seed copy. Primary source page verified by browsing on 2026-10-09. Source-author checked wording, attribution, rights and claim limits; no independent clinician reviewed this article."
+  },
+  "lifecycle": {
+    "state": "approved",
+    "review": {
+      "reviewer": "WEB-A3 editorial source author (AI-assisted)",
+      "date": "2026-10-09",
+      "scope": "source-author-editorial",
+      "contentHash": "3d8bce8bd5d786d8dcd924d5d54e06896a24d03c5feaf28287ddd9a4a434135c"
+    },
+    "approval": {
+      "reviewer": "WEB-A3 editorial source author (AI-assisted)",
+      "date": "2026-10-09",
+      "scope": "source-author-editorial",
+      "contentHash": "3d8bce8bd5d786d8dcd924d5d54e06896a24d03c5feaf28287ddd9a4a434135c",
+      "reviewHash": "7a3135a9a2ed34ac8c99aff5b1c62e3aa9e6969ef913de7de2d12435d2c334c5"
+    }
+  }
+}

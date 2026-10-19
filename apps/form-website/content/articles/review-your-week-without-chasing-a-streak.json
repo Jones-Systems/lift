@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "slug": "review-your-week-without-chasing-a-streak",
+  "siteId": "recovery-consistency",
+  "title": "Review your week without chasing a streak",
+  "summary": "A short planning ritual for the routines around movement, with no recovery score or clinical inference.",
+  "author": "Form editorial source author (AI-assisted)",
+  "created": "2026-10-09",
+  "sections": [
+    {
+      "heading": "Make time visible",
+      "paragraphs": [
+        "NHLBI’s sleep guidance emphasizes making time for sleep and keeping regular routines. A planning worksheet does not diagnose sleep problems or establish an exercise recovery prescription.",
+        "Put your expected commitments on one page, including work, caregiving, travel and time intended for sleep. The purpose is to see competing demands. This is not a scoring system, and there is no ideal-looking calendar to win."
+      ]
+    },
+    {
+      "heading": "Name one recurring collision",
+      "paragraphs": [
+        "Choose a practical conflict you recognize: a late meeting before an early start, a lengthy commute or an unpredictable obligation. Describe it without assigning blame. Then identify which scheduling decision, if any, you can change.",
+        "Leave a note when a constraint cannot be changed. Recording that fact can be more honest than repeatedly promising a routine that depends on an unavailable resource. Ask for help where appropriate rather than using this page as medical advice."
+      ]
+    },
+    {
+      "heading": "Review three moments",
+      "paragraphs": [
+        "Use these prompts at the beginning, middle and end of a week. Keep the review short; it is a record of planning, not a substitute for rest."
+      ],
+      "checklist": [
+        "Before: what conflict can I anticipate?",
+        "During: what changed in my schedule?",
+        "After: what should I carry into the next plan?"
+      ]
+    },
+    {
+      "heading": "Avoid turning the record into a diagnosis",
+      "paragraphs": [
+        "A streak, a missed session or a difficult night does not let this page infer your health or readiness to train. This preview has no recovery model and does not collect your answers.",
+        "If sleep or other health concerns need attention, use an appropriate professional care route. This article provides original organizational prompts and clearly scoped public references, not a treatment recommendation."
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "title": "Healthy Sleep Habits",
+      "url": "https://www.nhlbi.nih.gov/health/sleep-deprivation/healthy-sleep-habits",
+      "publisher": "NHLBI, NIH",
+      "accessed": "2026-10-09",
+      "supports": "Making time for sleep and regular sleep routines; not a treatment plan or an exercise recovery prescription."
+    }
+  ],
+  "rights": {
+    "status": "original",
+    "statement": "Original Form-owned editorial wording and planning prompts, authored for this project with AI assistance. Sources are linked for context; no source photographs, copied article text or third-party assets are reproduced."
+  },
+  "provenance": {
+    "kind": "original",
+    "origin": "WEB-A3 editorial source lane",
+    "note": "Original seed copy. Primary source page verified by browsing on 2026-10-09. Source-author checked wording, attribution, rights and claim limits; no independent clinician reviewed this article."
+  },
+  "lifecycle": {
+    "state": "approved",
+    "review": {
+      "reviewer": "WEB-A3 editorial source author (AI-assisted)",
+      "date": "2026-10-09",
+      "scope": "source-author-editorial",
+      "contentHash": "a0fcdf6a7b295a2ddd0ea585d7bc555e3939aa9af2d3e7d0a49895d8d0a20200"
+    },
+    "approval": {
+      "reviewer": "WEB-A3 editorial source author (AI-assisted)",
+      "date": "2026-10-09",
+      "scope": "source-author-editorial",
+      "contentHash": "a0fcdf6a7b295a2ddd0ea585d7bc555e3939aa9af2d3e7d0a49895d8d0a20200",
+      "reviewHash": "cd4f2dd82f98d535423a205354bca9a7c3e375e738b88d02ad3a553f95d52d79"
+    }
+  }
+}

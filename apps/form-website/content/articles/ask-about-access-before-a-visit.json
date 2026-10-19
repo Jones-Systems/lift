@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "slug": "ask-about-access-before-a-visit",
+  "siteId": "joint-aware-movement",
+  "title": "Ask about access before a movement-space visit",
+  "summary": "A facility-question guide for practical participation choices, without promising pain relief or injury prevention.",
+  "author": "Form editorial source author (AI-assisted)",
+  "created": "2026-10-09",
+  "sections": [
+    {
+      "heading": "Access is more than a label",
+      "paragraphs": [
+        "CDC recommends appropriate professional guidance about activity for people with chronic conditions or disabilities. A venue’s access information helps with logistics, but it does not decide what activity is appropriate for an individual.",
+        "An “accessible” label may not answer the question you actually have. Write down the part of a visit that requires clarification: the entrance, a route through the room, changing facilities, equipment adjustment or how instruction is delivered."
+      ]
+    },
+    {
+      "heading": "Contact the place with a specific question",
+      "paragraphs": [
+        "Describe the practical requirement without sharing more personal information than you want to disclose. Ask whether the answer applies at the time you intend to visit; available staff or a room arrangement may vary.",
+        "If possible, request the name or role of the person who can help on arrival. Having a contact makes it easier to revisit an unanswered question. It does not establish the person’s clinical qualifications."
+      ]
+    },
+    {
+      "heading": "Separate equipment information from health advice",
+      "paragraphs": [
+        "Ask what adjustments a piece of equipment offers and who can explain its intended use. If you need advice about your medical situation, ask an appropriately qualified professional rather than assuming an equipment demonstration provides it."
+      ],
+      "checklist": [
+        "What route will I use from entrance to activity space?",
+        "What help is available at my intended visit time?",
+        "Which equipment adjustments can be explained in advance?",
+        "Which questions require my clinician rather than facility staff?"
+      ]
+    },
+    {
+      "heading": "Compare places using your own requirements",
+      "paragraphs": [
+        "Make a short list of the information you received and the questions still open. Compare venues against your actual requirements, not an imagined ideal participant. A missing answer is information worth keeping visible.",
+        "This guide is a practical directory companion, not a clinical assessment. It makes no claim to treat joint pain or prevent injury, and it does not establish that a Form feature addresses an individual access need."
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "title": "Chronic Conditions & Disabilities Activity",
+      "url": "https://www.cdc.gov/physical-activity-basics/guidelines/chronic-health-conditions-and-disabilities.html",
+      "publisher": "CDC",
+      "accessed": "2026-10-09",
+      "supports": "Consult a health care professional or activity specialist about appropriate types and amounts of activity for chronic conditions or disabilities."
+    }
+  ],
+  "rights": {
+    "status": "original",
+    "statement": "Original Form-owned editorial wording and planning prompts, authored for this project with AI assistance. Sources are linked for context; no source photographs, copied article text or third-party assets are reproduced."
+  },
+  "provenance": {
+    "kind": "original",
+    "origin": "WEB-A3 editorial source lane",
+    "note": "Original seed copy. Primary source page verified by browsing on 2026-10-09. Source-author checked wording, attribution, rights and claim limits; no independent clinician reviewed this article."
+  },
+  "lifecycle": {
+    "state": "approved",
+    "review": {
+      "reviewer": "WEB-A3 editorial source author (AI-assisted)",
+      "date": "2026-10-09",
+      "scope": "source-author-editorial",
+      "contentHash": "ff317de30d6d7bc14048a5373e3c24c636ef1f75dd0e108edaea7d8eb9e66201"
+    },
+    "approval": {
+      "reviewer": "WEB-A3 editorial source author (AI-assisted)",
+      "date": "2026-10-09",
+      "scope": "source-author-editorial",
+      "contentHash": "ff317de30d6d7bc14048a5373e3c24c636ef1f75dd0e108edaea7d8eb9e66201",
+      "reviewHash": "bee5f0d5b583e8d6bb40b3daca4ab7b71710ac2807f15177eda818357fd34fc5"
+    }
+  }
+}

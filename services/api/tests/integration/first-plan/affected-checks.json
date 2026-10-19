@@ -1,0 +1,161 @@
+{
+  "schema": "form.integration-affected-checks/v1",
+  "sourceBase": "2771afeb5cba914849dfcdd5b66dcaac08e0adec",
+  "workingDirectory": "services/api",
+  "prerequisite": [
+    "npm",
+    "run",
+    "build"
+  ],
+  "groups": {
+    "core/source-prescription": [
+      "tests/source-prescription-domain.test.ts",
+      "tests/source-prescription.test.ts"
+    ],
+    "core/backend": [
+      "tests/backend.test.ts"
+    ],
+    "lifecycle": [
+      "tests/lifecycle.test.ts",
+      "tests/lifecycle-http.test.ts",
+      "tests/lifecycle-export.test.ts"
+    ],
+    "activity/integration": [
+      "tests/activity/integration/composition.test.ts",
+      "tests/activity/integration/legacy-reader.test.ts",
+      "tests/activity/integration/request-channel.test.ts"
+    ],
+    "body/measurements": [
+      "tests/body/measurements.test.ts"
+    ],
+    "credentials": [
+      "tests/credentials/credentials.test.ts"
+    ],
+    "phone": [
+      "tests/phone/phone.test.ts"
+    ],
+    "integration/account-modules": [
+      "tests/integration/account-modules/canonical-writer.test.ts",
+      "tests/integration/account-modules/composition.test.ts",
+      "tests/integration/account-modules/server.test.ts"
+    ],
+    "integration/first-plan": [
+      "tests/integration/first-plan/confirmed-capture.test.ts",
+      "tests/integration/first-plan/r1-intake-content.test.ts",
+      "tests/integration/first-plan/host.test.ts",
+      "tests/integration/first-plan/preparation.test.ts",
+      "tests/integration/first-plan/server.test.ts"
+    ],
+    "integration/training-context": [
+      "tests/integration/training-context.test.ts",
+      "tests/integration/training-feedback/context-association.test.ts",
+      "tests/integration/training-feedback/account-modules.test.ts"
+    ],
+    "integration/server-consumers": [
+      "tests/integration/body-server.test.ts",
+      "tests/integration/credential-server.test.ts",
+      "tests/integration/domain-read.test.ts",
+      "tests/integration/grounded-answer.test.ts",
+      "tests/integration/nutrition-conversation/http.test.ts",
+      "tests/integration/request-factories.test.ts",
+      "tests/grounding/evaluation/nutrition-http-session.test.ts"
+    ],
+    "planning/first-plan": [
+      "tests/planning/first-plan/selection.test.mjs",
+      "tests/planning/first-plan/normalization.test.mjs",
+      "tests/planning/first-plan/source-selection.test.mjs"
+    ],
+    "planning/constraints-adapters": [
+      "tests/planning/constraints/first-plan-adapter.test.mjs",
+      "tests/planning/constraints/confirmed-capture.test.mjs"
+    ],
+    "progress-comparison": [
+      "tests/progress-comparison/comparison.test.mjs",
+      "tests/progress-comparison/persistence.test.mjs"
+    ],
+    "training-feedback/consumers": [
+      "tests/training-feedback/ledger.test.mjs",
+      "tests/training-feedback/comparison.test.mjs",
+      "tests/training-feedback/http.test.mjs"
+    ],
+    "runtime-modules": [
+      "tests/runtime-modules/authority-currentness.test.ts",
+      "tests/runtime-modules/capability-and-denial.test.ts",
+      "tests/runtime-modules/closed-read-admission.test.ts",
+      "tests/runtime-modules/closed-read-storage.test.ts",
+      "tests/runtime-modules/composition-http.test.ts",
+      "tests/runtime-modules/configuration-and-lifetime.test.ts",
+      "tests/runtime-modules/export-http.test.ts",
+      "tests/runtime-modules/grounded-answer-startup.test.ts",
+      "tests/runtime-modules/late-boundary-regression.test.ts",
+      "tests/runtime-modules/migrations-and-restart.test.ts",
+      "tests/runtime-modules/restore-admission.test.ts"
+    ],
+    "discovery": [
+      "tests/integration/test-discovery.test.mjs"
+    ]
+  },
+  "argv": [
+    "node",
+    "--experimental-transform-types",
+    "--import",
+    "./scripts/integration/source-hook.mjs",
+    "--test",
+    "--test-reporter=tap",
+    "--test-isolation=none",
+    "--test-concurrency=1",
+    "dist/tests/source-prescription-domain.test.js",
+    "dist/tests/source-prescription.test.js",
+    "dist/tests/backend.test.js",
+    "dist/tests/lifecycle.test.js",
+    "dist/tests/lifecycle-http.test.js",
+    "dist/tests/lifecycle-export.test.js",
+    "dist/tests/activity/integration/composition.test.js",
+    "dist/tests/activity/integration/legacy-reader.test.js",
+    "dist/tests/activity/integration/request-channel.test.js",
+    "dist/tests/body/measurements.test.js",
+    "dist/tests/credentials/credentials.test.js",
+    "dist/tests/phone/phone.test.js",
+    "dist/tests/integration/account-modules/canonical-writer.test.js",
+    "dist/tests/integration/account-modules/composition.test.js",
+    "dist/tests/integration/account-modules/server.test.js",
+    "dist/tests/integration/first-plan/host.test.js",
+    "dist/tests/integration/first-plan/confirmed-capture.test.js",
+    "dist/tests/integration/first-plan/r1-intake-content.test.js",
+    "dist/tests/integration/first-plan/preparation.test.js",
+    "dist/tests/integration/first-plan/server.test.js",
+    "dist/tests/integration/training-context.test.js",
+    "dist/tests/integration/training-feedback/context-association.test.js",
+    "dist/tests/integration/training-feedback/account-modules.test.js",
+    "dist/tests/integration/body-server.test.js",
+    "dist/tests/integration/credential-server.test.js",
+    "dist/tests/integration/domain-read.test.js",
+    "dist/tests/integration/grounded-answer.test.js",
+    "dist/tests/integration/nutrition-conversation/http.test.js",
+    "dist/tests/integration/request-factories.test.js",
+    "dist/tests/grounding/evaluation/nutrition-http-session.test.js",
+    "tests/planning/first-plan/selection.test.mjs",
+    "tests/planning/first-plan/normalization.test.mjs",
+    "tests/planning/first-plan/source-selection.test.mjs",
+    "tests/planning/constraints/first-plan-adapter.test.mjs",
+    "tests/planning/constraints/confirmed-capture.test.mjs",
+    "tests/progress-comparison/comparison.test.mjs",
+    "tests/progress-comparison/persistence.test.mjs",
+    "tests/training-feedback/ledger.test.mjs",
+    "tests/training-feedback/comparison.test.mjs",
+    "tests/training-feedback/http.test.mjs",
+    "dist/tests/runtime-modules/authority-currentness.test.js",
+    "dist/tests/runtime-modules/capability-and-denial.test.js",
+    "dist/tests/runtime-modules/closed-read-admission.test.js",
+    "dist/tests/runtime-modules/closed-read-storage.test.js",
+    "dist/tests/runtime-modules/composition-http.test.js",
+    "dist/tests/runtime-modules/configuration-and-lifetime.test.js",
+    "dist/tests/runtime-modules/export-http.test.js",
+    "dist/tests/runtime-modules/grounded-answer-startup.test.js",
+    "dist/tests/runtime-modules/late-boundary-regression.test.js",
+    "dist/tests/runtime-modules/migrations-and-restart.test.js",
+    "dist/tests/runtime-modules/restore-admission.test.js",
+    "tests/integration/test-discovery.test.mjs"
+  ],
+  "selectionNote": "Confirmed-capture Domain/history/export consumers plus the R1 content materialization test. Runtime outcomes are recorded separately in revision-bound qualification receipts. FORM_FEEDBACK_TEST_MODULE_ROOT must be absent; prior source-prescription and component evidence remains separate. R1 content does not supply medical classifier, primary-rule or care-resource authority."
+}

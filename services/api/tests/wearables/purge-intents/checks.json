@@ -1,0 +1,5 @@
+{
+  "group": "wearable-purge-intents",
+  "covers": ["mandatory qualified cleanup ports", "quiesce before immutable native capture", "prepare before backend and confirmation before native", "exact receipt scope", "unknown atomic CAS readback", "confirmed restart without backend or recapture", "idempotent native retry and complete marker", "original context key and command fencing", "cleanup lifetime and atomic late-writer guard"],
+  "tests": ["services/api/tests/wearables/purge-intents/purge-intents.test.mjs"]
+}

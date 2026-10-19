@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "slug": "keep-your-discharge-instructions-readable",
+  "siteId": "after-physical-therapy",
+  "title": "Keep your discharge instructions readable after physical therapy",
+  "summary": "An original question sheet for organizing clinician instructions; no rehabilitation program or discharge decision is provided.",
+  "author": "Form editorial source author (AI-assisted)",
+  "created": "2026-10-09",
+  "sections": [
+    {
+      "heading": "Keep the boundary in writing",
+      "paragraphs": [
+        "CDC advises people with chronic conditions or disabilities to consult a professional about appropriate types and amounts of activity. That general advice does not describe your discharge decision.",
+        "If you have been cleared to transition toward ordinary fitness, keep the scope of that clearance with your written instructions. A remembered phrase such as “you can exercise” may leave important limits unstated. Ask the clinician who knows your case to clarify them."
+      ]
+    },
+    {
+      "heading": "Create an instruction index",
+      "paragraphs": [
+        "Use a folder or a paper cover sheet to list the instructions you received, their dates and who gave them. Separate current instructions from an older version rather than merging them into a new plan of your own.",
+        "If two documents appear to conflict, mark the exact wording and ask the responsible professional. This article cannot decide which instruction should control, and a fitness app cannot silently resolve that conflict."
+      ]
+    },
+    {
+      "heading": "Take concrete questions to follow-up",
+      "paragraphs": [
+        "Write questions in a way that allows a specific answer. Instead of asking whether all exercise is safe, describe the activity or environment you are considering. Record the response and any limits in the clinician’s words."
+      ],
+      "checklist": [
+        "Which instructions remain current after discharge?",
+        "Does clearance apply to the activity I am considering?",
+        "What should prompt contacting you, and how should I do that?",
+        "Who is responsible for future reassessment?"
+      ]
+    },
+    {
+      "heading": "Let unresolved questions stay unresolved",
+      "paragraphs": [
+        "An unanswered question should remain visible. Do not fill the space with a generic internet routine or a promise that an app can replace therapy. If you need clarification, return to the appropriate care route.",
+        "This page offers appointment organization only. It has source-author editorial review, not a clinical review of your situation or a validated transition-to-fitness protocol. Public rollout of this collection requires a separate clinical editorial gate."
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "title": "Chronic Conditions & Disabilities Activity",
+      "url": "https://www.cdc.gov/physical-activity-basics/guidelines/chronic-health-conditions-and-disabilities.html",
+      "publisher": "CDC",
+      "accessed": "2026-10-09",
+      "supports": "Consult a health care professional or activity specialist about appropriate types and amounts of activity for chronic conditions or disabilities."
+    }
+  ],
+  "rights": {
+    "status": "original",
+    "statement": "Original Form-owned editorial wording and planning prompts, authored for this project with AI assistance. Sources are linked for context; no source photographs, copied article text or third-party assets are reproduced."
+  },
+  "provenance": {
+    "kind": "original",
+    "origin": "WEB-A3 editorial source lane",
+    "note": "Original seed copy. Primary source page verified by browsing on 2026-10-09. Source-author checked wording, attribution, rights and claim limits; no independent clinician reviewed this article."
+  },
+  "lifecycle": {
+    "state": "approved",
+    "review": {
+      "reviewer": "WEB-A3 editorial source author (AI-assisted)",
+      "date": "2026-10-09",
+      "scope": "source-author-editorial",
+      "contentHash": "0c3e6ec518b4db9661efa0e1e32a7efc8950003dd026141a3efc1b261957988f"
+    },
+    "approval": {
+      "reviewer": "WEB-A3 editorial source author (AI-assisted)",
+      "date": "2026-10-09",
+      "scope": "source-author-editorial",
+      "contentHash": "0c3e6ec518b4db9661efa0e1e32a7efc8950003dd026141a3efc1b261957988f",
+      "reviewHash": "aec1f17577842ed0ebdbf58b0b2323741ea80b41649e346f3e6fbdb1710235c3"
+    }
+  }
+}

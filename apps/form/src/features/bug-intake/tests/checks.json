@@ -1,0 +1,13 @@
+{
+  "schema": "form.bug-intake.client-affected-checks/v1",
+  "groups": {
+    "FORM-WS13-client": "node --test --test-concurrency=1 apps/form/src/api/tests/bug-intake.test.cjs",
+    "FORM-WS13-controller": "node --test --test-concurrency=1 apps/form/src/features/bug-intake/tests/controller.test.cjs",
+    "FORM-WS13-flow": "node --test --test-concurrency=1 apps/form/src/features/bug-intake/tests/flow.test.cjs",
+    "FORM-WS13-outcome-consumer": "node --test --test-concurrency=1 apps/form/src/features/bug-intake/tests/outcome.test.cjs",
+    "FORM-WS13-app-types": "npm run typecheck --prefix apps/form"
+  },
+  "fixtures": ["apps/form/src/features/bug-intake/tests/fixture.cjs"],
+  "scratch": "In-memory transpilation and synthetic ports only; no files, network, timers, subprocesses, or native runtime are created by the focused tests.",
+  "discovery": "Existing apps/form/scripts/run-api-tests.cjs discovers the API test by suffix. Controller group is explicit and not added to shared discovery in this slice."
+}

@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "slug": "a-movement-week-that-fits",
+  "siteId": "everyday-longevity",
+  "title": "Plan a movement week around your actual calendar",
+  "summary": "A paper-first planning exercise for busy adults, with a clear distinction between general guidelines and your next practical decision.",
+  "author": "Form editorial source author (AI-assisted)",
+  "created": "2026-10-09",
+  "sections": [
+    {
+      "heading": "A guideline is context, not a calendar",
+      "paragraphs": [
+        "CDC describes a general adult target of 150 minutes of moderate activity weekly and muscle-strengthening activity on at least two days. That is population guidance, not a requirement to begin at that amount or a personalized prescription.",
+        "Our worksheet begins somewhere different: an honest look at the week in front of you. Write down commitments that cannot move before adding anything. A blank calendar often describes a fantasy rather than a useful plan."
+      ]
+    },
+    {
+      "heading": "Pick a purpose you can describe",
+      "paragraphs": [
+        "Choose one ordinary-life reason for making room for movement. It might be enjoying a walk with a friend, feeling more familiar with a gym, or reserving time away from a desk. This is your reason, not a predicted result.",
+        "Next to that purpose, write the available place, a realistic time window and any support you need. Keep travel and changing time in the same box. A twenty-minute opening may be consumed by a fifteen-minute journey."
+      ]
+    },
+    {
+      "heading": "Make two versions of the week",
+      "paragraphs": [
+        "On paper, make an ordinary-week column and a disrupted-week column. The second column should account for a real obstacle: weather, travel, a caregiving change or an unavailable space. It is a planning alternative, not a punishment for missing the first version."
+      ],
+      "checklist": [
+        "Ordinary week: available place, travel time, opening and support.",
+        "Disrupted week: which practical constraint changes?",
+        "End of week: what was feasible, and what should be revised?"
+      ]
+    },
+    {
+      "heading": "Review the plan without grading your body",
+      "paragraphs": [
+        "At the end of the week, compare your calendar with what happened. Record a constraint that was missing from the original plan and one decision that made participation easier. Avoid using a single difficult week as a verdict about your character.",
+        "This article does not assess fitness or provide individual health advice. If you have a condition or uncertainty about appropriate activity, discuss your plan with a qualified professional."
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "title": "Adult Activity: An Overview",
+      "url": "https://www.cdc.gov/physical-activity-basics/guidelines/adults.html",
+      "publisher": "CDC",
+      "accessed": "2026-10-09",
+      "supports": "General adult activity recommendations; not an individualized program or evidence of Form outcomes."
+    }
+  ],
+  "rights": {
+    "status": "original",
+    "statement": "Original Form-owned editorial wording and planning prompts, authored for this project with AI assistance. Sources are linked for context; no source photographs, copied article text or third-party assets are reproduced."
+  },
+  "provenance": {
+    "kind": "original",
+    "origin": "WEB-A3 editorial source lane",
+    "note": "Original seed copy. Primary source page verified by browsing on 2026-10-09. Source-author checked wording, attribution, rights and claim limits; no independent clinician reviewed this article."
+  },
+  "lifecycle": {
+    "state": "approved",
+    "review": {
+      "reviewer": "WEB-A3 editorial source author (AI-assisted)",
+      "date": "2026-10-09",
+      "scope": "source-author-editorial",
+      "contentHash": "2bd9259c0d919f7ba83a651f41e8b0ec8d4ccbf6888cfba23c285518d9de1dfc"
+    },
+    "approval": {
+      "reviewer": "WEB-A3 editorial source author (AI-assisted)",
+      "date": "2026-10-09",
+      "scope": "source-author-editorial",
+      "contentHash": "2bd9259c0d919f7ba83a651f41e8b0ec8d4ccbf6888cfba23c285518d9de1dfc",
+      "reviewHash": "b9d0d5dbe52b9b7140036d51aa4e8de173253ee934b175104ca5db946d81f5e6"
+    }
+  }
+}

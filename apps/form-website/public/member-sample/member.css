@@ -1,0 +1,24 @@
+.member-sample-shell { color: var(--ink, #24372c); max-width: 100%; }
+.member-sample-banner { padding: 1rem 1.25rem; border: 2px solid #68865e; background: #eef3e8; border-radius: 1rem; margin-bottom: 1rem; }
+.member-sample-banner strong { font-size: 1.05rem; }
+.member-sample-banner p { margin: .35rem 0 0; line-height: 1.55; }
+.member-navigation { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0; }
+.member-navigation button, .member-navigation a, .member-controls button, [data-member-premium] button, [data-member-resume] button { font: inherit; border: 1px solid #81917c; border-radius: .65rem; padding: .65rem .85rem; background: #fffdf7; color: #24372c; min-height: 44px; }
+.member-navigation a { display: inline-flex; align-items: center; text-decoration: none; }
+.member-navigation [aria-current="page"] { background: #294535; color: #fffdf7; border-color: #294535; }
+.member-sample-shell :focus-visible { outline: 3px solid #92652b; outline-offset: 3px; }
+.member-controls { padding: .8rem 1rem; background: #f5f3eb; border-radius: .8rem; }
+.member-controls summary { cursor: pointer; padding: .3rem 0; font-weight: 600; }
+.member-controls div { display: flex; flex-wrap: wrap; gap: .5rem; }
+.member-controls label { display: block; margin: .8rem 0; }
+.member-controls select { display: block; max-width: 100%; min-height: 44px; padding: .5rem; font: inherit; }
+.member-notice { min-height: 1.5rem; line-height: 1.5; }
+.member-sample-shell [hidden] { display: none !important; }
+[data-member-application] .session-rail { display: none; }
+[data-member-application] .session-workspace-layout { grid-template-columns: minmax(0, 1fr); }
+[data-member-application] .session-canvas { min-width: 0; }
+[data-member-premium], [data-member-privacy], [data-member-resume] { padding: 1.25rem; border: 1px solid #d3d9cb; border-radius: 1rem; margin: 1rem 0; background: #fffdf7; overflow-wrap: anywhere; }
+[data-member-premium] div { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0; }
+[data-member-premium] button:disabled { opacity: .6; cursor: not-allowed; }
+@media (max-width: 480px) { .member-navigation > * { flex: 1 0 28%; justify-content: center; } .member-controls { padding: .7rem; } }
+@media (prefers-reduced-motion: reduce) { .member-sample-shell *, .member-sample-shell *::before, .member-sample-shell *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }

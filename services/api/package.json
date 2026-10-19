@@ -1,0 +1,30 @@
+{
+  "name": "@form/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "node node_modules/typescript/bin/tsc -p tsconfig.json && python3 -B scripts/grounding/build-projection.py && python3 -B scripts/grounding/build-form-coverage.py",
+    "start": "node dist/src/cli.js",
+    "test": "node scripts/integration/test-discovery.mjs --run",
+    "test:list": "node scripts/integration/test-discovery.mjs --list",
+    "test:discovery": "node --test --test-isolation=none tests/integration/test-discovery.test.mjs"
+  },
+  "dependencies": {
+    "@apple/app-store-server-library": "3.1.0",
+    "@hono/node-server": "2.1.4",
+    "better-auth": "1.7.7",
+    "better-sqlite3": "13.0.3",
+    "hono": "4.13.13",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "24.19.1",
+    "typescript": "7.0.2",
+    "form-test-typescript": "npm:typescript@5.9.3"
+  }
+}

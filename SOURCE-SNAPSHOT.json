@@ -1,0 +1,42 @@
+{
+  "source_repository": "Jones-Systems/Form",
+  "source_commit": "6fc75ac8f0ee87c150ad4603f27b69a5342e5296",
+  "build_driver_commit": "71761c743b3fa386cc7db880b84a122777a8016e",
+  "export_roots": [
+    "apps",
+    "services",
+    "packages"
+  ],
+  "excluded_roots": [
+    "sources",
+    "vendor",
+    "docs",
+    "configs",
+    "tools",
+    ".agents",
+    ".codex"
+  ],
+  "excluded_app_files": [
+    "apps/form/scripts/capture-local.cjs",
+    "apps/form/scripts/capture-native-matrix.cjs",
+    "apps/form/scripts/native-matrix.md"
+  ],
+  "sanitized_files": [
+    "apps/form-website/tests/account.test.mjs",
+    "apps/form/app.json",
+    "apps/form/modules/form-speech/README.md",
+    "apps/form/scripts/test-api-transport.cjs",
+    "apps/form/src/api/client.ts",
+    "apps/form/src/api/tests/phone-signin.test.cjs",
+    "apps/form/src/integration/tests/auth-session.test.cjs",
+    "packages/chatgpt-adapter/scripts/check-domain-sqlite.mjs",
+    "packages/chatgpt-adapter/tests/api-source-binding.json",
+    "services/api/README.md",
+    "services/api/phone.md",
+    "services/api/purchases.md",
+    "services/api/tests/training-feedback/checks.json",
+    "services/api/tests/training-feedback/donor-loader.mjs"
+  ],
+  "history": "Fresh snapshot; no source Git history copied",
+  "scope": "Native simulator builds; backend research projection requires omitted private corpus"
+}

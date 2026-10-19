@@ -1,0 +1,20 @@
+{
+  "name": "@form/chatgpt-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "exports": {
+    ".": "./src/index.mjs",
+    "./domain-ports": "./src/domain-ports.mjs",
+    "./mcp-handler": "./src/mcp-handler.mjs",
+    "./oauth-resource": "./src/oauth-resource.mjs"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 tests/adapter.test.mjs tests/domain-ports.test.mjs tests/mcp-handler.test.mjs tests/oauth-resource.test.mjs",
+    "test:integration": "node scripts/check-domain-sqlite.mjs --integration",
+    "test:all": "node scripts/check-domain-sqlite.mjs --all"
+  },
+  "dependencies": { "@modelcontextprotocol/server": "2.3.1" },
+  "devDependencies": { "@modelcontextprotocol/client": "2.3.1" }
+}

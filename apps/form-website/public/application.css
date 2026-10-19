@@ -1,0 +1,58 @@
+.application .app-intro{padding:48px 0 30px;max-width:650px}
+.application h1{font-size:clamp(36px,4vw,56px);line-height:1.08;font-weight:600;margin-bottom:18px}
+.application .app-intro>p:last-child,.application .app-footnote{color:#545a61}
+.application .session-workspace{width:100%;margin:0}
+.application .session-workspace-name{min-width:0;overflow-wrap:anywhere}
+.application .app-account{padding:18px 28px;border-bottom:1px solid #dcdcd5;background:#fafaf7}
+.application .app-account p{margin-bottom:12px}
+.application .app-toolbar{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px}
+.application button{font:inherit;font-weight:600;min-height:44px;border:1px solid #dcdcd5;border-radius:24px;padding:10px 18px;background:#fff;color:#15171a;cursor:pointer}
+.application button[type=submit],.application button[data-action=start]{background:#e3a03a;border-color:transparent}
+.application button:disabled{cursor:default;opacity:.55}
+.application .session-rail nav button{display:flex;align-items:center;gap:13px;text-align:left;border:0;border-radius:12px;padding:13px 10px;background:transparent}
+.application .session-rail nav button[aria-current=page]{background:#e9e9e3}
+.application .session-rail nav button span{font-size:11px;color:#545a61}
+.application .session-canvas{padding-bottom:32px}
+.application .app-content{min-height:260px}
+.application .app-content h3{font-size:23px;line-height:1.3;margin:16px 0 10px}
+.application .app-content h4{font-size:16px;margin:20px 0 10px}
+.application .app-content p,.application .app-content li{overflow-wrap:anywhere}
+.application .app-muted,.application .app-state,.application .app-footnote{font-size:14px;color:#545a61;line-height:1.6}
+.application .app-notice:empty{display:none}
+.application .app-notice,.application .app-hold{padding:14px;border:1px solid #ba812c;background:#fff6e4;border-radius:12px;overflow-wrap:anywhere}
+.application .app-state[data-resource-status=unknown],.application .app-state[data-resource-status=conflict],.application .app-state[data-resource-status=error]{color:#754706}
+.application .app-empty,.application .app-fallback{background:#fafaf7;padding:24px;border-radius:14px}
+.application .app-cards{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:16px;margin:20px 0}
+.application .app-cards>li{padding:20px;border:1px solid #dcdcd5;border-radius:16px;min-width:0}
+.application .app-cards h3{margin-top:0}
+.application .app-detail,.application .app-movement{border-top:1px solid #dcdcd5;padding:20px 0;margin-top:22px}
+.application .app-rows{list-style:none;padding:0}
+.application .app-rows li{display:flex;flex-direction:column;gap:7px;padding:14px 0;border-bottom:1px solid #dcdcd5}
+.application .app-target,.application .app-receipt{padding:14px;background:#f2f2ee;border-radius:12px}
+.application .app-set{border:1px solid #dcdcd5;padding:16px;border-radius:12px;margin-bottom:12px}
+.application form{margin:18px 0}
+.application fieldset{min-width:0;border:0;padding:0;margin:0}
+.application legend{font-weight:700;padding:0;margin-bottom:14px}
+.application .app-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,150px),1fr));gap:14px;margin-bottom:18px}
+.application label{display:flex;flex-direction:column;gap:8px;font-size:14px;font-weight:600;min-width:0}
+.application input,.application select,.application textarea{font:inherit;width:100%;min-width:0;min-height:44px;border:1px solid #9b9e96;border-radius:8px;padding:10px;background:#fff;color:#15171a}
+.application input:focus-visible,.application select:focus-visible,.application textarea:focus-visible{outline:3px solid #15171a;outline-offset:3px}
+.application .app-check{flex-direction:row;align-items:start;line-height:1.6;margin-bottom:16px}
+.application .app-check input{width:20px;min-height:20px;flex-shrink:0;margin-top:2px}
+.application .app-footnote{margin:22px 0 40px;max-width:760px}
+.application .app-plan-editor{border-top:1px solid #dcdcd5;padding-top:22px;margin-top:24px}
+.application .app-plan-items{list-style:none;padding:0;display:grid;gap:18px}
+.application .app-plan-items>li{border:1px solid #dcdcd5;border-radius:14px;padding:18px;min-width:0}
+.application .app-plan-items .app-fields{margin-top:16px}
+.application .app-plan-items .app-toolbar{margin-bottom:0}
+.application textarea{resize:vertical}
+.application .app-equipment{list-style:none;padding:0;display:grid;gap:16px}
+.application .app-equipment li{display:grid;gap:10px;min-width:0}
+.application .app-equipment button{justify-self:start}
+.application .app-totals{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));gap:16px}
+.application .app-totals div{border:1px solid #dcdcd5;border-radius:12px;padding:16px;min-width:0}
+.application .app-totals dt{font-size:14px;color:#545a61}
+.application .app-totals dd{font-size:22px;margin:8px 0 0;overflow-wrap:anywhere}
+.application a{text-underline-offset:4px}
+@media(max-width:700px){.application .app-intro{padding-top:30px}.application .app-account{padding:16px 18px}.application .session-rail nav{grid-template-columns:1fr 1fr}.application .app-content{min-height:200px}.application .app-toolbar button{flex:1}.application .app-set{padding:12px}.application .app-fields{grid-template-columns:1fr}.application .app-content button[type=submit]{width:100%}.application .v-header{gap:16px;flex-wrap:wrap}}
+@media(prefers-reduced-motion:reduce){.application *{animation:none;transition:none;scroll-behavior:auto}}

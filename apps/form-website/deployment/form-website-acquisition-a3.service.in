@@ -1,0 +1,16 @@
+[Unit]
+Description=Form website acquisition A3 private static preview
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=@SITE_ROOT@/current
+ExecStart=@NODE@ @SITE_ROOT@/runtime/@REVISION@/serve.mjs @SITE_ROOT@/current @BIND@ @PORT@
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+UMask=0077
+
+[Install]
+WantedBy=default.target

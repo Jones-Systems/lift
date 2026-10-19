@@ -1,0 +1,366 @@
+{
+  "schemaVersion": 1,
+  "sites": [
+    {
+      "id": "everyday-longevity",
+      "name": "The Everyday Movement Review",
+      "audience": "Adults fitting movement around midlife responsibilities",
+      "layout": "magazine",
+      "phase": 1,
+      "intro": "A field guide to making room for movement in an ordinary week. Start with the life you already have, and build a plan you can revisit.",
+      "navigation": [
+        {
+          "label": "Latest reading",
+          "target": "tool"
+        },
+        {
+          "label": "Your week",
+          "target": "reading"
+        },
+        {
+          "label": "Our publisher",
+          "target": "about"
+        }
+      ],
+      "toolTitle": "Your week, on one page",
+      "prompts": [
+        "What daily task would you like to feel more prepared for?",
+        "Which two calendar openings are actually yours?",
+        "What place or equipment can you reliably access?",
+        "What would make your plan easier to repeat next week?"
+      ],
+      "sources": [
+        {
+          "title": "Adult Activity: An Overview",
+          "url": "https://www.cdc.gov/physical-activity-basics/guidelines/adults.html",
+          "publisher": "CDC",
+          "accessed": "2026-10-09",
+          "supports": "General adult activity recommendations; not an individualized program or evidence of Form outcomes."
+        }
+      ],
+      "draftTemplate": [
+        {
+          "heading": "The reader’s question",
+          "paragraphs": [
+            "Replace this template with an original explanation of a specific reader question. Verify every factual claim against the cited source; retain the scope and limits."
+          ]
+        },
+        {
+          "heading": "A useful next conversation",
+          "paragraphs": [
+            "Write original, practical questions for this audience. Do not invent a prescription, product capability, price, testimonial or clinical result."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "strength-beginners",
+      "name": "Start Here: Strength",
+      "audience": "New and returning strength participants",
+      "layout": "steps",
+      "phase": 1,
+      "intro": "Understand the room before you choose the routine. Plain-language questions for your first conversation, first equipment visit and first training notes.",
+      "navigation": [
+        {
+          "label": "Start the steps",
+          "target": "tool"
+        },
+        {
+          "label": "Read the guide",
+          "target": "reading"
+        },
+        {
+          "label": "Who we are",
+          "target": "about"
+        }
+      ],
+      "toolTitle": "Three steps before choosing a plan",
+      "prompts": [
+        "Name the place you intend to train and the help available there.",
+        "Ask how equipment is adjusted and who can explain its use.",
+        "Write down the terms in a plan that you cannot yet explain."
+      ],
+      "sources": [
+        {
+          "title": "Adult Activity: An Overview",
+          "url": "https://www.cdc.gov/physical-activity-basics/guidelines/adults.html",
+          "publisher": "CDC",
+          "accessed": "2026-10-09",
+          "supports": "General adult activity recommendations; not an individualized program or evidence of Form outcomes."
+        }
+      ],
+      "draftTemplate": [
+        {
+          "heading": "The reader’s question",
+          "paragraphs": [
+            "Replace this template with an original explanation of a specific reader question. Verify every factual claim against the cited source; retain the scope and limits."
+          ]
+        },
+        {
+          "heading": "A useful next conversation",
+          "paragraphs": [
+            "Write original, practical questions for this audience. Do not invent a prescription, product capability, price, testimonial or clinical result."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "weight-management",
+      "name": "Habits, in Context",
+      "audience": "Readers organizing movement and food routines",
+      "layout": "planner",
+      "phase": 2,
+      "intro": "A practical planning desk for schedules, shopping and movement. Focus on decisions you can observe, without a promised number on the scale.",
+      "navigation": [
+        {
+          "label": "Planning board",
+          "target": "tool"
+        },
+        {
+          "label": "The routine guide",
+          "target": "reading"
+        },
+        {
+          "label": "Ownership",
+          "target": "about"
+        }
+      ],
+      "toolTitle": "A routine planning board",
+      "prompts": [
+        "Choose one routine you want to make easier.",
+        "Name its most common scheduling obstacle.",
+        "Identify a practical alternative for that obstacle.",
+        "Decide when to review the routine, without judging a single weigh-in."
+      ],
+      "sources": [
+        {
+          "title": "Changing Your Habits for Better Health",
+          "url": "https://www.niddk.nih.gov/health-information/diet-nutrition/changing-habits-better-health",
+          "publisher": "NIDDK, NIH",
+          "accessed": "2026-10-09",
+          "supports": "Planning around barriers and reviewing habits; no promised weight change from this worksheet."
+        }
+      ],
+      "draftTemplate": [
+        {
+          "heading": "The reader’s question",
+          "paragraphs": [
+            "Replace this template with an original explanation of a specific reader question. Verify every factual claim against the cited source; retain the scope and limits."
+          ]
+        },
+        {
+          "heading": "A useful next conversation",
+          "paragraphs": [
+            "Write original, practical questions for this audience. Do not invent a prescription, product capability, price, testimonial or clinical result."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "after-physical-therapy",
+      "name": "The Next Chapter",
+      "audience": "Clinician-cleared adults transitioning from physical therapy",
+      "layout": "questions",
+      "phase": 3,
+      "intro": "An appointment companion for the space between discharge instructions and ordinary fitness. Carry your questions forward without turning clearance into a blanket permission.",
+      "navigation": [
+        {
+          "label": "Appointment questions",
+          "target": "tool"
+        },
+        {
+          "label": "Keep reading",
+          "target": "reading"
+        },
+        {
+          "label": "Publication notes",
+          "target": "about"
+        }
+      ],
+      "toolTitle": "Questions to take to your next appointment",
+      "prompts": [
+        "What exactly am I cleared to do, and what remains restricted?",
+        "Which written instructions should I keep following?",
+        "Who should I contact if the plan stops fitting my situation?",
+        "When should these instructions be reassessed?"
+      ],
+      "sources": [
+        {
+          "title": "Chronic Conditions & Disabilities Activity",
+          "url": "https://www.cdc.gov/physical-activity-basics/guidelines/chronic-health-conditions-and-disabilities.html",
+          "publisher": "CDC",
+          "accessed": "2026-10-09",
+          "supports": "Consult a health care professional or activity specialist about appropriate types and amounts of activity for chronic conditions or disabilities."
+        }
+      ],
+      "draftTemplate": [
+        {
+          "heading": "The reader’s question",
+          "paragraphs": [
+            "Replace this template with an original explanation of a specific reader question. Verify every factual claim against the cited source; retain the scope and limits."
+          ]
+        },
+        {
+          "heading": "A useful next conversation",
+          "paragraphs": [
+            "Write original, practical questions for this audience. Do not invent a prescription, product capability, price, testimonial or clinical result."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "return-after-illness",
+      "name": "Return, With Context",
+      "audience": "Adults with explicit clearance and individualized limits",
+      "layout": "pathway",
+      "phase": 3,
+      "intro": "Keep the permission, limits and next conversation together. A planning pathway for people whose return to activity needs individual guidance.",
+      "navigation": [
+        {
+          "label": "Your next conversation",
+          "target": "tool"
+        },
+        {
+          "label": "Read the pathway",
+          "target": "reading"
+        },
+        {
+          "label": "About this guide",
+          "target": "about"
+        }
+      ],
+      "toolTitle": "Before choosing your next step",
+      "prompts": [
+        "Record who supplied clearance and the date.",
+        "Write its activity scope and limits exactly as supplied.",
+        "Keep the agreed contact and reassessment route accessible."
+      ],
+      "sources": [
+        {
+          "title": "Chronic Conditions & Disabilities Activity",
+          "url": "https://www.cdc.gov/physical-activity-basics/guidelines/chronic-health-conditions-and-disabilities.html",
+          "publisher": "CDC",
+          "accessed": "2026-10-09",
+          "supports": "Consult a health care professional or activity specialist about appropriate types and amounts of activity for chronic conditions or disabilities."
+        }
+      ],
+      "draftTemplate": [
+        {
+          "heading": "The reader’s question",
+          "paragraphs": [
+            "Replace this template with an original explanation of a specific reader question. Verify every factual claim against the cited source; retain the scope and limits."
+          ]
+        },
+        {
+          "heading": "A useful next conversation",
+          "paragraphs": [
+            "Write original, practical questions for this audience. Do not invent a prescription, product capability, price, testimonial or clinical result."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "joint-aware-movement",
+      "name": "The Access Guide",
+      "audience": "Readers considering accessible movement spaces",
+      "layout": "directory",
+      "phase": 3,
+      "intro": "Find out how a place works before deciding whether it works for you. Questions about access, equipment and available instruction, without treatment promises.",
+      "navigation": [
+        {
+          "label": "Access questions",
+          "target": "tool"
+        },
+        {
+          "label": "Visit preparation",
+          "target": "reading"
+        },
+        {
+          "label": "Publisher",
+          "target": "about"
+        }
+      ],
+      "toolTitle": "Questions for a facility or instructor",
+      "prompts": [
+        "Ask about entrances, changing areas and routes between equipment.",
+        "Ask what adjustments or alternative participation options exist.",
+        "Find out who can explain equipment and what their role covers.",
+        "Check how to arrange assistance before a visit."
+      ],
+      "sources": [
+        {
+          "title": "Chronic Conditions & Disabilities Activity",
+          "url": "https://www.cdc.gov/physical-activity-basics/guidelines/chronic-health-conditions-and-disabilities.html",
+          "publisher": "CDC",
+          "accessed": "2026-10-09",
+          "supports": "Consult a health care professional or activity specialist about appropriate types and amounts of activity for chronic conditions or disabilities."
+        }
+      ],
+      "draftTemplate": [
+        {
+          "heading": "The reader’s question",
+          "paragraphs": [
+            "Replace this template with an original explanation of a specific reader question. Verify every factual claim against the cited source; retain the scope and limits."
+          ]
+        },
+        {
+          "heading": "A useful next conversation",
+          "paragraphs": [
+            "Write original, practical questions for this audience. Do not invent a prescription, product capability, price, testimonial or clinical result."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "recovery-consistency",
+      "name": "The Weekly Reset",
+      "audience": "Busy readers organizing sleep, rest and activity habits",
+      "layout": "weekly",
+      "phase": 2,
+      "intro": "A calm weekly review for the routines around movement. Make room for sleep and planning without treating a streak as a measure of health.",
+      "navigation": [
+        {
+          "label": "Weekly review",
+          "target": "tool"
+        },
+        {
+          "label": "Reset reading",
+          "target": "reading"
+        },
+        {
+          "label": "About the collection",
+          "target": "about"
+        }
+      ],
+      "toolTitle": "A three-part weekly review",
+      "prompts": [
+        "Choose one scheduling conflict to plan around.",
+        "Notice when the plan differs from the calendar you expected.",
+        "Record one practical change for the next week."
+      ],
+      "sources": [
+        {
+          "title": "Healthy Sleep Habits",
+          "url": "https://www.nhlbi.nih.gov/health/sleep-deprivation/healthy-sleep-habits",
+          "publisher": "NHLBI, NIH",
+          "accessed": "2026-10-09",
+          "supports": "Making time for sleep and regular sleep routines; not a treatment plan or an exercise recovery prescription."
+        }
+      ],
+      "draftTemplate": [
+        {
+          "heading": "The reader’s question",
+          "paragraphs": [
+            "Replace this template with an original explanation of a specific reader question. Verify every factual claim against the cited source; retain the scope and limits."
+          ]
+        },
+        {
+          "heading": "A useful next conversation",
+          "paragraphs": [
+            "Write original, practical questions for this audience. Do not invent a prescription, product capability, price, testimonial or clinical result."
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "name": "form-voice",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Form memory-only native WAV capture and playback",
+  "license": "UNLICENSED"
+}

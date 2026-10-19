@@ -1,0 +1,192 @@
+"""Portable lifecycle checks; native compilation is qualified by the hosted job."""
+
+import importlib.util
+from contextlib import redirect_stdout
+import io
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+spec = importlib.util.spec_from_file_location('simulator_ci', Path(__file__).with_name('ci-ios-simulator.py'))
+ci = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ci)
+
+
+class LifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='form-ci-test-', dir=Path(__file__).parent)
+        self.addCleanup(self.temp.cleanup)
+        self.parent = Path(self.temp.name)
+
+    def test_success_preserves_evidence_and_separate_invocation(self):
+        first, second = {}, {}
+        evidence = self.parent / 'retained.log'
+        with ci.owned_scratch(self.parent, first) as a:
+            with ci.owned_scratch(self.parent, second) as b:
+                self.assertNotEqual(a, b)
+                (b / 'owned').write_text('second')
+                ci.run([sys.executable, '-c', 'print("proof")'], cwd=a,
+                       env=os.environ.copy(), log=evidence)
+            self.assertFalse(b.exists())
+            self.assertTrue(a.exists())
+        self.assertFalse(a.exists())
+        self.assertIn('proof', evidence.read_text())
+
+    def test_failure_status_and_log_survive_scratch_cleanup(self):
+        manifest = {}
+        log = self.parent / 'failed.log'
+        with self.assertRaises(subprocess.CalledProcessError) as error:
+            with ci.owned_scratch(self.parent, manifest) as scratch:
+                ci.run([sys.executable, '-c', 'print("failure proof"); raise SystemExit(23)'],
+                       cwd=scratch, env=os.environ.copy(), log=log)
+        self.assertEqual(error.exception.returncode, 23)
+        self.assertFalse(Path(manifest['scratch_root']).exists())
+        self.assertIn('failure proof', log.read_text())
+
+    def test_cleanup_failure_preserves_original_error(self):
+        manifest = {}
+        with patch.object(ci.shutil, 'rmtree', side_effect=OSError('cleanup denied')):
+            with self.assertRaisesRegex(ValueError, 'original'):
+                with ci.owned_scratch(self.parent, manifest):
+                    raise ValueError('original')
+        self.assertEqual(manifest['cleanup_errors'], ['cleanup denied'])
+
+    def test_cleanup_failure_fails_success(self):
+        manifest = {}
+        with patch.object(ci.shutil, 'rmtree', side_effect=OSError('cleanup denied')):
+            with self.assertRaisesRegex(OSError, 'cleanup denied'):
+                with ci.owned_scratch(self.parent, manifest):
+                    pass
+
+    def test_diagnostics_retain_early_error_and_bounded_tail(self):
+        log = self.parent / 'compiler.log'
+        log.write_text('early error: compiler rejected source\n' +
+                       ''.join('line-' + str(i) + ' ' + 'x' * 2000 + '\n' for i in range(300)))
+        output = io.StringIO()
+        with redirect_stdout(output):
+            ci.print_failure_log(log)
+        text = output.getvalue()
+        self.assertIn('early error: compiler rejected source', text)
+        self.assertIn('line-299 ', text)
+        self.assertNotIn('line-100 ', text)
+        self.assertLess(len(text), 82000)
+
+    def test_signal_removes_only_owned_scratch_and_stops_child(self):
+        program = '''
+import importlib.util, os, pathlib, signal, sys
+spec = importlib.util.spec_from_file_location('ci', sys.argv[1])
+ci = importlib.util.module_from_spec(spec); spec.loader.exec_module(ci)
+signal.signal(signal.SIGTERM, ci.interrupted)
+parent = pathlib.Path(sys.argv[2])
+with ci.owned_scratch(parent, {}) as scratch:
+    (parent / 'root').write_text(str(scratch))
+    child = "import os,pathlib,time; pathlib.Path(" + repr(str(parent / 'pid')) + ").write_text(str(os.getpid())); time.sleep(30)"
+    ci.run([sys.executable, '-c', child], cwd=scratch, env=os.environ.copy(), log=parent / 'signal.log')
+'''
+        process = subprocess.Popen([sys.executable, '-c', program, str(Path(ci.__file__).resolve()), str(self.parent)])
+        self.addCleanup(lambda: process.kill() if process.poll() is None else None)
+        import time
+        deadline = time.monotonic() + 5
+        while not (self.parent / 'pid').exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertTrue((self.parent / 'pid').exists())
+        pid = int((self.parent / 'pid').read_text())
+        process.send_signal(signal.SIGTERM)
+        self.assertEqual(process.wait(timeout=15), 143)
+        self.assertFalse(Path((self.parent / 'root').read_text()).exists())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+        self.assertTrue((self.parent / 'signal.log').exists())
+
+    def test_diagnostic_nonzero_status_does_not_raise(self):
+        manifest = {}
+        with redirect_stdout(io.StringIO()):
+            status = ci.diagnostic([sys.executable, '-c', 'print("probe failed"); raise SystemExit(7)'],
+                                   cwd=self.parent, env=os.environ.copy(), output=self.parent,
+                                   manifest=manifest, name='probe')
+        self.assertEqual(status, 7)
+        self.assertEqual(manifest['launch_diagnostics']['probe']['returncode'], 7)
+        self.assertIn('probe failed', (self.parent / 'probe.log').read_text())
+
+    def test_timeout_terminates_child_and_records_unknown_probe(self):
+        pidfile = self.parent / 'timeout-pid'
+        command = [sys.executable, '-c',
+                   'import os,pathlib,time; pathlib.Path(' + repr(str(pidfile)) +
+                   ').write_text(str(os.getpid())); time.sleep(30)']
+        with self.assertRaises(subprocess.TimeoutExpired):
+            ci.run(command, cwd=self.parent, env=os.environ.copy(),
+                   log=self.parent / 'timeout.log', timeout=0.5)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int(pidfile.read_text()), 0)
+        manifest = {}
+        with patch.object(ci, 'run', side_effect=subprocess.TimeoutExpired(command, 30)):
+            self.assertIsNone(ci.diagnostic(command, cwd=self.parent, env={}, output=self.parent,
+                                            manifest=manifest, name='unavailable'))
+        self.assertIn('error', manifest['launch_diagnostics']['unavailable'])
+
+    def test_crash_identity_freshness_and_bounded_summary(self):
+        bundle = 'com.jonessystems.form.private'
+        report = {'pid': 123, 'exception': {'type': 'EXC_CRASH'},
+                  'termination': {'namespace': 'SIGNAL'}, 'faultingThread': 0,
+                  'threads': [{'frames': [{'symbol': 'fatal', 'imageIndex': 0}] * 20}],
+                  'usedImages': [{'name': 'Form'}]}
+        content = json.dumps({'bundleID': bundle}) + '\n' + json.dumps(report)
+        self.assertIsNotNone(ci.matching_crash_report(content, bundle, '123'))
+        self.assertIsNone(ci.matching_crash_report(content, bundle, '124'))
+        self.assertIsNone(ci.matching_crash_report(content, 'other.app', '123'))
+        summary = ci.crash_summary(report)
+        self.assertEqual(len(summary['faulting_frames']), 15)
+        self.assertEqual(summary['faulting_frames'][0]['image'], 'Form')
+        reports = self.parent / 'reports'
+        reports.mkdir()
+        (reports / 'Form-current.ips').write_text(content)
+        (reports / 'Form-other.ips').write_text(content.replace('123', '124'))
+        (reports / 'Form-partial.ips').write_text('{')
+        stale = reports / 'Form-stale.ips'
+        stale.write_text(content)
+        os.utime(stale, (1, 1))
+        (reports / 'Form-link.ips').symlink_to(reports / 'Form-current.ips')
+        manifest = {}
+        printed = io.StringIO()
+        with redirect_stdout(printed):
+            ci.collect_crashes(reports, since=2, bundle_id=bundle, pid='123',
+                               output=self.parent, manifest=manifest)
+        self.assertEqual(manifest['matching_crash_reports'], ['Form-current.ips'])
+        self.assertEqual((self.parent / 'crash-Form-current.ips').read_text(), content)
+        self.assertFalse((self.parent / 'crash-Form-other.ips').exists())
+        self.assertIn('EXC_CRASH', printed.getvalue())
+        self.assertIn('SIGNAL', printed.getvalue())
+
+    def test_screenshot_and_diagnostics_do_not_turn_dead_process_into_pass(self):
+        calls = []
+        def probe(_command, *, name, **kwargs):
+            calls.append(name)
+            if name == 'screenshot':
+                (self.parent / 'launch.png').write_bytes(b'screenshot fixture')
+                return 0
+            if name == 'processes':
+                (self.parent / 'processes.log').write_text('-\t-6\tUIKitApplication:com.jonessystems.form.private\n')
+                return 0
+            return 1
+        manifest = {}
+        with patch.object(ci, 'diagnostic', side_effect=probe), patch.object(ci, 'collect_crashes') as crashes:
+            with redirect_stdout(io.StringIO()), self.assertRaisesRegex(RuntimeError, 'not alive'):
+                ci.check_launch(device='own-device', bundle_id='com.jonessystems.form.private', pid='123',
+                                launch_epoch=1, built=self.parent / 'Form.app', cwd=self.parent,
+                                env={}, output=self.parent, manifest=manifest)
+        self.assertEqual(calls[0], 'screenshot')
+        self.assertIn('screenshot_sha256', manifest)
+        self.assertIn('app-startup', calls)
+        self.assertIn('app-signature', calls)
+        self.assertEqual(crashes.call_count, 1)
+        self.assertNotEqual(manifest.get('status'), 'passed')
+
+
+if __name__ == '__main__':
+    unittest.main()

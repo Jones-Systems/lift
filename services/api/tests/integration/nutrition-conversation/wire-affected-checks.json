@@ -1,0 +1,76 @@
+{
+  "schema": "form.integration-affected-checks/v1",
+  "sourceBase": "2c665694e4ee3cf471c495f2bc4f02c83251d17f",
+  "workingDirectory": "services/api",
+  "prerequisite": [
+    "npm",
+    "run",
+    "build"
+  ],
+  "groups": {
+    "integration/nutrition-conversation": [
+      "tests/integration/nutrition-conversation/host.test.ts",
+      "tests/integration/nutrition-conversation/wire.test.ts",
+      "tests/integration/nutrition-conversation/controller.test.ts",
+      "tests/integration/nutrition-conversation/http.test.ts"
+    ],
+    "domain-features/nutrition": [
+      "tests/domain-features/nutrition/nutrition.test.ts",
+      "tests/domain-features/nutrition/grounding-adapter.test.ts",
+      "tests/domain-features/nutrition/conversation.test.ts",
+      "tests/domain-features/nutrition/synthesis-adapter.test.ts",
+      "tests/domain-features/nutrition/citation-followthrough.test.ts"
+    ],
+    "grounding": [
+      "tests/grounding/grounding.test.ts",
+      "tests/grounding/answer.test.ts",
+      "tests/grounding/artifact.test.ts"
+    ],
+    "server": [
+      "tests/backend.test.ts",
+      "tests/runtime-path.test.ts",
+      "tests/integration/body-server.test.ts"
+    ],
+    "lifecycle/http": [
+      "tests/lifecycle-http.test.ts"
+    ],
+    "runtime-modules": [
+      "tests/runtime-modules/configuration-and-lifetime.test.ts",
+      "tests/runtime-modules/capability-and-denial.test.ts",
+      "tests/runtime-modules/composition-http.test.ts"
+    ]
+  },
+  "focusedArgv": [
+    "node",
+    "--test",
+    "--test-concurrency=1",
+    "dist/tests/integration/nutrition-conversation/wire.test.js",
+    "dist/tests/integration/nutrition-conversation/controller.test.js",
+    "dist/tests/integration/nutrition-conversation/http.test.js"
+  ],
+  "argv": [
+    "node",
+    "--test",
+    "--test-concurrency=1",
+    "dist/tests/integration/nutrition-conversation/host.test.js",
+    "dist/tests/integration/nutrition-conversation/wire.test.js",
+    "dist/tests/integration/nutrition-conversation/controller.test.js",
+    "dist/tests/integration/nutrition-conversation/http.test.js",
+    "dist/tests/domain-features/nutrition/nutrition.test.js",
+    "dist/tests/domain-features/nutrition/grounding-adapter.test.js",
+    "dist/tests/domain-features/nutrition/conversation.test.js",
+    "dist/tests/domain-features/nutrition/synthesis-adapter.test.js",
+    "dist/tests/domain-features/nutrition/citation-followthrough.test.js",
+    "dist/tests/grounding/grounding.test.js",
+    "dist/tests/grounding/answer.test.js",
+    "dist/tests/grounding/artifact.test.js",
+    "dist/tests/backend.test.js",
+    "dist/tests/runtime-path.test.js",
+    "dist/tests/integration/body-server.test.js",
+    "dist/tests/lifecycle-http.test.js",
+    "dist/tests/runtime-modules/configuration-and-lifetime.test.js",
+    "dist/tests/runtime-modules/capability-and-denial.test.js",
+    "dist/tests/runtime-modules/composition-http.test.js"
+  ],
+  "execution": "Focused wire/controller/http 19 cases passed at 5df45735dd31c2253f1c3083090b18bcf69816f8. Canonical reconciliation at 768fe1b08e88525c575dce3aad0269dac22231bf passed the detailed four-module nutrition wire/controller/http plus first-plan server union: 22 cases, zero failures/skips, no isolation and concurrency one. API compiler/projection and app typecheck completed. The broader union is not claimed passing here."
+}

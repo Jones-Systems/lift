@@ -1,0 +1,27 @@
+{
+  "observedAt": "2026-10-08T22:42:31.535Z",
+  "command": "npm audit --omit=dev --json",
+  "exitCode": 0,
+  "audit": {
+    "auditReportVersion": 2,
+    "vulnerabilities": {},
+    "metadata": {
+      "vulnerabilities": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 0
+      },
+      "dependencies": {
+        "prod": 77,
+        "dev": 22,
+        "optional": 20,
+        "peer": 0,
+        "peerOptional": 0,
+        "total": 98
+      }
+    }
+  }
+}

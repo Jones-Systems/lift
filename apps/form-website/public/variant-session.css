@@ -1,0 +1,87 @@
+.variant-session{background:#f2f2ee;color:#15171a;font-family:"Atkinson Hyperlegible Next",sans-serif;padding-bottom:32px}
+.variant-session *{box-sizing:border-box}
+.variant-session h1,.variant-session h2,.variant-session h3{font-family:"Schibsted Grotesk",sans-serif;letter-spacing:-.04em}
+.variant-session h1,.variant-session h2,.variant-session h3,.variant-session p{margin-top:0}
+.variant-session p{line-height:1.6}
+.variant-session .v-container{width:calc(100% - 80px);max-width:1200px;margin-inline:auto}
+.variant-session a{color:inherit}
+.variant-session a:focus-visible,.variant-session button:focus-visible{outline:3px solid #15171a;outline-offset:4px}
+.variant-session .v-eyebrow{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#545a61;margin-bottom:18px}
+.variant-session .v-button{min-height:52px;display:inline-flex;align-items:center;justify-content:center;gap:24px;border:1px solid transparent;border-radius:26px;background:#e3a03a;padding:13px 24px;text-decoration:none;font-weight:700;line-height:1.35}
+.variant-session .v-button.secondary{background:#fff;border-color:#dcdcd5}
+.variant-session .session-text-link{display:inline-flex;align-items:center;gap:24px;min-height:44px;text-underline-offset:6px;font-weight:600}
+.variant-session .session-intro{padding-block:64px 46px;display:grid;grid-template-columns:1.4fr 1fr;align-items:end;gap:60px}
+.variant-session .session-intro h1{font-size:clamp(40px,4.1vw,59px);line-height:1.08;margin-bottom:0;font-weight:600}
+.variant-session .session-intro h1 span{color:#545a61}
+.variant-session .session-intro-note{max-width:370px;justify-self:end;font-size:18px}
+.variant-session .session-intro-note p{margin-bottom:10px}
+.variant-session .session-workspace{background:#fff;border:1px solid #dcdcd5;border-radius:22px;overflow:hidden;scroll-margin-top:24px}
+.variant-session .session-workspace-top{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;padding:21px 28px;border-bottom:1px solid #dcdcd5;font-size:14px}
+.variant-session .session-workspace-name{font-weight:700}
+.variant-session .session-preview-label{color:#545a61;font-size:13px}
+.variant-session .session-workspace-layout{display:grid;grid-template-columns:210px minmax(0,1fr)}
+.variant-session .session-rail{padding:32px 18px 25px;background:#fafaf7;border-right:1px solid #dcdcd5;display:flex;flex-direction:column;justify-content:space-between;gap:60px}
+.variant-session .session-rail-label{font-size:12px;color:#545a61;padding-inline:10px;margin-bottom:18px}
+.variant-session .session-rail nav{display:grid;gap:8px}
+.variant-session .session-rail nav a{min-height:48px;padding:13px 10px;display:flex;align-items:center;gap:13px;border-radius:12px;text-decoration:none;font-size:14px}
+.variant-session .session-rail nav a:first-child{background:#e9e9e3;font-weight:700}
+.variant-session .session-rail nav a:hover{background:#e9e9e3}
+.variant-session .session-rail nav a span{font-size:11px;color:#545a61}
+.variant-session .session-rail-foot{font-size:13px;color:#545a61;padding-inline:10px;margin:0}
+.variant-session .session-canvas{padding:35px 40px 22px;min-width:0}
+.variant-session .session-canvas-heading{display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap}
+.variant-session .session-canvas-heading .v-eyebrow{margin-bottom:10px}
+.variant-session .session-canvas h2{font-size:30px;line-height:1.2;margin-bottom:12px}
+.variant-session .session-canvas-tag{font-size:12px;border:1px solid #dcdcd5;border-radius:30px;padding:8px 12px;color:#545a61}
+.variant-session .session-canvas-description{font-size:15px;color:#545a61;max-width:530px;margin-bottom:27px}
+.variant-session .demo-panel{background:#f2f2ee;border:1px solid #dcdcd5;border-radius:18px;padding:24px;box-shadow:none;color:#15171a;max-width:none}
+.variant-session .demo-tabs{display:flex;gap:5px;flex-wrap:wrap;background:#e9e9e3;padding:4px;border-radius:12px;margin-bottom:24px}
+.variant-session .demo-tabs button{flex:1;min-height:44px;background:transparent;border:0;border-radius:9px;padding:10px 15px;color:#545a61;font:inherit;font-size:14px;font-weight:600;cursor:pointer}
+.variant-session .demo-tabs button[aria-selected="true"]{background:#fff;color:#15171a}
+.variant-session .demo-view{background:#fff;border-radius:14px;padding:22px;min-width:0}
+.variant-session .demo-view[hidden]{display:none}
+.variant-session .demo-view h3{font-size:24px;line-height:1.25;margin-bottom:8px}
+.variant-session .demo-view p{color:#545a61;font-size:14px}
+.variant-session .demo-list{list-style:none;margin:18px 0;padding:0}
+.variant-session .demo-list li{padding:15px 0;border-bottom:1px solid #dcdcd5;line-height:1.5;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.variant-session .demo-list li:last-child{border-bottom:0}
+.variant-session .demo-action{min-height:48px;border:0;border-radius:24px;background:#e3a03a;color:#15171a;font:inherit;font-weight:700;padding:12px 22px;cursor:pointer;white-space:normal}
+.variant-session .demo-caption{font-size:12px;color:#545a61;line-height:1.5;margin:16px 0 0}
+.variant-session .session-canvas-footer{display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:#545a61}
+.variant-session .session-canvas-footer a{min-height:44px;display:inline-flex;align-items:center;gap:12px;text-underline-offset:4px}
+.variant-session .session-how{display:grid;grid-template-columns:1fr 1fr;gap:100px;padding-block:108px 90px}
+.variant-session .session-section-intro h2,.variant-session .session-life h2,.variant-session .session-journal h2,.variant-session .session-closing h2{font-size:clamp(29px,3vw,40px);line-height:1.15;font-weight:600;margin-bottom:22px}
+.variant-session .session-section-intro>p:not(.v-eyebrow){color:#545a61;max-width:390px}
+.variant-session .session-steps{padding:0;margin:0;list-style:none}
+.variant-session .session-steps li{display:grid;grid-template-columns:36px 1fr;gap:20px;padding:24px 0;border-bottom:1px solid #dcdcd5}
+.variant-session .session-steps li:first-child{padding-top:0}
+.variant-session .session-step-number{font-size:12px;color:#545a61;line-height:28px}
+.variant-session .session-steps h3{font-size:20px;margin-bottom:8px;letter-spacing:-.025em}
+.variant-session .session-steps p{color:#545a61;font-size:15px;margin-bottom:0}
+.variant-session .session-life{background:#e9e9e3;border-radius:22px;padding:44px;display:grid;grid-template-columns:1fr 1fr;gap:80px}
+.variant-session .session-life-heading{align-self:center}
+.variant-session .session-life-heading .v-button{margin-top:12px}
+.variant-session .session-scenarios article{border-bottom:1px solid #cccfc7;padding:24px 0}
+.variant-session .session-scenarios article:first-child{padding-top:0}
+.variant-session .session-scenarios article:last-child{padding-bottom:0;border-bottom:0}
+.variant-session .session-scenario-label{font-size:12px;color:#545a61}
+.variant-session .session-scenarios h3{font-size:22px;margin-block:10px;letter-spacing:-.025em}
+.variant-session .session-scenarios p{font-size:15px;color:#545a61;margin-bottom:0}
+.variant-session .session-journal{padding-block:90px}
+.variant-session .session-journal-heading{display:flex;justify-content:space-between;align-items:end;gap:24px;flex-wrap:wrap;margin-bottom:32px}
+.variant-session .session-journal-heading h2{margin-bottom:0}
+.variant-session .session-articles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:30px}
+.variant-session .session-articles article{border-top:1px solid #dcdcd5;padding-top:22px}
+.variant-session .session-article-index{font-size:12px;color:#545a61}
+.variant-session .session-articles h3{font-size:23px;line-height:1.3;margin-block:16px 12px;letter-spacing:-.025em}
+.variant-session .session-articles h3 a{display:block;min-height:44px;text-decoration:none}
+.variant-session .session-articles h3 a:hover{text-decoration:underline;text-underline-offset:5px}
+.variant-session .session-articles h3 a span{font-size:18px}
+.variant-session .session-articles p{font-size:15px;color:#545a61;margin:0}
+.variant-session .session-closing{padding:40px 0;display:flex;justify-content:space-between;align-items:center;gap:35px;border-top:1px solid #dcdcd5}
+.variant-session .session-closing h2{font-size:29px;margin-bottom:12px}
+.variant-session .session-closing p:last-child{color:#545a61;margin-bottom:0}
+.variant-session .session-closing .v-button{flex-shrink:0}
+@media(max-width:1000px){.variant-session .session-intro{gap:35px}.variant-session .session-workspace-layout{grid-template-columns:175px minmax(0,1fr)}.variant-session .session-rail{padding-inline:10px}.variant-session .session-canvas{padding:28px 24px 18px}.variant-session .session-how{gap:50px}.variant-session .session-life{gap:40px;padding:32px}.variant-session .session-articles{gap:22px}}
+@media(max-width:700px){.variant-session .v-container{width:calc(100% - 40px)}.variant-session .session-intro{grid-template-columns:1fr;padding-block:40px 30px;gap:24px}.variant-session .session-intro h1{font-size:40px}.variant-session .session-intro-note{justify-self:start;max-width:100%;font-size:17px}.variant-session .session-workspace-top{padding:18px 20px;gap:7px}.variant-session .session-workspace-layout{grid-template-columns:1fr}.variant-session .session-rail{border-right:0;border-bottom:1px solid #dcdcd5;padding:12px 14px}.variant-session .session-rail-label,.variant-session .session-rail-foot{display:none}.variant-session .session-rail nav{grid-template-columns:1fr 1fr;gap:4px}.variant-session .session-rail nav a{font-size:13px;gap:8px}.variant-session .session-canvas{padding:24px 18px 12px}.variant-session .session-canvas h2{font-size:26px}.variant-session .session-canvas-heading{gap:0}.variant-session .session-canvas-tag{margin-bottom:16px}.variant-session .demo-panel{padding:12px;border-radius:14px}.variant-session .demo-tabs{gap:2px;margin-bottom:12px}.variant-session .demo-tabs button{font-size:13px;padding-inline:8px}.variant-session .demo-view{padding:16px 12px}.variant-session .demo-view h3{font-size:21px}.variant-session .demo-list li{font-size:14px}.variant-session .demo-action{width:100%}.variant-session .session-how{grid-template-columns:1fr;gap:36px;padding-block:64px}.variant-session .session-life{grid-template-columns:1fr;gap:38px;padding:28px 22px}.variant-session .session-journal{padding-block:64px}.variant-session .session-journal-heading{gap:12px;margin-bottom:22px}.variant-session .session-articles{grid-template-columns:1fr;gap:30px}.variant-session .session-closing{align-items:start;flex-direction:column;gap:25px;padding-block:32px}.variant-session .session-closing .v-button{width:100%}}
+@media(prefers-reduced-motion:reduce){.variant-session *{scroll-behavior:auto;animation:none;transition:none}}

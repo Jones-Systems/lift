@@ -1,0 +1,33 @@
+{
+  "schema": "form.training-feedback.affected-checks/v1",
+  "groups": {
+    "FORM-WS30-feedback-replay": {
+      "covers": ["separate reported and missing constructs", "confirmed revision-bound correction and undo", "withdrawal and deletion invalidation", "transitive recomputation and source lineage", "session and durable scope fences", "pure replay and rejected event receipts"],
+      "directSurfaces": ["services/api/src/training-feedback/index.ts", "services/api/tests/training-feedback/replay.test.mjs", "services/api/tests/training-feedback/checks.json"],
+      "tests": ["services/api/tests/training-feedback/replay.test.mjs"]
+    },
+    "FORM-WS30-feedback-ledger": {
+      "covers": ["account-scoped same-transaction persistence and CAS", "fresh source and recipe authority checks before compute", "minimal receipt retries without cached responses", "correction withdrawal undo with prior witness", "atomic transitive invalidation and rollback", "snapshot export and canonically authorized account purge", "explicit unavailable per-record deletion"],
+      "directSurfaces": ["services/api/src/training-feedback/ledger-types.ts", "services/api/src/training-feedback/ledger-store.ts", "services/api/src/training-feedback/ledger-service.ts", "services/api/src/training-feedback/migration.ts", "services/api/src/training-feedback/lifecycle-adapter.ts", "services/api/tests/training-feedback/ledger.test.mjs", "services/api/tests/training-feedback/donor-loader.mjs", "docs/training-feedback/verification/tsconfig.donor.json"],
+      "tests": ["services/api/tests/training-feedback/ledger.test.mjs"],
+      "command": "node --experimental-transform-types --import ./services/api/scripts/integration/source-hook.mjs --import ./services/api/tests/training-feedback/donor-loader.mjs --test --test-isolation=none --test-concurrency=1 services/api/tests/training-feedback/ledger.test.mjs"
+    },
+    "FORM-WS30-feedback-session-source": {
+      "covers": ["authenticated account and same-snapshot session reads", "actual session occurrence and set revision witnesses", "fresh reads after completed-session corrections", "missing and denied source propagation", "historical plan identity and copy isolation"],
+      "directSurfaces": ["services/api/src/training-feedback/session-source.ts", "services/api/tests/training-feedback/session-source.test.mjs", "services/api/tests/training-feedback/checks.json"],
+      "tests": ["services/api/tests/training-feedback/session-source.test.mjs"],
+      "command": "node --test --test-isolation=none --test-concurrency=1 services/api/tests/training-feedback/session-source.test.mjs"
+    },
+    "FORM-WS30-feedback-comparison": {
+      "covers": ["explicit registered comparison compute inputs and copied registry digest", "actual v2 producer and canonical writer integration", "independent original-scope association and recipe authority", "transitive source and identity dependency lineage", "fresh withdrawal correction and minimal receipt replay", "unknown incomparable and unavailable results remain blocked", "before-compute and post-persistence rollback across all consumer entry points"],
+      "directSurfaces": ["services/api/src/training-feedback/comparison-inputs.ts", "services/api/src/training-feedback/ledger-types.ts", "services/api/src/training-feedback/ledger-store.ts", "services/api/src/training-feedback/ledger-service.ts", "services/api/src/progress-comparison/persistence-types.ts", "services/api/src/progress-comparison/service.ts", "services/api/tests/training-feedback/comparison.test.mjs", "services/api/tests/training-feedback/donor-loader.mjs", "services/api/tests/training-feedback/checks.json", "docs/training-feedback/verification/tsconfig.donor.json"],
+      "tests": ["services/api/tests/training-feedback/comparison.test.mjs"],
+      "command": "node --experimental-transform-types --import ./services/api/scripts/integration/source-hook.mjs --import ./services/api/tests/training-feedback/donor-loader.mjs --test --test-isolation=none --test-concurrency=1 services/api/tests/training-feedback/comparison.test.mjs"
+    }
+  },
+  "command": "node --test --test-isolation=none --test-concurrency=1 services/api/tests/training-feedback/replay.test.mjs",
+  "unionCommand": "node --experimental-transform-types --import ./services/api/scripts/integration/source-hook.mjs --import ./services/api/tests/training-feedback/donor-loader.mjs --test --test-isolation=none --test-concurrency=1 services/api/tests/training-feedback/replay.test.mjs services/api/tests/training-feedback/session-source.test.mjs services/api/tests/training-feedback/ledger.test.mjs services/api/tests/training-feedback/comparison.test.mjs",
+  "typeCommand": "node /path/to/Form -p docs/training-feedback/verification/tsconfig.donor.json",
+  "runtime": "Node 24.19.0; canonical source hook and scoped read-only donor resolver; SQLite 13.0.3 synthetic in-memory databases closed with t.after; no build, install, sockets, files or scratch created",
+  "integration": "Shared package test discovery and HTTP/storage composition remain WS01-owned."
+}

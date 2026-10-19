@@ -1,0 +1,62 @@
+.me-journal-page{margin:0;background:#f2f2ee;color:#15171a;font-family:"Atkinson Hyperlegible Next",sans-serif}
+.me-journal-page main,.me-journal-topbar,.me-journal-footer{width:calc(100% - 64px);max-width:1200px;margin-inline:auto}
+.me-journal-topbar{display:flex;align-items:center;justify-content:space-between;gap:24px;padding-block:28px;border-bottom:1px solid #dcdcd5}
+.me-journal-topbar nav,.me-journal-footer{display:flex;flex-wrap:wrap;align-items:center;gap:24px}
+.me-journal-topbar a,.me-journal-footer a{color:inherit;text-underline-offset:6px;padding-block:12px}
+.me-journal-topbar [aria-current]{font-weight:700}
+.me-journal-brand{font-size:32px;font-weight:700;text-decoration:none;letter-spacing:-2px}
+.me-journal-brand span{font-size:14px;color:#996017;margin-left:4px}
+.me-journal-page-title{font-size:14px;letter-spacing:.12em;text-transform:uppercase;margin-top:32px;color:#545a61}
+.me-journal-footer{padding-block:32px;font-size:14px;color:#545a61}
+.me-journal-footer p{margin-left:auto}
+.me-journal-skip{position:absolute;left:16px;top:-100px;background:white;color:#15171a;padding:14px;z-index:2}
+.me-journal-skip:focus{top:12px}
+.me-journal{font-family:"Atkinson Hyperlegible Next",sans-serif;color:#15171a;line-height:1.6;min-width:0}
+.me-journal *{box-sizing:border-box}
+.me-journal [hidden]{display:none!important}
+.me-journal h2,.me-journal h3{font-family:"Schibsted Grotesk",sans-serif;letter-spacing:-.035em;line-height:1.2}
+.me-journal p{margin-top:0}
+.me-journal a{color:inherit;text-underline-offset:4px}
+.me-journal :is(a,button,input,select,summary):focus-visible,.me-journal-page :is(.me-journal-topbar a,.me-journal-footer a):focus-visible{outline:3px solid #15171a;outline-offset:4px}
+.me-journal-heading{display:flex;align-items:center;justify-content:space-between;gap:32px;padding:28px 0 40px}
+.me-journal-heading h2{font-size:clamp(2rem,4.2vw,3.7rem);font-weight:600;margin:0 0 20px}
+.me-journal-heading p:last-child{max-width:56ch;color:#545a61;margin-bottom:0}
+.me-journal-kicker{font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#545a61}
+.me-journal-count{border-left:2px solid #b57822;padding-left:28px;min-width:155px}
+.me-journal-count strong{display:block;font-size:56px;font-weight:500;line-height:1.2}
+.me-journal-count span{font-size:14px;color:#545a61}
+.me-journal-layout{display:grid;grid-template-columns:230px minmax(0,1fr);background:white;border:1px solid #dcdcd5;border-radius:22px;overflow:hidden}
+.me-journal-aside{padding:28px 24px;background:#fafaf7;border-right:1px solid #dcdcd5;font-size:14px}
+.me-journal-aside h3{font-size:22px;margin-top:0}
+.me-journal-aside p{color:#545a61}
+.me-journal-aside a{display:inline-block;padding-block:12px;font-weight:700}
+.me-journal-canvas{padding:28px;min-width:0}
+.me-journal-filters{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px}
+.me-journal-filters label{font-size:14px;font-weight:700;min-width:0}
+.me-journal-filters :is(input,select){display:block;width:100%;min-width:0;min-height:48px;border:1px solid #7c8187;border-radius:10px;padding:10px 12px;background:white;color:#15171a;font:inherit;font-size:16px;margin-top:6px}
+.me-journal-actions{display:flex;gap:12px;flex-wrap:wrap;grid-column:1/-1}
+.me-journal-actions button{min-height:44px;padding:10px 20px;border:1px solid #7c8187;border-radius:24px;background:white;color:#15171a;font:inherit;font-weight:700;cursor:pointer}
+.me-journal-actions button[type=submit]{background:#e3a03a;border-color:#e3a03a}
+.me-journal-actions button:hover{box-shadow:inset 0 0 0 1px #15171a}
+.me-journal-status{font-size:14px;color:#545a61;margin:24px 0 16px}
+.me-journal-list{list-style:none;padding:0;margin:0;display:grid;gap:20px}
+.me-journal-card{border:1px solid #dcdcd5;border-radius:16px;padding:24px;overflow-wrap:anywhere}
+.me-journal-card-top{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+.me-journal-card-top p{margin-bottom:8px}
+.me-journal-state{font-size:12px;color:#424a43;border:1px solid #c8d1c6;border-radius:20px;padding:4px 10px;background:#f3f6ef}
+.me-journal-card h3{font-size:clamp(1.3rem,2.3vw,1.75rem);margin:14px 0}
+.me-journal-card h3 a{text-decoration-thickness:1px;text-decoration-color:#9fa39e}
+.me-journal-summary{font-size:17px}
+.me-journal-author{font-size:13px;color:#545a61}
+.me-journal-dates{display:flex;flex-wrap:wrap;gap:12px 28px;margin:20px 0;font-size:13px}
+.me-journal-dates dt{color:#545a61}
+.me-journal-dates dd{margin:0;font-weight:700}
+.me-journal-qualification{font-size:14px;border-left:3px solid #b57822;padding:8px 12px;background:#faf7ef}
+.me-journal-card details{border-top:1px solid #dcdcd5;padding-top:10px;font-size:14px}
+.me-journal-card summary{cursor:pointer;min-height:44px;padding-block:10px;font-weight:700}
+.me-journal-sources{padding-left:20px}
+.me-journal-sources li{margin-block:16px}
+.me-journal-sources p{margin:4px 0}
+.me-journal-empty{padding:24px;border:1px dashed #7c8187;border-radius:12px;background:#fafaf7}
+@media(max-width:760px){.me-journal-layout{grid-template-columns:1fr}.me-journal-aside{border-right:0;border-bottom:1px solid #dcdcd5}.me-journal-heading{align-items:flex-start}.me-journal-count{min-width:100px;padding-left:16px}.me-journal-count strong{font-size:40px}}
+@media(max-width:480px){.me-journal-page main,.me-journal-topbar,.me-journal-footer{width:calc(100% - 32px)}.me-journal-heading{display:block}.me-journal-count{display:flex;align-items:center;gap:12px;margin-top:24px}.me-journal-heading h2{font-size:2rem}.me-journal-canvas,.me-journal-aside,.me-journal-card{padding:18px}.me-journal-filters{grid-template-columns:1fr}.me-journal-topbar{gap:12px;align-items:flex-start}.me-journal-topbar nav{gap:12px;flex-wrap:wrap}.me-journal-footer p{margin-left:0}}

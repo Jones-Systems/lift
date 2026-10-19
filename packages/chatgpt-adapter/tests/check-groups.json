@@ -1,0 +1,153 @@
+{
+  "schema": "form.chatgpt-adapter.check-groups/v1",
+  "groups": {
+    "chatgpt-read-boundary": {
+      "summary": "Portable read-tool schemas, identity denial, account isolation, projection and safe unavailable behavior",
+      "covers": [
+        "fixed read descriptors",
+        "input bounds",
+        "fresh scoped identity",
+        "ownership denial",
+        "bounded output",
+        "safe errors",
+        "no default data calls"
+      ],
+      "direct_surfaces": [
+        "packages/chatgpt-adapter/src/index.mjs",
+        "packages/chatgpt-adapter/src/schemas.mjs",
+        "packages/chatgpt-adapter/package.json",
+        "packages/chatgpt-adapter/src/identity.mjs"
+      ],
+      "test_modules": [
+        "packages/chatgpt-adapter/tests/adapter.test.mjs"
+      ],
+      "invocation_from_repository_root": "node --test --test-concurrency=1 packages/chatgpt-adapter/tests/adapter.test.mjs"
+    },
+    "chatgpt-domain-bridge": {
+      "summary": "Guarded existing-account Domain reads, bounded plan injection and minimized projections",
+      "covers": [
+        "existing-account resolver requirement",
+        "active-read guard requirement",
+        "fixed Domain calls",
+        "bounded pages",
+        "voided preservation",
+        "no unbounded plans fallback",
+        "no private-field disclosure"
+      ],
+      "direct_surfaces": [
+        "packages/chatgpt-adapter/src/domain-ports.mjs",
+        "packages/chatgpt-adapter/src/domain-ports.d.mts",
+        "packages/chatgpt-adapter/src/identity.mjs",
+        "packages/chatgpt-adapter/src/schemas.mjs",
+        "packages/chatgpt-adapter/package.json",
+        "packages/chatgpt-adapter/package-lock.json",
+        "packages/chatgpt-adapter/tests/fixtures.mjs"
+      ],
+      "test_modules": [
+        "packages/chatgpt-adapter/tests/domain-ports.test.mjs"
+      ],
+      "invocation_from_repository_root": "node --test --test-concurrency=1 packages/chatgpt-adapter/tests/domain-ports.test.mjs"
+    },
+    "chatgpt-mcp-transport": {
+      "summary": "Disabled HTTP defaults, authenticated request binding, raw metadata and offline SDK interoperability",
+      "covers": [
+        "disabled default",
+        "raw OpenAI descriptor metadata",
+        "legacy and 2026-07-28 offline SDK client",
+        "HTTP request bounds",
+        "request identity isolation",
+        "safe failures",
+        "single-message POST admission",
+        "zero-read batch denial"
+      ],
+      "direct_surfaces": [
+        "packages/chatgpt-adapter/src/mcp-handler.mjs",
+        "packages/chatgpt-adapter/src/mcp-handler.d.mts",
+        "packages/chatgpt-adapter/src/identity.mjs",
+        "packages/chatgpt-adapter/src/index.mjs",
+        "packages/chatgpt-adapter/src/schemas.mjs",
+        "packages/chatgpt-adapter/package.json",
+        "packages/chatgpt-adapter/package-lock.json",
+        "packages/chatgpt-adapter/tests/fixtures.mjs"
+      ],
+      "test_modules": [
+        "packages/chatgpt-adapter/tests/mcp-handler.test.mjs"
+      ],
+      "invocation_from_repository_root": "node --test --test-concurrency=1 packages/chatgpt-adapter/tests/mcp-handler.test.mjs"
+    },
+    "chatgpt-domain-sqlite-integration": {
+      "summary": "Qualified real Domain and SQLite reads through the adapter and offline MCP client, with isolated compilation and owned scratch cleanup",
+      "covers": [
+        "exact API graph/dependency binding",
+        "real existing-subject and lifecycle guards",
+        "two-account parent and child SQL isolation",
+        "query_only and unchanged total_changes",
+        "native cursor and bounded plan hydration",
+        "post-read suppression denial",
+        "safe private-field projection",
+        "disabled default and missing guard",
+        "success/failure/cancellation scratch cleanup",
+        "concurrent scratch ownership",
+        "fresh fail-closed admission before compiler and test child",
+        "exact alias-only API lock compatibility, other drift denied",
+        "OAuth synthetic authority with real Domain and query-only SQLite",
+        "OAuth post-read revocation suppresses real record",
+        "genuine selected migration19/20/22 receipts and canonical source fixture writes",
+        "legacy-only detail rejects source-v1/v2 with fixed data-free unavailable",
+        "literal source zero/assistance/per-side loads and confirmed/voided sets stay out of projections",
+        "mixed legacy/source account-scoped history and both offline MCP/OAuth protocol modes"
+      ],
+      "direct_surfaces": [
+        "packages/chatgpt-adapter/scripts/check-domain-sqlite.mjs",
+        "packages/chatgpt-adapter/tests/api-source-binding.json",
+        "packages/chatgpt-adapter/tests/domain-sqlite.test.mjs",
+        "packages/chatgpt-adapter/src/domain-ports.mjs",
+        "packages/chatgpt-adapter/src/mcp-handler.mjs",
+        "packages/chatgpt-adapter/package.json",
+        "packages/chatgpt-adapter/.gitignore",
+        "services/api/src/integration/domain-read.ts",
+        "services/api/src/domain.ts",
+        "services/api/src/lifecycle/guards.ts",
+        "services/api/package-lock.json",
+        "packages/chatgpt-adapter/src/oauth-resource.mjs",
+        "packages/chatgpt-adapter/tests/oauth-fixtures.mjs"
+      ],
+      "test_modules": [
+        "packages/chatgpt-adapter/tests/domain-sqlite.test.mjs"
+      ],
+      "invocation_from_repository_root": "node packages/chatgpt-adapter/scripts/check-domain-sqlite.mjs --integration"
+    },
+    "chatgpt-oauth-resource": {
+      "summary": "Disabled OAuth resource composition, SDK challenges, distinct subject mapping and current authority before disclosure",
+      "covers": [
+        "missing configuration zero calls",
+        "path-specific protected metadata",
+        "safe invalid token and scope challenges",
+        "external subject to internal Form identity mapping",
+        "current authority around reads and before disclosure",
+        "cross-request account isolation",
+        "post-read revocation/expiry/close/abort denial",
+        "raw tools/list OAuth metadata",
+        "both offline official SDK protocol versions",
+        "one admission limit",
+        "OpenAI tool-error authentication metadata in both protocol eras",
+        "fresh final denial match permits only fixed data-free error",
+        "changed denial and account/backend failures suppress stale linking metadata"
+      ],
+      "direct_surfaces": [
+        "packages/chatgpt-adapter/src/oauth-resource.mjs",
+        "packages/chatgpt-adapter/src/oauth-resource.d.mts",
+        "packages/chatgpt-adapter/src/mcp-handler.mjs",
+        "packages/chatgpt-adapter/src/mcp-handler.d.mts",
+        "packages/chatgpt-adapter/src/domain-ports.mjs",
+        "packages/chatgpt-adapter/tests/oauth-fixtures.mjs",
+        "packages/chatgpt-adapter/package.json"
+      ],
+      "test_modules": [
+        "packages/chatgpt-adapter/tests/oauth-resource.test.mjs"
+      ],
+      "invocation_from_repository_root": "node --test --test-isolation=none --test-concurrency=1 packages/chatgpt-adapter/tests/oauth-resource.test.mjs"
+    }
+  },
+  "union_invocation_from_repository_root": "node packages/chatgpt-adapter/scripts/check-domain-sqlite.mjs --all"
+}

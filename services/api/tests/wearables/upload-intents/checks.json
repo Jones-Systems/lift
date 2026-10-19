@@ -1,0 +1,5 @@
+{
+  "group": "wearable-upload-intents",
+  "covers": ["prepare before dispatch", "original binding and immutable unknown retry", "atomic CAS unknown readback", "acknowledged restart without HTTP", "authoritative native checkpoint reconciliation", "durable scrub and late-writer fences", "unavailable mandatory ports"],
+  "tests": ["services/api/tests/wearables/app.test.mjs", "services/api/tests/wearables/upload-intents/upload-intents.test.mjs"]
+}

@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "slug": "before-your-first-strength-plan",
+  "siteId": "strength-beginners",
+  "title": "Before your first strength plan: questions worth asking",
+  "summary": "A beginner orientation guide that helps you prepare for instruction without inventing a universal workout.",
+  "author": "Form editorial source author (AI-assisted)",
+  "created": "2026-10-09",
+  "sections": [
+    {
+      "heading": "Start with orientation",
+      "paragraphs": [
+        "CDC includes muscle-strengthening activity in its general adult recommendations. Those recommendations do not identify the right exercise, load or progression for an individual.",
+        "Before choosing a routine, learn what your training environment actually offers. A community facility, a crowded gym and a small room at home each create different practical choices. Write down what you can access today rather than what an ideal setup would contain."
+      ]
+    },
+    {
+      "heading": "Ask for the instruction you need",
+      "paragraphs": [
+        "At a facility, find out whether an orientation is available and who is responsible for explaining equipment adjustment. Ask how to identify the intended use of a machine and how to request assistance. Do not assume every staff member has the same training or role.",
+        "When reading a plan, mark unfamiliar terms. A set usually groups repetitions, but a plan may use special notation or a different convention. Ask the plan’s author to explain those details before treating the numbers as instructions."
+      ]
+    },
+    {
+      "heading": "Keep a practical first-visit note",
+      "paragraphs": [
+        "Make the note short enough that you will actually use it. Record the place, the name or role of the person who helped, what was explained and what remains unresolved. A note is a memory aid; it does not certify technique."
+      ],
+      "checklist": [
+        "Can I explain the setup in my own words?",
+        "Who can answer a question while I am here?",
+        "Which instructions need clarification before I continue?"
+      ]
+    },
+    {
+      "heading": "Separate curiosity from prescription",
+      "paragraphs": [
+        "A useful beginner resource helps you ask better questions. It should not pretend that knowing a few terms establishes an appropriate training program. This guide does not select exercises or promise injury prevention.",
+        "If individual restrictions or health concerns affect participation, obtain advice from a qualified professional. Bring the questions you marked; a concrete question is easier to answer than an entire unexplained routine."
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "title": "Adult Activity: An Overview",
+      "url": "https://www.cdc.gov/physical-activity-basics/guidelines/adults.html",
+      "publisher": "CDC",
+      "accessed": "2026-10-09",
+      "supports": "General adult activity recommendations; not an individualized program or evidence of Form outcomes."
+    }
+  ],
+  "rights": {
+    "status": "original",
+    "statement": "Original Form-owned editorial wording and planning prompts, authored for this project with AI assistance. Sources are linked for context; no source photographs, copied article text or third-party assets are reproduced."
+  },
+  "provenance": {
+    "kind": "original",
+    "origin": "WEB-A3 editorial source lane",
+    "note": "Original seed copy. Primary source page verified by browsing on 2026-10-09. Source-author checked wording, attribution, rights and claim limits; no independent clinician reviewed this article."
+  },
+  "lifecycle": {
+    "state": "approved",
+    "review": {
+      "reviewer": "WEB-A3 editorial source author (AI-assisted)",
+      "date": "2026-10-09",
+      "scope": "source-author-editorial",
+      "contentHash": "f52cc548c2cc0a7853fbb844e6a37862bab2037bba9e772cd40a92607871bd26"
+    },
+    "approval": {
+      "reviewer": "WEB-A3 editorial source author (AI-assisted)",
+      "date": "2026-10-09",
+      "scope": "source-author-editorial",
+      "contentHash": "f52cc548c2cc0a7853fbb844e6a37862bab2037bba9e772cd40a92607871bd26",
+      "reviewHash": "ade1b76249dcf0400cdb3f39112da2c3b04bf13d79f65e51fac76e3624ad0341"
+    }
+  }
+}

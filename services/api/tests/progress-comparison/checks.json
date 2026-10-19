@@ -1,0 +1,49 @@
+{
+  "group": "progress-comparison",
+  "covers": [
+    "confirmed performed sets rather than targets",
+    "explicit exercise variant equipment laterality and load basis",
+    "kg/lb conversion",
+    "unknown versus zero and bodyweight",
+    "correction invalidation",
+    "fresh authenticated session-port snapshot contract",
+    "persistent performed identity separate from comparison attestation",
+    "real SQLite Domain history and correction consumer",
+    "same-transaction fresh witness and rollback",
+    "canonical account session epoch isolation",
+    "structured export suppression-gated owned purge and shared receipt boundary",
+    "v2 same-snapshot source exercise occurrence and historical plan witness",
+    "mandatory-in-use synchronous context association writer guard",
+    "unavailable source versus observed unknown/incomparable comparison",
+    "guard mutation rollback and minimal identity lineage without payload duplication",
+    "source reported repetitions rather than prescription targets",
+    "controlled practice repetitions unavailable and source load unknown",
+    "unchanged legacy identity-first comparison refusal"
+  ],
+  "directSurfaces": [
+    "services/api/src/progress-comparison/index.ts",
+    "services/api/src/progress-comparison/persistence.ts",
+    "services/api/src/progress-comparison/service.ts",
+    "services/api/src/progress-comparison/lifecycle.ts",
+    "services/api/src/progress-comparison/migration.ts",
+    "services/api/src/progress-comparison/persistence-types.ts",
+    "services/api/src/progress-comparison/persistence-schemas.ts"
+  ],
+  "tests": [
+    "services/api/tests/progress-comparison/comparison.test.mjs",
+    "services/api/tests/progress-comparison/persistence.test.mjs"
+  ],
+  "command": "node --experimental-transform-types --import ./services/api/scripts/integration/source-hook.mjs --test --test-isolation=none --test-concurrency=1 services/api/tests/progress-comparison/comparison.test.mjs services/api/tests/progress-comparison/persistence.test.mjs",
+  "runtime": "Node >=24 transform-types and canonical source hook; lock-matched better-sqlite3/zod; SQLite :memory:, no filesystem scratch or network",
+  "affectedExistingTests": [
+    "services/api/tests/progress-comparison/comparison.test.mjs",
+    "services/api/tests/progress-comparison/persistence.test.mjs"
+  ],
+  "candidateSelection": {
+    "runtime": [
+      "services/api/tests/progress-comparison/comparison.test.mjs",
+      "services/api/tests/progress-comparison/persistence.test.mjs"
+    ],
+    "reason": "Current source-performed-set mapper preserves actual repetitions and unknown load; controlled practice has no invented repetitions. Both pure comparison and persistence modules are affected; qualification unrun."
+  }
+}

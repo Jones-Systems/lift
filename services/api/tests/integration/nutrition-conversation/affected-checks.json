@@ -1,0 +1,33 @@
+{
+  "schema": "form.integration-affected-checks/v1",
+  "sourceBase": "7b782847d79c28145da9ddf36d9c92806c0694fa",
+  "workingDirectory": "services/api",
+  "prerequisite": ["npm", "run", "build"],
+  "groups": {
+    "integration/nutrition-conversation": ["tests/integration/nutrition-conversation/host.test.ts"],
+    "domain-features/nutrition": [
+      "tests/domain-features/nutrition/nutrition.test.ts",
+      "tests/domain-features/nutrition/grounding-adapter.test.ts",
+      "tests/domain-features/nutrition/conversation.test.ts",
+      "tests/domain-features/nutrition/synthesis-adapter.test.ts",
+      "tests/domain-features/nutrition/citation-followthrough.test.ts"
+    ],
+    "grounding": [
+      "tests/grounding/grounding.test.ts",
+      "tests/grounding/answer.test.ts",
+      "tests/grounding/artifact.test.ts"
+    ]
+  },
+  "argv": [
+    "node", "--test", "--test-concurrency=1",
+    "dist/tests/integration/nutrition-conversation/host.test.js",
+    "dist/tests/domain-features/nutrition/nutrition.test.js",
+    "dist/tests/domain-features/nutrition/grounding-adapter.test.js",
+    "dist/tests/domain-features/nutrition/conversation.test.js",
+    "dist/tests/domain-features/nutrition/synthesis-adapter.test.js",
+    "dist/tests/domain-features/nutrition/citation-followthrough.test.js",
+    "dist/tests/grounding/grounding.test.js",
+    "dist/tests/grounding/answer.test.js",
+    "dist/tests/grounding/artifact.test.js"
+  ]
+}

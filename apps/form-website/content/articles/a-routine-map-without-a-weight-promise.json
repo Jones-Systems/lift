@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "slug": "a-routine-map-without-a-weight-promise",
+  "siteId": "weight-management",
+  "title": "Make a routine map without a weight-loss promise",
+  "summary": "Organize a habit around a real constraint and review the process without assuming a health outcome.",
+  "author": "Form editorial source author (AI-assisted)",
+  "created": "2026-10-09",
+  "sections": [
+    {
+      "heading": "Choose a process, not a forecast",
+      "paragraphs": [
+        "NIDDK’s habit guidance describes planning for barriers and revisiting a plan. It does not establish a weight outcome from a particular planning worksheet.",
+        "Choose a routine you can describe without a scale: preparing a shopping list, organizing a meal break or deciding when an appropriate activity could fit. This is an organizational decision. It is not a calorie prescription, medical treatment or a promise of weight loss."
+      ]
+    },
+    {
+      "heading": "Draw the chain of decisions",
+      "paragraphs": [
+        "Write the routine in the center of a sheet. To its left, write what has to happen before it can begin. To its right, write what happens afterward. A plan to cook may depend on shopping, storage, available time and someone else’s schedule.",
+        "Circle the part you can influence this week. If the main obstacle is transport, a motivational slogan does not solve it. Describe the missing resource so you can decide whether a different routine is more realistic."
+      ]
+    },
+    {
+      "heading": "Create an obstacle card",
+      "paragraphs": [
+        "Use a separate card for the situation most likely to interrupt the routine. Keep it practical and avoid treating a disruption as a moral failure."
+      ],
+      "checklist": [
+        "When this obstacle appears, which decision becomes difficult?",
+        "What alternative is available within my resources?",
+        "Whose cooperation or advice would I need?",
+        "When will I review whether this alternative helped?"
+      ]
+    },
+    {
+      "heading": "Read the record in context",
+      "paragraphs": [
+        "Review what happened to the routine and what made it harder or easier. That observation is useful even if body weight does not change. Do not infer a diagnosis or a treatment response from this worksheet.",
+        "Questions about nutrition, weight-related treatment or an activity plan for a medical condition belong with appropriately qualified professionals. This resource helps organize the conversation; it does not replace it."
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "title": "Changing Your Habits for Better Health",
+      "url": "https://www.niddk.nih.gov/health-information/diet-nutrition/changing-habits-better-health",
+      "publisher": "NIDDK, NIH",
+      "accessed": "2026-10-09",
+      "supports": "Planning around barriers and reviewing habits; no promised weight change from this worksheet."
+    }
+  ],
+  "rights": {
+    "status": "original",
+    "statement": "Original Form-owned editorial wording and planning prompts, authored for this project with AI assistance. Sources are linked for context; no source photographs, copied article text or third-party assets are reproduced."
+  },
+  "provenance": {
+    "kind": "original",
+    "origin": "WEB-A3 editorial source lane",
+    "note": "Original seed copy. Primary source page verified by browsing on 2026-10-09. Source-author checked wording, attribution, rights and claim limits; no independent clinician reviewed this article."
+  },
+  "lifecycle": {
+    "state": "approved",
+    "review": {
+      "reviewer": "WEB-A3 editorial source author (AI-assisted)",
+      "date": "2026-10-09",
+      "scope": "source-author-editorial",
+      "contentHash": "267166e3d845471263bd0dc6aeca098ec3ff1a1bd3a6887f29d6feb5d8ea58aa"
+    },
+    "approval": {
+      "reviewer": "WEB-A3 editorial source author (AI-assisted)",
+      "date": "2026-10-09",
+      "scope": "source-author-editorial",
+      "contentHash": "267166e3d845471263bd0dc6aeca098ec3ff1a1bd3a6887f29d6feb5d8ea58aa",
+      "reviewHash": "440ea1f83e16a243bc7270ae7985c2be7e1ab245f7b1e81fcfbbd7858cfca5fb"
+    }
+  }
+}

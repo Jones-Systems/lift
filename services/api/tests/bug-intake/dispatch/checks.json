@@ -1,0 +1,14 @@
+{
+  "schema": "form.bug-intake.dispatch.affected-checks/v1",
+  "groups": {
+    "FORM-WS40-jones-adapter": ["services/api/tests/bug-intake/dispatch/jones.test.ts"],
+    "FORM-WS40-reviewed-routing": ["services/api/tests/bug-intake/dispatch/reviewed.test.ts"]
+  },
+  "covers": ["exact binding and current report grant", "untrusted report and consented diagnostic allowlist", "single injected port invocation", "unknown outcome and existing service durable retry fence", "duplicate attribution and unavailable dispatch", "trusted reviewed producer to payload-only consumer", "local report/fingerprint/source/digest and exact recipient policy grant binding", "final source/review/access/activity recheck", "integrated receipt versus independently qualified cited fix outcome", "current guarded six-field reporter projection and private evidence exclusion"],
+  "directSurfaces": ["services/api/src/bug-intake/dispatch/jones.ts", "services/api/src/bug-intake/dispatch/reviewed.ts", "services/api/src/bug-intake/dispatch/index.ts", "services/api/src/bug-intake/evidence.ts", "services/api/src/bug-intake/triage.ts", "services/api/src/bug-intake/service.ts", "services/api/src/bug-intake/outcome.ts"],
+  "build": "npm run build --prefix services/api",
+  "focused": "node --test --test-isolation=none --test-concurrency=1 services/api/dist/tests/bug-intake/dispatch/jones.test.js services/api/dist/tests/bug-intake/dispatch/reviewed.test.js",
+  "fixtures": ["services/api/tests/bug-intake/fixture.ts", "synthetic inline requests and fake ports"],
+  "executionOwner": "FORM-WS07 shared serial verification slot",
+  "integration": "Source-only fake-port qualification. Actual native Jones workflow submit/result reader is absent. Accepted receipt acknowledges a handoff, not a verified fix. Shared discovery and operational dispatch remain separately owned."
+}

@@ -1,0 +1,7 @@
+{
+  "name": "form-storekit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Form-owned StoreKit 2 transaction proof bridge",
+  "license": "UNLICENSED"
+}

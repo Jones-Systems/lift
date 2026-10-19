@@ -1,0 +1,10 @@
+{
+  "name": "form-website",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22"},
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs"
+  }
+}

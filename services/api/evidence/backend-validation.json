@@ -1,0 +1,86 @@
+{
+  "schema": "form-backend-validation/1",
+  "observedAt": "2026-10-08T20:30:42.599855+00:00",
+  "scope": "services/api/**",
+  "sourceImportRevision": "9d3523697a0d1348c7a68e2178f4d1ec0d7813f0",
+  "integrationHead": "parent-reported b4fb225; final source uncommitted, Git owner parent only",
+  "runtime": {
+    "node": "24.19.0",
+    "npm": "11.17.0",
+    "typescript": "7.0.2"
+  },
+  "checks": [
+    {
+      "command": "node scripts/install.mjs",
+      "result": "passed",
+      "packagesAdded": 32,
+      "scratch": "exact invocation root removed"
+    },
+    {
+      "command": "npm run build",
+      "result": "passed",
+      "exitCode": 0,
+      "output": "dist reused"
+    },
+    {
+      "command": "npm test",
+      "result": "passed",
+      "exitCode": 0,
+      "tests": 15,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 2457.076554
+    },
+    {
+      "command": "node scripts/audit.mjs",
+      "result": "passed",
+      "exitCode": 0,
+      "productionVulnerabilities": 0,
+      "evidence": "evidence/npm-audit-production.json",
+      "scope": "same unchanged package-lock"
+    }
+  ],
+  "finalAdmission": {
+    "build": {
+      "cpuUsedPercent": 5.06,
+      "availableRamGiB": 37.17,
+      "serialCeiling": 1,
+      "oneCoreHostPercent": 6.25
+    },
+    "test": {
+      "cpuUsedPercent": 0.94,
+      "availableRamGiB": 37.22,
+      "serialCeiling": 1,
+      "oneCoreHostPercent": 6.25
+    }
+  },
+  "files": {
+    "package.json": "29b080900c56fa9935883eb595a74bfe56636f53dc6dab1f9a36c7ba3612acdd",
+    "package-lock.json": "1605d750dba2adddaee4d4454f880cb5879497dc172bf8d9eb97a5be88c54e00",
+    "tsconfig.json": "1066778f72ac996cc5457e108576afa2a3bf7c79a0c33932f2f216457dc8e146",
+    "README.md": "7a68a7a9bdf58b1eb6245e34fbb1d8f31b1b07b8db2d66849e227a7f57b15297",
+    ".gitignore": "e1253d1240d552813a700ac60624782f90cc8aa90928475c399cce11a72a3103",
+    "src/auth.ts": "4d1559f841c82cc2e4fb9d23a44be3c0ffa381b75b48f18656c5ea753d78ad7e",
+    "src/catalog.ts": "4289db7ed61ec92a85b7d4a47579a5b7c758bde1e6b49177d55c45f3de712172",
+    "src/cli.ts": "aed8d84187de5b471fb59e516cf4debff6f1d3cceadbd28231b3de3ddfe55955",
+    "src/configuration.ts": "c408989e0fccc75456b590a8fffdf7f7ae5e658c87eb1c9573bda7d815bb4c20",
+    "src/domain.ts": "e3240500d76ee4c309ead564da6b1de8bb53b4075d6865f50bb8bca37059640c",
+    "src/errors.ts": "4a104262988399c175c300037b7f40e6c9c5c6ec4e3aa8782a06a6d4d8614e49",
+    "src/schemas.ts": "dfe0e3403264a461c376a2ac416940213ff64a0e4d04d704d89c5314c297e682",
+    "src/server.ts": "29d3c3de6a76df66b03974f90e1ef9ecd0739ae9617ec883667c52f0311ae001",
+    "src/storage-cli.ts": "4fe382371297a1fc09d2927151549d6b39b409a7eed913d1e7c5dfc034e34eb3",
+    "src/storage.ts": "400abf8db5388885800864a9390c6ded4d35e0006034ff0a2938d095cdafcc93",
+    "src/transcription.ts": "328bd5f830c71dc59109c45b3880b627af7df6e8d5a8c6b946dfa45fd6805542",
+    "tests/backend.test.ts": "d3533118ee61c7f5d4afa21a480f5e55a11d9bff772040c55cad31de247d3e81",
+    "scripts/audit.mjs": "ca299155f37f390b362343843e26efadb76ace81fd2a2ada4f1db9cb067ce816",
+    "scripts/install.mjs": "3a9e774cd49a4a56329727745fc26f8168e7fd33dd46788f37f150adc53fa387"
+  },
+  "limits": [
+    "No service/state/database operational setup, deployment, Git/index/commit, sudo or external provider calls performed.",
+    "Google/Apple Better Auth provider configuration implemented; real provisioning/native authentication unverified.",
+    "Phone managed verification/challenge/session adapter not implemented; unconfigured capability, no fake OTP.",
+    "Grok adapter uses injected synthetic downstream in tests; no key/usage authorization or live qualification.",
+    "Apple JWS verification and purchase grants not implemented; endpoint fails closed. Zero-charge promo grants are implemented.",
+    "Native client/device qualification and authorized second-device synthetic request remain parent responsibilities."
+  ]
+}

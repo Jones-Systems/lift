@@ -1,0 +1,83 @@
+{
+  "schema": "form.constraints.affected-checks/v1",
+  "groups": {
+    "form-constraints": {
+      "summary": "Source-bound request-scoped plan constraint evaluation and adaptation comparisons.",
+      "covers": ["R1 preflight and currentness", "source and laterality qualification", "interacting constraints and complete traces", "monotonic restrictions and empty sets", "time/equipment/context", "purpose comparisons, locks and soft preference noninterference", "grouped required-AND/every-group-OR with literal tokens and full matching-member traces", "closed no-getter dense grouped data, unknown attestation/availability and hard exclusion composition", "grouped-only traces, preflight not_evaluated and detached snapshots without caller freezing"],
+      "direct_surfaces": ["services/api/src/planning/constraints/index.ts"],
+      "tests": ["services/api/tests/planning/constraints/constraints.test.mjs"],
+      "fixtures": ["services/api/tests/planning/constraints/fixture.mjs"],
+      "command": "node --test --test-concurrency=1 --test-isolation=none services/api/tests/planning/constraints/constraints.test.mjs"
+    },
+    "form-constraints-consumer": {
+      "summary": "Actual legacy and source-prescription first-plan consumers of confirmed constraints and qualified operational receipts.",
+      "covers": ["confirmed account/profile/preferences binding", "actual preference time and equipment", "canonical variant/prescription proofs", "independent operational qualification and source lineage", "qualified structured context without free-text inference", "actual selectFirstPlan outcome and complete native trace projection", "actual fallback producer and selectSourceFirstPlan integration", "owner-validated source format and full native/registration key binding", "upper estimated duration comparison without unknown-load coercion", "legacy/source isolation and complete native source evidence", "authentic retained carry OR and row AND in actual source selection; synthetic-only operational/active-row/R1 witnesses", "every normalized native tuple field and exact variant binding independently of altered receipt/catalog copies", "independent operational SourceRef value equality, preserved lineage and legacy grouped unknown"],
+      "direct_surfaces": ["services/api/src/planning/constraints/first-plan-adapter.ts"],
+      "tests": ["services/api/tests/planning/constraints/first-plan-adapter.test.mjs"],
+      "fixtures": ["services/api/tests/planning/constraints/fixture.mjs", "services/api/tests/planning/first-plan/source-fixture.mjs"],
+      "harness": "services/api/tests/planning/first-plan/resolve.mjs",
+      "command": "node --import ./services/api/tests/planning/first-plan/resolve.mjs --test --test-concurrency=1 --test-isolation=none services/api/tests/planning/constraints/first-plan-adapter.test.mjs",
+      "environment": "Verified read-only FORM_API_NODE_MODULES for actual first-plan zod schemas; existing resolver only, no dependency links or installs."
+    },
+    "form-constraints-confirmed-capture": {
+      "summary": "Literal original-session capture, exact confirmation and trusted R1 receipt binding for both plan formats.",
+      "covers": ["strict public capture without authority flags", "literal answers and distinct missingness", "versioned question and restriction inventory", "account/session/context/revision/content confirmation", "exact user-exclusion variant mapping", "external R1 source/fact/coverage binding", "authentic blocked decision evidence", "fresh host capture/consent/question/variant/R1 reads", "actual source candidate and selector with unchanged capture authority", "source registration/prescription/context replay rejection", "source exclusions and blocked R1 native evidence", "grouped metadata validated before capture cloning without invoking accessors", "actual grouped receipt-to-selector path preserves independent attestation, R1 holds and exact exclusions"],
+      "direct_surfaces": ["services/api/src/planning/constraints/confirmed-capture.ts"],
+      "tests": ["services/api/tests/planning/constraints/confirmed-capture.test.mjs"],
+      "fixtures": ["services/api/tests/planning/constraints/fixture.mjs", "services/api/tests/planning/first-plan/source-fixture.mjs"],
+      "harness": "services/api/tests/planning/first-plan/resolve.mjs",
+      "command": "node --import ./services/api/tests/planning/first-plan/resolve.mjs --test --test-concurrency=1 --test-isolation=none services/api/tests/planning/constraints/confirmed-capture.test.mjs",
+      "environment": "Verified read-only FORM_API_NODE_MODULES; source fixture reads the two pinned retainedInputs. Confirmations, active-row projections, applicability and R1 witnesses remain synthetic; no production qualification or DB I/O."
+    },
+    "form-constraints-consumer-types": {
+      "summary": "Strict no-emit adapter and evaluator graph including actual first-plan and canonical schemas.",
+      "direct_surfaces": ["services/api/src/planning/constraints/first-plan-adapter.ts", "services/api/src/planning/constraints/index.ts", "services/api/src/planning/constraints/confirmed-capture.ts"],
+      "harness": "services/api/tests/planning/constraints/typecheck.mjs",
+      "command": "node services/api/tests/planning/constraints/typecheck.mjs",
+      "environment": "Verified read-only FORM_API_NODE_MODULES; existing API strict compiler options and official getExePath. One launcher plus its directly supervised compiler, no retry.",
+      "scratch": "Unique .typecheck-*/tsconfig.json under this constraints test cone, at most 2 KiB, inode-bound exact-file removal after known child exit on success, failure or handled SIGINT/SIGTERM; preserve on unknown child exit or changed file identity; noEmit, no incremental state."
+    }
+  },
+  "environment": "Node >=24, built-in type stripping. Pure group needs no dependencies; consumer and type groups use the verified read-only donor. Fixtures create no files, subprocesses or network operations; the type harness owns its bounded scratch and compiler child.",
+  "integration": "Additive synchronous source-prescription adapter and capture entry preserve receipt v1 authority and legacy behavior. Authenticated storage/confirmation, real R1 production, catalog/metadata acceptance, shared discovery and persistence remain with their owners.",
+  "affectedUnion": {
+    "groups": ["form-constraints", "form-constraints-consumer", "form-constraints-confirmed-capture", "first-plan-selection", "form-constraints-consumer-types", "catalog-qualification"],
+    "foreignManifest": "services/api/tests/planning/first-plan/checks.json",
+    "catalogManifest": "services/api/tests/catalog-qualification/check-group.json",
+    "tests": ["services/api/tests/planning/constraints/constraints.test.mjs", "services/api/tests/planning/constraints/first-plan-adapter.test.mjs", "services/api/tests/planning/constraints/confirmed-capture.test.mjs", "services/api/tests/planning/first-plan/selection.test.mjs", "services/api/tests/planning/first-plan/normalization.test.mjs", "services/api/tests/planning/first-plan/source-selection.test.mjs"],
+    "command": "node --import ./services/api/tests/planning/first-plan/resolve.mjs --test --test-concurrency=1 --test-isolation=none services/api/tests/planning/constraints/constraints.test.mjs services/api/tests/planning/constraints/first-plan-adapter.test.mjs services/api/tests/planning/constraints/confirmed-capture.test.mjs services/api/tests/planning/first-plan/selection.test.mjs services/api/tests/planning/first-plan/normalization.test.mjs services/api/tests/planning/first-plan/source-selection.test.mjs",
+    "typecheck": "node services/api/tests/planning/constraints/typecheck.mjs"
+  },
+  "sourceInputClosure": {
+    "base": "2d62f20e83a22e0033e6b153ff12124bbaa50afb",
+    "producerRevision": "0f3e1b1f31294c24f279d5cd5075bd96b82a00d7",
+    "readOnlyRuntime": ["services/api/src/planning/first-plan/index.ts", "services/api/src/planning/first-plan/types.ts", "services/api/src/planning/first-plan/normalization.ts", "services/api/src/planning/first-plan/evaluation.ts", "services/api/src/planning/first-plan/source-selection.ts", "services/api/src/planning/first-plan/fallback-policy.ts", "services/api/src/planning/first-plan/fallback-producer.ts", "services/api/src/schemas.ts", "services/api/src/catalog-qualification/registered-identity.ts", "services/api/src/catalog-qualification/native-identity.ts", "services/api/src/catalog-qualification/retained.ts", "services/api/src/catalog-qualification/validation.ts", "services/api/src/catalog-qualification/native-equipment.ts"],
+    "schemaSha256": "f77838f9e095bd4ecf7bccf34c62133912b8df517ec4ba6bfd747c59124b1763",
+    "normalizationSha256": "a70c565895e16a0e0bbab6f963386d2ccf1479f312af986c2e1f041bd86f10a4",
+    "sourceFixtureSha256": "be52915b5e6d840cc7703988397845fdbacc599d891e96b83b3f59294f7f30f5",
+    "dependencyGate": "Coordinator rebinds final candidate, current schema/registration carriers, exact read-only donor and WS07 before checks. Historical schema8169cff2e1cd8524a18cbb2d982da40ce1250a9e/registrationbecfdaa4a0cc9802557d3785c0eb58af9629ef90 ownership remains in the first-plan manifest; no fixture claims live registration or runtime R1 adoption."
+  },
+  "groupedEquipmentBoundary": {
+    "contract": "docs/planning/constraints/CONTRACT.md",
+    "sectionId": "contract.form-constraints#iface.grouped-equipment.001",
+    "projector": "services/api/src/catalog-qualification/native-equipment.ts",
+    "sourceProvenanceOnly": {
+      "path": "docs/knowledge/catalog-cues/native-equipment-provenance-20261012.json",
+      "sha256": "2f24527946382af7989a1544befa94a855394efec3ac569e496231cabe19c678"
+    },
+    "authority": "Existing independently qualified receipt v1 attests its exact grouped metadata values. Tests use only synthetic operational/active-row/R1 witnesses; no source qualification, native adoption, READY proof or host/domain/storage change.",
+    "catalogChecks": "Execute catalog-qualification manifest build/command serially with the constraints union; coordinator owns fresh admission and cumulative API build."
+  },
+  "retainedInputs": [
+    {
+      "path": "sources/businesslessons/core/research/form-knowledge-campaign-2026-10-01/inventory/legacy-movement-engine.json",
+      "bytes": 229763,
+      "sha256": "fc45be4e7129c39ef46d130a92d6bcf995d2dad64951b40c72fa125ca1561e4b"
+    },
+    {
+      "path": "docs/knowledge/catalog-cues/registrations/native-engine-v1.candidate.json",
+      "bytes": 77470,
+      "sha256": "c326ccbba03fcc1fe5807d20811e7cd57b87be4c2ebf0361e922028e7bb131ed"
+    }
+  ]
+}

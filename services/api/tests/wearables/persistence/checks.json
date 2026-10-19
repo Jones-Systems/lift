@@ -1,0 +1,6 @@
+{
+  "group": "wearable-persistence",
+  "covers": ["same-db transaction and witness fencing", "account and epoch isolation", "immutable scoped receipts", "provider intent privacy and acknowledgment", "ledger suppression and lifecycle qualification", "qualified export", "retention unavailable", "read-only HealthKit checkpoint session, stream, policy and full-metric consent fences"],
+  "tests": ["services/api/tests/wearables/persistence/persistence.test.mjs", "services/api/tests/wearables/persistence/checkpoint.test.mjs"],
+  "affectedExistingTests": ["services/api/tests/wearables/ingestion.test.mjs", "services/api/tests/wearables/providers.test.mjs", "services/api/tests/wearables/suggestions.test.mjs"]
+}

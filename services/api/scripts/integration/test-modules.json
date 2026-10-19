@@ -1,0 +1,140 @@
+{
+  "schema": "form.api-test-discovery/v1",
+  "groups": {
+    "activity": [
+      "tests/activity/domain.test.ts",
+      "tests/activity/lifecycle-community.test.ts",
+      "tests/activity/storage.test.ts"
+    ],
+    "activity/integration": [
+      "tests/activity/integration/composition.test.ts",
+      "tests/activity/integration/legacy-reader.test.ts",
+      "tests/activity/integration/request-channel.test.ts"
+    ],
+    "core": [
+      "tests/backend.test.ts",
+      "tests/lifecycle-export.test.ts",
+      "tests/lifecycle-http.test.ts",
+      "tests/lifecycle.test.ts",
+      "tests/runtime-path.test.ts",
+      "tests/settings.test.ts",
+      "tests/source-prescription-domain.test.ts",
+      "tests/source-prescription-migration.test.ts",
+      "tests/source-prescription.test.ts"
+    ],
+    "body": [
+      "tests/body/body.test.ts",
+      "tests/body/measurements.test.ts"
+    ],
+    "bug-intake": [
+      "tests/bug-intake/lifecycle.test.ts",
+      "tests/bug-intake/routes.test.ts",
+      "tests/bug-intake/service.test.ts"
+    ],
+    "community": [
+      "tests/community/b4-governance.test.ts",
+      "tests/community/b4-matching.test.ts",
+      "tests/community/b4-posts.test.ts",
+      "tests/community/b4-privacy.test.ts",
+      "tests/community/community.test.ts",
+      "tests/community/completion.test.ts",
+      "tests/community/composed-lifecycle.test.ts",
+      "tests/community/integration.test.ts",
+      "tests/community/persistence.test.ts",
+      "tests/community/request-scope.test.ts",
+      "tests/community/today-activity.test.ts"
+    ],
+    "community/board": [
+      "tests/community/board/board.test.ts",
+      "tests/community/board/correction.test.ts",
+      "tests/community/board/persistence-races.test.ts"
+    ],
+    "credentials": [
+      "tests/credentials/credentials.test.ts"
+    ],
+    "direct-provider-transport": [
+      "tests/direct-provider-transport/transport.test.mjs"
+    ],
+    "domain-features/cardio": [
+      "tests/domain-features/cardio/cardio.test.ts"
+    ],
+    "domain-features/nutrition": [
+      "tests/domain-features/nutrition/grounding-adapter.test.ts",
+      "tests/domain-features/nutrition/nutrition.test.ts"
+    ],
+    "domain-features/recovery": [
+      "tests/domain-features/recovery/recovery.test.ts"
+    ],
+    "grounding": [
+      "tests/grounding/answer.test.ts",
+      "tests/grounding/artifact.test.ts",
+      "tests/grounding/form-artifact.test.ts",
+      "tests/grounding/grounding.test.ts",
+      "tests/grounding/packaged-form-artifact.test.ts"
+    ],
+    "integration": [
+      "tests/integration/body-server.test.ts",
+      "tests/integration/community-migrations.test.ts",
+      "tests/integration/credential-server.test.ts",
+      "tests/integration/domain-read.test.ts",
+      "tests/integration/grounded-answer.test.ts",
+      "tests/integration/request-factories.test.ts",
+      "tests/integration/test-discovery.test.mjs",
+      "tests/integration/training-context.test.ts",
+      "tests/integration/training-feedback/context-association.test.ts"
+    ],
+    "integration/first-plan": [
+      "tests/integration/first-plan/confirmed-capture.test.ts",
+      "tests/integration/first-plan/r1-intake-content.test.ts"
+    ],
+    "phone": [
+      "tests/phone/phone.test.ts"
+    ],
+    "purchases": [
+      "tests/purchases/purchases.test.ts"
+    ],
+    "runtime-modules": [
+      "tests/runtime-modules/authority-currentness.test.ts",
+      "tests/runtime-modules/capability-and-denial.test.ts",
+      "tests/runtime-modules/closed-read-admission.test.ts",
+      "tests/runtime-modules/closed-read-storage.test.ts",
+      "tests/runtime-modules/composition-http.test.ts",
+      "tests/runtime-modules/configuration-and-lifetime.test.ts",
+      "tests/runtime-modules/export-http.test.ts",
+      "tests/runtime-modules/grounded-answer-startup.test.ts",
+      "tests/runtime-modules/late-boundary-regression.test.ts",
+      "tests/runtime-modules/migrations-and-restart.test.ts",
+      "tests/runtime-modules/restore-admission.test.ts"
+    ],
+    "usage-limits": [
+      "tests/usage-limits/economics.test.mjs",
+      "tests/usage-limits/ledger.test.ts",
+      "tests/usage-limits/lifecycle.test.ts",
+      "tests/usage-limits/live-allocation.test.ts",
+      "tests/usage-limits/provider-evidence.test.ts",
+      "tests/usage-limits/scratch.test.ts",
+      "tests/usage-limits/standard-composition.test.ts",
+      "tests/usage-limits/standard-observation.test.ts"
+    ],
+    "voice-coaching": [
+      "tests/voice-coaching/app-session-controller.test.cjs",
+      "tests/voice-coaching/request-scope.test.ts"
+    ],
+    "voice-coaching/realtime": [
+      "tests/voice-coaching/realtime/provider.test.ts"
+    ],
+    "wearables": [
+      "tests/wearables/app.test.mjs",
+      "tests/wearables/ingestion.test.mjs",
+      "tests/wearables/providers.test.mjs",
+      "tests/wearables/suggestions.test.mjs"
+    ],
+    "wearables/persistence": [
+      "tests/wearables/persistence/checkpoint.test.mjs",
+      "tests/wearables/persistence/persistence.test.mjs"
+    ],
+    "native-smoke": [
+      "tests/native-settings-smoke.test.mjs"
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "schema": "form.bug-intake.affected-checks/v1",
+  "groups": {
+    "FORM-WS13-unit": ["service.test.ts", "lifecycle.test.ts"],
+    "FORM-WS13-http": ["routes.test.ts"],
+    "FORM-WS13-triage": ["triage.test.ts"],
+    "FORM-WS13-client-boundary": ["client-boundary.test.cjs"],
+    "FORM-WS13-lifecycle-chain": ["lifecycle-chain.test.ts"],
+    "FORM-WS13-evidence": ["evidence.test.ts"],
+    "FORM-WS13-outcome": ["outcome.test.ts"]
+  },
+  "fixture": "fixture.ts",
+  "build": "npm run build --prefix services/api",
+  "clientBoundary": "node --test --test-concurrency=1 services/api/tests/bug-intake/client-boundary.test.cjs",
+  "lifecycleChain": "node --test --test-concurrency=1 services/api/dist/tests/bug-intake/lifecycle-chain.test.js",
+  "focused": "node --test --test-concurrency=1 services/api/dist/tests/bug-intake/*.test.js services/api/tests/bug-intake/client-boundary.test.cjs",
+  "integration": "Unmounted module; root migration, lifecycle registry, route mounting and shared test discovery belong to WS01."
+}
