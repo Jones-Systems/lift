@@ -1,6 +1,8 @@
 # lift
 
-A public code snapshot of Form for native iOS simulator development builds.
+The temporary public code-development and test repository for Form. Keep a
+matching private Form PR for each code change; see
+[PAIRED-DEVELOPMENT.md](PAIRED-DEVELOPMENT.md).
 The source revision and publication exclusions are recorded in
 [SOURCE-SNAPSHOT.json](SOURCE-SNAPSHOT.json).
 
@@ -30,15 +32,16 @@ authenticated product flows. See [BUILD.md](BUILD.md) for commands and limits.
 source, and `packages/` contains shared adapters. Private research, owner captures,
 operational evidence and source Git history are excluded. The full backend
 research projection build and tests that depend on that corpus require the
-private Form repository; this copy qualifies native simulator builds only.
+private Form repository. The selected public checks and their limits are
+listed in [PUBLIC-TESTING.md](PUBLIC-TESTING.md).
 
 Standard hosted macOS compute is free for public repositories under
 [GitHub's runner rules](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
 Artifact storage and service limits remain separate. This setup does not change
 billing settings or remove existing artifacts.
 
-This is a snapshot, not an automatic mirror. New source must be scanned and
-exported deliberately; never push the private repository's Git history here.
+This started as a snapshot and is not an automatic mirror. New source must be
+scanned and exported deliberately; never push the private repository's Git history here.
 Preserved asset and upstream notices are listed in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). No additional project-wide
 license is granted by this snapshot.

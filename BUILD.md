@@ -38,8 +38,9 @@ PYTHONDONTWRITEBYTECODE=1 python3 apps/form/scripts/ci-ios-simulator.test.py
 
 The hosted job has a 60-minute limit and its build step a 55-minute limit.
 Requests for the same source/ref serialize without cancelling active work.
-Automatic PR builds cover workflow/driver changes from branches in this repository;
-ordinary product revisions use manual dispatch. The read-only workflow token is
+Every PR from a branch in this repository receives an exact-head simulator
+build, including draft PRs. The Lift public checks workflow runs separately.
+Manual dispatch remains available for any pushed source revision. The read-only workflow token is
 not persisted by checkout. No private secrets or signing accounts are required.
 
 Each invocation owns a fresh scratch directory and one simulator. Success,
