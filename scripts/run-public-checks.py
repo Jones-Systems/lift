@@ -19,6 +19,8 @@ API = "services/api"
 APP = "apps/form"
 HELPER = "scripts/run-public-checks.py"
 HARNESS_TEST = "scripts/run-public-checks.test.py"
+SOURCE_HOOK = "scripts/integration/source-hook.mjs"
+SOURCE_RESOLVER = "scripts/integration/source-resolution.mjs"
 GROUP_IDS = ("runner-contract", "api-compile", "app-static", "form104-139", "form196", "form203", "form208", "simulator-portable")
 BASELINE_HEALTH = (
     "tests/wearables/app.test.mjs", "tests/wearables/ingestion.test.mjs",
@@ -80,9 +82,9 @@ def selection(root, requested):
             for source in BASELINE_HEALTH:
                 if source not in health:
                     raise FileNotFoundError(f"Required {group} baseline is missing: {API}/{source}")
-            hook = "tests/wearables/persistence/resolve.mjs"
-            add(group, API, ["node", "--experimental-transform-types", "--import", f"./{hook}",
-                            "--test", "--test-isolation=none", "--test-concurrency=1", *health], [hook, *health])
+            add(group, API, ["node", "--experimental-transform-types", "--import", f"./{SOURCE_HOOK}",
+                            "--test", "--test-isolation=none", "--test-concurrency=1", *health],
+                [SOURCE_HOOK, SOURCE_RESOLVER, *health])
         elif group == "simulator-portable":
             test = "scripts/ci-ios-simulator.test.py"
             add(group, APP, [sys.executable, "-B", test], [test, "scripts/ci-ios-simulator.py"])
