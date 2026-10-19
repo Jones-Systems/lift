@@ -67,3 +67,9 @@ acceptance gates. A past green check is an observation, not a permanent sync loc
 When Form integration lands, carry any newly integrated product changes back to
 Lift through a scanned, bounded PR and requalify affected open pairs. Do not push
 Form Git history or mirror its whole repository into Lift.
+
+Each named workflow records its event's head SHA, base SHA and base ref in the
+explicit `lift-pair/v1` run name. Form checks that recorded name as well as current
+PR association and latest-run success. GitHub's workflow-run `pull_requests` field
+can change after retargeting, so that field alone does not prove the tested base.
+Runs from before this setup require fresh qualification under the new run name.
