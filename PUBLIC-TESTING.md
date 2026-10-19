@@ -17,14 +17,16 @@ python3 -B scripts/run-public-checks.py --install --output public-check-evidence
 `--install` runs `npm ci` in both copied projects, serially. Without it, the
 runner reuses existing `services/api/node_modules` and `apps/form/node_modules`
 through read-only-use dependency links; it does not install or change those
-trees. Node 24 is required for the selected TypeScript source tests and hooks.
+trees. Node 24 is required for the selected TypeScript source tests, hooks and
+the runner contract's actual API/app source-import regression.
 Use a fresh evidence output path for each invocation; an existing one is
 refused. Dependencies must be installed for compilation, app checks and product
-tests. The Python runner contract and simulator driver tests are portable.
+tests. The simulator driver checks need only Python; the portable runner
+contract also needs Node 24, without installed npm dependencies.
 
 | Group ID | Selected checks | Public claim |
 | --- | --- | --- |
-| `runner-contract` | `python3 -B scripts/run-public-checks.test.py` | Group selection, baseline enforcement, subprocess status, evidence and scratch cleanup, SIGINT/SIGTERM cancellation |
+| `runner-contract` | `python3 -B scripts/run-public-checks.test.py` | Group selection, baseline enforcement, actual API/app source-import resolution, subprocess status, evidence and scratch cleanup, SIGINT/SIGTERM cancellation |
 | `api-compile` | `node node_modules/typescript/bin/tsc -p tsconfig.json` in `services/api` | TypeScript compilation and fresh emitted API/test modules |
 | `app-static` | `npm run typecheck`; `npm run check:tokens` in `apps/form` | App TypeScript and token-style checks |
 | `form104-139` | Every `*.test.mjs` recursively in API `tests/wearables/` and `tests/direct-provider-transport/` | Synthetic wearable ingestion/providers/suggestions, persistence/checkpoints, upload/purge, canonical consumer and provider transport/auth coverage present at this SHA |
@@ -37,9 +39,12 @@ To run a group, use `--group GROUP_ID` (repeatable). Board and Standard interop
 groups automatically include `api-compile` first: workers and app tests load
 fresh emitted JavaScript. Tests execute serially; intentional worker races
 remain intact. The exact argv and selected source paths are available through
-`--list` and each run's receipt. API source tests use the existing wearable
-persistence resolver, `--experimental-transform-types`, `--test-isolation=none`
-and `--test-concurrency=1`.
+`--list` and each run's receipt. API source tests use the existing integration
+source hook, `--experimental-transform-types`, `--test-isolation=none` and
+`--test-concurrency=1`. That hook resolves missing relative `.js` imports to
+their canonical `.ts` files inside either the API or app source root, preserving
+native resolution when JavaScript exists. Its source resolver refuses symlinks
+and out-of-root fallback. Both loader files are included in receipt input digests.
 
 The wearable/provider group requires every existing baseline module by name;
 missing baseline files fail selection. New modules in those two directories,
