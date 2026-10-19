@@ -51,19 +51,40 @@ class PublicChecksTests(unittest.TestCase):
             target = self.root / checks.API / source
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("")
-        hook = self.root / checks.API / "tests/wearables/persistence/resolve.mjs"
-        hook.write_text("")
+        for source in (checks.SOURCE_HOOK, checks.SOURCE_RESOLVER):
+            target = self.root / checks.API / source
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("")
         for relative in ("tests/wearables/direct-connections/direct-connections.test.mjs", "tests/direct-provider-transport/bootstrap.test.mjs"):
             target = self.root / checks.API / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("")
         contract = checks.selection(self.root, ["form104-139"])
         sources = contract["commands"][0]["test_sources"]
-        self.assertEqual(len(sources), len(checks.BASELINE_HEALTH) + 3)
+        self.assertEqual(len(sources), len(checks.BASELINE_HEALTH) + 4)
         self.assertIn(f"{checks.API}/tests/direct-provider-transport/bootstrap.test.mjs", sources)
         (self.root / checks.API / checks.BASELINE_HEALTH[0]).unlink()
         with self.assertRaises(FileNotFoundError):
             checks.selection(self.root, ["form104-139"])
+
+    def test_selected_health_hook_loads_api_and_app_source_imports(self):
+        command = checks.selection(ROOT, ["form104-139"])["commands"][0]
+        prefix = command["argv"][:command["argv"].index("--test")]
+        source = lambda relative: (ROOT / relative).as_uri()
+        script = f"""
+            import assert from 'node:assert/strict';
+            import {{ DomainError }} from {json.dumps(source('services/api/src/errors.ts'))};
+            import {{ suppressionAuthority }} from {json.dumps(source('services/api/src/lifecycle/guards.ts'))};
+            import {{ createHealthImport }} from {json.dumps(source('apps/form/src/wearables/importer.ts'))};
+            import {{ createHealthPurgeConsumer }} from {json.dumps(source('apps/form/src/wearables/purge-intent.ts'))};
+            assert.equal(typeof createHealthImport, 'function');
+            assert.equal(typeof createHealthPurgeConsumer, 'function');
+            assert.throws(() => suppressionAuthority({{}}), error =>
+                error instanceof DomainError && error.code === 'suppression_authority_required');
+        """
+        child = subprocess.run([*prefix, "--input-type=module", "--eval", script],
+                               cwd=ROOT / command["cwd"], text=True, capture_output=True, timeout=10)
+        self.assertEqual(child.returncode, 0, child.stdout + child.stderr)
 
     def test_success_cleans_child_outputs_and_preserves_log_and_receipt(self):
         status, receipt = self.execute("from pathlib import Path; Path('child-output').mkdir(); print('public proof')")
