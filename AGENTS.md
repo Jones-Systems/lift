@@ -1,8 +1,9 @@
 # lift working agreements
 
 This is an intentionally public, code-only Form snapshot for simulator builds.
-Start with README.md, BUILD.md and SOURCE-SNAPSHOT.json. Private Form remains
-the canonical source; this repository is not an automatic mirror.
+Start with README.md, BUILD.md and SOURCE-SNAPSHOT.json. Lift temporarily owns day-to-day code development and hosted tests. Keep a
+matching PR on private Form for retained integration; private Form owns research
+and documents. Follow PAIRED-DEVELOPMENT.md. This is not an automatic mirror.
 
 Preserve notices and source provenance. Do not add private research, account or
 health data, screenshots from private accounts, credentials, signing material,

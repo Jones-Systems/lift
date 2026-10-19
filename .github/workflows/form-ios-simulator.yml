@@ -8,9 +8,6 @@ on:
         required: false
         type: string
   pull_request:
-    paths:
-      - '.github/workflows/form-ios-simulator.yml'
-      - 'apps/form/scripts/ci-ios-simulator.*'
 
 permissions:
   contents: read
