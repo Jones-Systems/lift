@@ -43,6 +43,8 @@
     "apps/form/.gitignore": "Anchor generated native directories at the app root; preserve all local native-module sources.",
     ".github/workflows/form-ios-simulator.yml": "Public repo dispatch defaults, one-day artifacts and lifecycle checks.",
     "apps/form/src/api/client.ts": "Disabled loopback API default.",
-    "apps/form/app.json": "Remove private host exception."
+    "apps/form/app.json": "Remove private host exception.",
+    "apps/form/scripts/ci-ios-simulator.py": "Verify exact process identity and elapsed survival independently of unavailable simulator queries; bounded PNG capture retry.",
+    "apps/form/scripts/ci-ios-simulator.test.py": "Retain lifecycle checks and add launch evidence, unavailable-probe and screenshot-bound regressions."
   }
 }

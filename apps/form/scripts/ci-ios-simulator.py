@@ -88,13 +88,13 @@ def capture(command, *, cwd, env):
     return subprocess.check_output(command, cwd=cwd, env=env, text=True).strip()
 
 
-def diagnostic(command, *, cwd, env, output, manifest, name, echo=True):
+def diagnostic(command, *, cwd, env, output, manifest, name, echo=True, timeout=30):
     """A bounded probe must not replace the launch failure being diagnosed."""
     log = output / (name + '.log')
     result = {}
     try:
         result['returncode'] = run(command, cwd=cwd, env=env, log=log,
-                                   timeout=30, check=False)
+                                   timeout=timeout, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         result['error'] = str(exc)
     manifest.setdefault('launch_diagnostics', {})[name] = result
@@ -165,27 +165,82 @@ def collect_crashes(directory, *, since, bundle_id, pid, output, manifest):
     print('Matching Form crash reports: ' + json.dumps(retained), flush=True)
 
 
+def app_process_evidence(text, *, returncode, device, pid, built):
+    if returncode != 0:
+        return {'state': 'unknown', 'reason': 'process query unavailable'}
+    rows = [line.split(None, 3) for line in text.splitlines()
+            if line.split() and line.split()[0] == pid]
+    if len(rows) != 1 or len(rows[0]) != 4:
+        return {'state': 'unknown', 'reason': 'matching PID row unavailable or malformed'}
+    _, status, elapsed, executable = rows[0]
+    marker = '/Devices/' + device + '/data/Containers/Bundle/Application/'
+    if marker not in executable or not executable.endswith('/' + built.name + '/' + built.stem):
+        return {'state': 'unknown', 'reason': 'PID executable identity mismatch'}
+    if 'Z' in status or 'X' in status:
+        return {'state': 'dead', 'reason': 'process is a zombie or exited'}
+    try:
+        days, clock = elapsed.split('-', 1) if '-' in elapsed else ('0', elapsed)
+        fields = clock.split(':')
+        if len(fields) not in (2, 3) or not all(x.isdigit() for x in [days, *fields]):
+            raise ValueError('malformed elapsed time')
+        hours, minutes, seconds = map(int, fields if len(fields) == 3 else ['0', *fields])
+        if seconds >= 60 or (len(fields) == 3 and minutes >= 60):
+            raise ValueError('malformed elapsed time')
+        lifetime = int(days) * 86400 + hours * 3600 + minutes * 60 + seconds
+    except ValueError:
+        return {'state': 'unknown', 'reason': 'process lifetime unavailable'}
+    if lifetime < 15:
+        return {'state': 'unknown', 'reason': 'process lifetime below 15 seconds'}
+    return {'state': 'alive', 'pid': pid, 'elapsed_seconds': lifetime,
+            'executable': executable, 'status': status}
+
+
+def launch_screenshot(*, device, cwd, env, output, manifest):
+    # Fresh paths prevent a timed-out or partial capture from satisfying a later attempt.
+    for attempt in range(2):
+        path = output / ('launch-attempt-' + str(attempt + 1) + '.png')
+        name = 'screenshot' if attempt == 0 else 'screenshot-retry'
+        result = diagnostic(['xcrun', 'simctl', 'io', device, 'screenshot', str(path)],
+                            cwd=cwd, env=env, output=output, manifest=manifest,
+                            name=name, timeout=60)
+        valid = False
+        if result == 0 and path.is_file() and path.stat().st_size > 8:
+            with path.open('rb') as stream:
+                valid = stream.read(8) == b'\x89PNG\r\n\x1a\n'
+        manifest.setdefault('screenshot_attempts', []).append(
+            {'attempt': attempt + 1, 'returncode': result, 'valid_png': valid})
+        if valid:
+            screenshot = output / 'launch.png'
+            path.replace(screenshot)
+            manifest['screenshot_sha256'] = sha256(screenshot)
+            return
+        if attempt == 0:
+            time.sleep(5)
+
+
 def check_launch(*, device, bundle_id, pid, launch_epoch, built, cwd, env, output, manifest):
     launch_wall = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(launch_epoch))
     probe = dict(cwd=cwd, env=env, output=output, manifest=manifest)
-    screenshot = output / 'launch.png'
-    screenshot_rc = diagnostic(['xcrun', 'simctl', 'io', device, 'screenshot', str(screenshot)],
-                               name='screenshot', **probe)
-    if screenshot_rc == 0 and screenshot.is_file():
-        manifest['screenshot_sha256'] = sha256(screenshot)
+    launch_screenshot(device=device, **probe)
     diagnostic(['xcrun', 'simctl', 'get_app_container', device, bundle_id, 'app'],
                name='installed-container', **probe)
-    diagnostic(['ps', '-ww', '-p', pid, '-o', 'pid=,stat=,etime=,comm='],
-               name='app-process', **probe)
     processes_rc = diagnostic(['xcrun', 'simctl', 'spawn', device, 'launchctl', 'list'],
                               name='processes', echo=False, **probe)
     processes_path = output / 'processes.log'
     processes = processes_path.read_text() if processes_path.exists() else ''
     lines = processes.splitlines()
     manifest['launchctl_app_rows'] = [line[:1000] for line in lines if bundle_id in line][:20]
+    manifest['launchctl_query_available'] = processes_rc == 0
     print('launchctl lines: ' + str(len(lines)) + '; app rows: ' +
           json.dumps(manifest['launchctl_app_rows']), flush=True)
-    if processes_rc != 0 or not re.search(r'^' + pid + r'\s+.*' + re.escape(bundle_id), processes, re.MULTILINE):
+    # A timed-out simctl query cannot establish process death; check the executable last.
+    process_rc = diagnostic(['ps', '-ww', '-p', pid, '-o', 'pid=,stat=,etime=,comm='],
+                            name='app-process', **probe)
+    process_log = output / 'app-process.log'
+    evidence = app_process_evidence(process_log.read_text() if process_log.exists() else '',
+                                    returncode=process_rc, device=device, pid=pid, built=built)
+    manifest['app_process'] = evidence
+    if evidence['state'] != 'alive':
         diagnostic(['xcrun', 'simctl', 'spawn', device, 'log', 'show', '--info',
                     '--style', 'compact', '--start', launch_wall, '--predicate',
                     'process == "Form" OR ((process == "runningboardd" OR process == "SpringBoard") '
@@ -193,7 +248,7 @@ def check_launch(*, device, bundle_id, pid, launch_epoch, built, cwd, env, outpu
         diagnostic(['codesign', '-dv', str(built)], name='app-signature', **probe)
         collect_crashes(Path.home() / 'Library/Logs/DiagnosticReports', since=launch_epoch,
                         bundle_id=bundle_id, pid=pid, output=output, manifest=manifest)
-        raise RuntimeError('app process is not alive 15 seconds after launch')
+        raise RuntimeError('app process identity/survival unverified: ' + evidence['reason'])
     if 'screenshot_sha256' not in manifest:
         raise RuntimeError('launch screenshot capture failed; see diagnostics')
 

@@ -48,3 +48,12 @@ the hard-termination fallback. Logs and deliverables live outside scratch.
 An upload error fails the job even if compilation passed: inspect `manifest.json`
 and do not treat a missing artifact as a downloadable build. Artifact storage
 capacity is independent of free public compute. Retention is one day.
+
+Launch acceptance uses the exact PID returned by `simctl launch`, its simulator
+and executable path, a non-zombie process state and at least 15 seconds of
+process lifetime. The final process check runs after screenshot capture and
+simulator diagnostics. Missing or malformed process evidence fails verification;
+a timed-out simulator query is recorded as unavailable rather than app death.
+Screenshot capture permits two 60-second attempts with a five-second gap and
+separate output paths/logs. A successful PNG capture is still required. Inspect
+the resulting `launch.png` before claiming that the initial screen rendered.

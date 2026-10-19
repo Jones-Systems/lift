@@ -165,10 +165,10 @@ with ci.owned_scratch(parent, {}) as scratch:
 
     def test_screenshot_and_diagnostics_do_not_turn_dead_process_into_pass(self):
         calls = []
-        def probe(_command, *, name, **kwargs):
+        def probe(command, *, name, **kwargs):
             calls.append(name)
             if name == 'screenshot':
-                (self.parent / 'launch.png').write_bytes(b'screenshot fixture')
+                Path(command[-1]).write_bytes(b'\x89PNG\r\n\x1a\nimage fixture')
                 return 0
             if name == 'processes':
                 (self.parent / 'processes.log').write_text('-\t-6\tUIKitApplication:com.jonessystems.form.private\n')
@@ -176,7 +176,7 @@ with ci.owned_scratch(parent, {}) as scratch:
             return 1
         manifest = {}
         with patch.object(ci, 'diagnostic', side_effect=probe), patch.object(ci, 'collect_crashes') as crashes:
-            with redirect_stdout(io.StringIO()), self.assertRaisesRegex(RuntimeError, 'not alive'):
+            with redirect_stdout(io.StringIO()), self.assertRaisesRegex(RuntimeError, 'process.*unverified'):
                 ci.check_launch(device='own-device', bundle_id='com.jonessystems.form.private', pid='123',
                                 launch_epoch=1, built=self.parent / 'Form.app', cwd=self.parent,
                                 env={}, output=self.parent, manifest=manifest)
@@ -186,6 +186,103 @@ with ci.owned_scratch(parent, {}) as scratch:
         self.assertIn('app-signature', calls)
         self.assertEqual(crashes.call_count, 1)
         self.assertNotEqual(manifest.get('status'), 'passed')
+
+    def test_live_exact_process_and_png_survive_unavailable_launchctl(self):
+        def probe(command, *, name, **kwargs):
+            if name == 'screenshot':
+                Path(command[-1]).write_bytes(b'\x89PNG\r\n\x1a\nimage fixture')
+                return 0
+            if name == 'app-process':
+                (self.parent / 'app-process.log').write_text(
+                    '123 Ss 01:29 /runner/Library/Developer/CoreSimulator/Devices/own-device/'
+                    'data/Containers/Bundle/Application/install-id/Form.app/Form\n')
+                return 0
+            return None
+        manifest = {}
+        with patch.object(ci, 'diagnostic', side_effect=probe), patch.object(ci, 'collect_crashes'):
+            ci.check_launch(device='own-device', bundle_id='com.jonessystems.form.private', pid='123',
+                            launch_epoch=1, built=self.parent / 'Form.app', cwd=self.parent,
+                            env={}, output=self.parent, manifest=manifest)
+        self.assertEqual(manifest['app_process']['state'], 'alive')
+        self.assertIn('screenshot_sha256', manifest)
+
+    def test_launchctl_row_cannot_replace_unverified_process_identity(self):
+        def probe(command, *, name, **kwargs):
+            if name == 'screenshot':
+                Path(command[-1]).write_bytes(b'\x89PNG\r\n\x1a\nimage fixture')
+                return 0
+            if name == 'processes':
+                (self.parent / 'processes.log').write_text(
+                    '123 0 UIKitApplication:com.jonessystems.form.private\n')
+                return 0
+            if name == 'app-process':
+                (self.parent / 'app-process.log').write_text('malformed process evidence\n')
+                return 0
+            return None
+        with patch.object(ci, 'diagnostic', side_effect=probe), patch.object(ci, 'collect_crashes'):
+            with self.assertRaisesRegex(RuntimeError, 'process.*unverified'):
+                ci.check_launch(device='own-device', bundle_id='com.jonessystems.form.private', pid='123',
+                                launch_epoch=1, built=self.parent / 'Form.app', cwd=self.parent,
+                                env={}, output=self.parent, manifest={})
+
+    def test_process_evidence_requires_same_pid_device_executable_and_survival(self):
+        command = '/runner/Devices/own-device/data/Containers/Bundle/Application/id/Form.app/Form'
+        def state(row, returncode=0):
+            return ci.app_process_evidence(row, returncode=returncode, device='own-device',
+                                           pid='123', built=self.parent / 'Form.app')['state']
+        self.assertEqual(state('123 Ss 00:15 ' + command), 'alive')
+        self.assertEqual(state('123 Ss 1-02:03:04 ' + command), 'alive')
+        self.assertEqual(state('123 Z 00:15 ' + command), 'dead')
+        for row, status in [('', 0), ('malformed', 0),
+                            ('123 Ss 00:14 ' + command, 0),
+                            ('124 Ss 00:15 ' + command, 0),
+                            ('123 Ss 00:15 ' + command.replace('own-device', 'other-device'), 0),
+                            ('123 Ss 00:15 ' + command.replace('Form.app/Form', 'Other.app/Other'), 0),
+                            ('123 Ss invalid ' + command, 0),
+                            ('123 Ss 00:15 ' + command, None)]:
+            with self.subTest(row=row, status=status):
+                self.assertEqual(state(row, status), 'unknown')
+
+    def test_screenshot_timeout_then_valid_second_capture(self):
+        def probe(command, *, name, timeout, **kwargs):
+            self.assertEqual(timeout, 60)
+            path = Path(command[-1])
+            if name == 'screenshot':
+                path.write_bytes(b'partial')
+                return None
+            path.write_bytes(b'\x89PNG\r\n\x1a\nsecond image fixture')
+            return 0
+        manifest = {}
+        with patch.object(ci, 'diagnostic', side_effect=probe) as calls, patch.object(ci.time, 'sleep') as sleep:
+            ci.launch_screenshot(device='own-device', cwd=self.parent, env={},
+                                 output=self.parent, manifest=manifest)
+        self.assertEqual(calls.call_count, 2)
+        sleep.assert_called_once_with(5)
+        self.assertEqual((self.parent / 'launch-attempt-1.png').read_bytes(), b'partial')
+        self.assertEqual(manifest['screenshot_sha256'], ci.sha256(self.parent / 'launch.png'))
+        self.assertEqual([x['valid_png'] for x in manifest['screenshot_attempts']], [False, True])
+
+    def test_screenshot_exhaustion_fails_even_when_exact_process_survives(self):
+        def probe(command, *, name, **kwargs):
+            if name.startswith('screenshot'):
+                Path(command[-1]).write_bytes(b'')
+                return 0
+            if name == 'app-process':
+                (self.parent / 'app-process.log').write_text(
+                    '123 Ss 01:29 /runner/Devices/own-device/'
+                    'data/Containers/Bundle/Application/id/Form.app/Form\n')
+                return 0
+            return None
+        manifest = {}
+        with patch.object(ci, 'diagnostic', side_effect=probe), patch.object(ci.time, 'sleep'), \
+                patch.object(ci, 'collect_crashes'):
+            with self.assertRaisesRegex(RuntimeError, 'screenshot capture failed'):
+                ci.check_launch(device='own-device', bundle_id='com.jonessystems.form.private', pid='123',
+                                launch_epoch=1, built=self.parent / 'Form.app', cwd=self.parent,
+                                env={}, output=self.parent, manifest=manifest)
+        self.assertEqual(manifest['app_process']['state'], 'alive')
+        self.assertEqual(len(manifest['screenshot_attempts']), 2)
+        self.assertNotIn('screenshot_sha256', manifest)
 
 
 if __name__ == '__main__':
