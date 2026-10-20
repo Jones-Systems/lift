@@ -196,6 +196,19 @@ export function readClosedReceipts(lock: AuthorityLock, path: string, expected: 
   if (errors.length) fail(errors);
   if (!result) throw new Error('Closed read result absent'); return result;
 }
+// Synchronous companion for admission: inspect the captured copy, never the preserved candidate.
+export function inspectClosedStorageSnapshot<T>(lock: AuthorityLock, path: string, expected: FileIdentity, digest: string,
+  operation: (db: Database.Database) => T, fault: FaultPoint = noFault, bounds: ClosedReadBounds = {}): T {
+  acquire(lock); let snapshot: Snapshot | undefined, result: T | undefined; const errors: unknown[] = [];
+  try {
+    snapshot = new Snapshot(lock,path,expected,digest,fault,bounds); result = operation(snapshot.open());
+    if (result !== null && (typeof result === 'object' || typeof result === 'function') &&
+      typeof (result as {then?:unknown}).then === 'function') throw new Error('Closed read requires synchronous inspection');
+    snapshot.afterInspection();
+  } catch (error) { errors.push(error); }
+  finally { if (snapshot) errors.push(...snapshot.finish()); active.delete(lock); if (errors.length) held.add(lock); }
+  if (errors.length) fail(errors); return result as T;
+}
 // Only the closed-storage consumer borrows this connection; its awaited settlement precedes all teardown.
 // The cooperative deadline/cache settings do not forcibly interrupt native calls or cap total native memory.
 export async function withClosedStorageSnapshot<T>(lock: AuthorityLock, path: string, expected: FileIdentity, digest: string,

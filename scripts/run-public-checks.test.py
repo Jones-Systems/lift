@@ -58,11 +58,15 @@ class PublicChecksTests(unittest.TestCase):
         self.assertEqual(contract["groups"], ["api-compile", "restore-drill"])
         command = next(c for c in contract["commands"] if c["group"] == "restore-drill")
         self.assertEqual(command["test_sources"], [
+            "services/api/tests/runtime-modules/closed-read-admission.test.ts",
+            "services/api/tests/runtime-modules/closed-read-storage.test.ts",
             "services/api/tests/runtime-modules/relocated-admission.test.ts",
             "services/api/tests/runtime-modules/restore-admission.test.ts",
             "services/api/tests/runtime-modules/restore-drill.test.ts",
         ])
         self.assertEqual(command["argv"], ["node", "--test", "--test-concurrency=1",
+            "dist/tests/runtime-modules/closed-read-admission.test.js",
+            "dist/tests/runtime-modules/closed-read-storage.test.js",
             "dist/tests/runtime-modules/relocated-admission.test.js",
             "dist/tests/runtime-modules/restore-admission.test.js",
             "dist/tests/runtime-modules/restore-drill.test.js",

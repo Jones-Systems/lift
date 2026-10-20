@@ -39,7 +39,7 @@ APP_TESTS = {
     "form208": ("src/voice-coaching/standard/tests/wire-codec.test.cjs",),
 }
 API_TESTS = {
-    'restore-drill': ('tests/runtime-modules/relocated-admission.test.ts', 'tests/runtime-modules/restore-admission.test.ts', 'tests/runtime-modules/restore-drill.test.ts'),
+    'restore-drill': ('tests/runtime-modules/closed-read-admission.test.ts', 'tests/runtime-modules/closed-read-storage.test.ts', 'tests/runtime-modules/relocated-admission.test.ts', 'tests/runtime-modules/restore-admission.test.ts', 'tests/runtime-modules/restore-drill.test.ts'),
     'lifecycle': ('tests/lifecycle-purge-executor.test.ts', 'tests/lifecycle.test.ts', 'tests/lifecycle-http.test.ts', 'tests/lifecycle-export.test.ts', 'tests/bug-intake/lifecycle-chain.test.ts', 'tests/usage-limits/lifecycle.test.ts'),
     "form196": ("tests/community/board/correction.test.ts", "tests/community/board/board.test.ts", "tests/community/board/persistence-races.test.ts"),
     "form208": ("tests/voice-coaching/standard-wire.test.ts", "tests/voice-coaching/turn-controller.test.ts",

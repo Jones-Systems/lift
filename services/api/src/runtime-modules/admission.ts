@@ -11,7 +11,7 @@ import { suppressionLedgerSchema, ExistingSuppressionLedger } from '../lifecycle
 import { CurrentSuppressionAuthority, digestSchema, genesisHead, ledgerSchemaDigest, witnessSchema } from './currentness.js';
 import { AuthorityLock, JsonFile, assertClosedMain, assertIdentity, assertSeparate, canonicalPath, lexicalPath, fileDigest, identitySchema, sameIdentity, syncDirectory, syncFile, type FaultPoint, noFault } from './files.js';
 import { migrationDigests } from './migrations.js';
-import { readClosedReceipts, assertStrictClosedMain } from './closed-read.js';
+import { readClosedReceipts, inspectClosedStorageSnapshot, assertStrictClosedMain } from './closed-read.js';
 import { runtimeModulesConfiguration, type RuntimeModulesConfiguration } from './configuration.js';
 const counter = z.number().int().nonnegative().safe();
 export const admissionSchema = z.object({ version: z.literal(1), authorityId: z.uuid(), revision: counter, databaseGeneration: counter,
@@ -133,7 +133,7 @@ export function prepareRelocatedAdmission(raw: PrepareRelocatedAdmissionInput, f
   if (input.destination === input.mainPath || input.destination === input.backupPath) throw new Error('Relocation destination aliases source');
   const parent = canonicalPath(dirname(input.destination), uid, true);
   const lock = new AuthorityLock(config.authorityDirectory, uid, input.operationId);
-  let authority: CurrentSuppressionAuthority | undefined, commitStarted = false, candidateClosed = true;
+  let authority: CurrentSuppressionAuthority | undefined, commitStarted = false;
   try {
     const file = new JsonFile(join(config.authorityDirectory, 'admission.json'), uid, admissionSchema, fault), previous = file.read();
     if (previous.state !== 'closed_clean' || previous.authorityId !== config.authorityId || previous.mainPath !== input.mainPath ||
@@ -163,17 +163,15 @@ export function prepareRelocatedAdmission(raw: PrepareRelocatedAdmissionInput, f
     assertIdentity(input.backupPath, uid, backup); assertStrictClosedMain(input.backupPath);
     if (sameIdentity(main, previous.main) || sameIdentity(main, witness.ledger) || sameIdentity(main, backup) ||
       fileDigest(input.destination, uid) !== input.expectedBackupDigest || fileDigest(input.backupPath, uid) !== input.expectedBackupDigest) throw new Error('Relocation copy mismatch');
-    // Only the isolated destination is opened. Neither preserved source is opened by SQLite.
-    const db = new Database(input.destination, {readonly:true, fileMustExist:true, timeout:0});
-    candidateClosed = false;
-    let appliedDigests: string[];
-    try {
-      db.pragma('temp_store = MEMORY'); db.pragma('cache_size = -2048'); db.pragma('mmap_size = 0'); integrity(db);
+    // Validate a captured disposable snapshot so WAL read sidecars never touch the destination.
+    const appliedDigests = inspectClosedStorageSnapshot(lock, input.destination, main, input.expectedBackupDigest, db => {
+      integrity(db);
       const rows = db.prepare('SELECT version,checksum FROM form_migrations ORDER BY version LIMIT ?').all(migrationDigests.length + 1) as {version:number;checksum:string}[];
-      appliedDigests = rows.map(row => row.checksum);
+      const digests = rows.map(row => row.checksum);
       if (rows.length !== migrationDigests.length || rows.some((row,index) => row.version !== index+1) ||
-        JSON.stringify(appliedDigests) !== JSON.stringify(migrationDigests)) throw new Error('Relocation runtime migration mismatch');
-    } finally { db.close(); candidateClosed = true; }
+        JSON.stringify(digests) !== JSON.stringify(migrationDigests)) throw new Error('Relocation runtime migration mismatch');
+      return digests;
+    });
     assertStrictClosedMain(input.destination); syncFile(input.destination, uid);
     fault('relocation:before-commit'); sourceUnchanged(); assertIdentity(dirname(input.destination), uid, parent, true);
     assertIdentity(input.destination, uid, main);
@@ -193,7 +191,7 @@ export function prepareRelocatedAdmission(raw: PrepareRelocatedAdmissionInput, f
     const errors: unknown[] = [error];
     try { authority?.close(); } catch (closeError) { errors.push(closeError); }
     // Only this invocation's known lock can be released. Unknown postcommit effects stay held.
-    if (!commitStarted && candidateClosed && errors.length === 1) try { lock.release(); } catch (releaseError) { errors.push(releaseError); }
+    if (!commitStarted && errors.length === 1) try { lock.release(); } catch (releaseError) { errors.push(releaseError); }
     if (errors.length > 1) throw new AggregateError(errors, 'Relocation failed with retained custody');
     throw error;
   }
