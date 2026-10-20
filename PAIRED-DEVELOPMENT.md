@@ -37,3 +37,39 @@ For the initial transition, Form #104 adds direct wearable connections and
 #208 already exist in the initial Lift snapshot; their Lift counterparts carry
 receipts and provide branch-specific check runs. Design-only and agent-guidance
 PRs remain private. Form #241's simulator driver was already adapted into Lift.
+
+## Keeping an active pair synchronized
+
+One contributor owns synchronization for each pair. Both PRs keep their own
+history, reviews and draft/acceptance holds. Use the following process after every
+change; there is no background mirror or automatic cross-repository push.
+
+| Change | Required follow-up |
+| --- | --- |
+| New Lift product PR | Open its private Form counterpart using only the scoped product patch; add reciprocal markers before qualification. |
+| Edit on Lift | Copy the new scoped product delta to the existing Form branch, preserving its private files; push both and wait for both Lift workflows. |
+| Edit on Form | Scan the exact public-safe product delta before copying it to the existing Lift branch. Keep private docs, history and configuration on Form. |
+| Lift base advances or PR is retargeted | Refresh both named Lift PR workflows for the current head and base; then run Form verification again. |
+| Both Lift workflows finish | Rerun Form verification even if its older result was green. Use a full rerun for a previously successful job; use `--failed` only for a failed run. |
+| Pair marker changes | Check reciprocal markers and rerun qualification. |
+| Deliberately sanitized product file differs | Stop that pair. Obtain a separately approved exact equivalence approach; never copy private settings to Lift to force a pass. |
+
+Both public workflows also trigger on PR edits, including base retargeting and
+body edits. Finalize pairing/body changes before waiting for CI. A base branch
+advancing alone does not emit a PR event: edit the Lift PR body to request fresh
+runs, or update the branch under its existing Git owner. Wait for the new runs;
+an older success is not fresh qualification of a changed base.
+
+Form workflow commands and stale-result rules live in its private operating guide.
+Before integrating a feature, the contributor must obtain a fresh Form verification
+for its current source head and Lift pair, then satisfy its original review and
+acceptance gates. A past green check is an observation, not a permanent sync lock.
+When Form integration lands, carry any newly integrated product changes back to
+Lift through a scanned, bounded PR and requalify affected open pairs. Do not push
+Form Git history or mirror its whole repository into Lift.
+
+Each named workflow records its event's head SHA, base SHA and base ref in the
+explicit `lift-pair/v1` run name. Form checks that recorded name as well as current
+PR association and latest-run success. GitHub's workflow-run `pull_requests` field
+can change after retargeting, so that field alone does not prove the tested base.
+Runs from before this setup require fresh qualification under the new run name.
