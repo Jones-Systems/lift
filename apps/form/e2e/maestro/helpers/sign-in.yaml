@@ -32,7 +32,7 @@ appId: com.jonessystems.form.private
       id: a-email-submit
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-email-submit
 - runFlow: password-prompt.yaml
