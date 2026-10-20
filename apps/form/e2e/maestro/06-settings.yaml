@@ -45,11 +45,11 @@ name: 06-settings
     timeout: 20000
     centerElement: true
 - tapOn: "${E2E_EXPECTED_LOAD_UNIT}"
-# Maestro 2.11 searches the scoped unit node itself and its descendants.
+# Find the checked radio first, then its label on the radio or a child node.
 - assertVisible:
-    text: "radio button, checked"
+    text: "${E2E_EXPECTED_LOAD_UNIT}"
     childOf:
-      text: "${E2E_EXPECTED_LOAD_UNIT}"
+      text: "radio button, checked"
       childOf:
         id: a-unit-load
 - scrollUntilVisible:
@@ -95,9 +95,9 @@ name: 06-settings
     timeout: 20000
     centerElement: true
 - assertVisible:
-    text: "radio button, checked"
+    text: "${E2E_EXPECTED_LOAD_UNIT}"
     childOf:
-      text: "${E2E_EXPECTED_LOAD_UNIT}"
+      text: "radio button, checked"
       childOf:
         id: a-unit-load
 - takeScreenshot: 06-settings
