@@ -10,7 +10,7 @@
     "check:tokens": "node scripts/check-token-styles.cjs",
     "test:api": "node scripts/run-api-tests.cjs",
     "test:integration": "node --test --test-concurrency=1 src/integration/tests/*.test.cjs",
-    "test:renderer": "jest --runInBand"
+    "test:renderer": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand"
   },
   "dependencies": {
     "@expo/metro-runtime": "57.0.16",
