@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import selectors
 import signal
 import stat
 import struct
@@ -189,6 +190,72 @@ def cleanup_signals(cancelled):
                 signal.signal(sig, handler)
 
 
+def diagnostic_capture(command, cwd, env, deadline, limit=65536):
+    """Keep raw diagnostic bytes in bounded memory; always reap the owned probe group."""
+    if time.monotonic() >= deadline:
+        return 'timed_out', b''
+    process = None
+    data = bytearray()
+    state = 'unavailable'
+    try:
+        process = subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.PIPE,
+                                   stderr=subprocess.DEVNULL, start_new_session=True)
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    state = 'timed_out'
+                    break
+                if not selector.select(remaining):
+                    state = 'timed_out'
+                    break
+                block = os.read(process.stdout.fileno(), min(4096, limit + 1 - len(data)))
+                if not block:
+                    status = process.wait(timeout=max(0.001, deadline - time.monotonic()))
+                    state = 'complete' if status == 0 else 'failed'
+                    break
+                data.extend(block)
+                if len(data) > limit:
+                    state = 'output_limit'
+                    break
+    except subprocess.TimeoutExpired:
+        state = 'timed_out'
+    except (KeyboardInterrupt, SystemExit):
+        state = 'interrupted'
+    except Exception:
+        state = 'unavailable'
+    finally:
+        if process is not None:
+            # The probe has its own session; never signal the observed Maestro group here.
+            with cleanup_signals(False):
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait(timeout=0.5)
+                process.stdout.close()
+    return state, bytes(data[:limit])
+
+
+def sanitized_thread_frames(raw):
+    """Omit thread names, lock identities, arbitrary text and VM properties."""
+    frames = []
+    for line in raw.decode('utf-8', errors='replace').splitlines():
+        text = line.strip()
+        if re.fullmatch(r'java\.lang\.Thread\.State: (NEW|RUNNABLE|BLOCKED|WAITING|TIMED_WAITING|TERMINATED)( \([a-z ]+\))?', text):
+            frames.append(text.split(' (')[0])
+        elif len(text) <= 512 and re.fullmatch(
+                r'at (?:java|javax|jdk|sun|kotlin|kotlinx|maestro|picocli|okhttp3|okio|io\.grpc|com\.google)'
+                r'[A-Za-z0-9_.$/]*(?:@[0-9.]+)?/[A-Za-z0-9_.$<>]+\((?:[A-Za-z0-9_$-]+\.(?:java|kt):[0-9]+|Native Method|Unknown Source)\)'
+                r'|at (?:java|javax|jdk|sun|kotlin|kotlinx|maestro|picocli|okhttp3|okio|io\.grpc|com\.google)'
+                r'\.[A-Za-z0-9_.$<>]+\((?:[A-Za-z0-9_$-]+\.(?:java|kt):[0-9]+|Native Method|Unknown Source)\)', text):
+            frames.append(text)
+        if len(frames) == 256:
+            break
+    return frames
+
+
 class Children:
     def __init__(self, cwd, env, output):
         self.cwd, self.env, self.output = cwd, env, output
@@ -208,6 +275,8 @@ class Children:
         try:
             status = process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
+            if name == 'maestro-version':
+                self.maestro_timeout_diagnostic(process)
             raise TimeoutError(name + ' timed out') from None
         if status:
             # Arguments include the ephemeral control token; never embed them in an exception.
@@ -216,6 +285,56 @@ class Children:
             self.stop(name, signal.SIGTERM, 2)
             del self.processes[name]
         return (self.output / (name + '.log')).read_text(errors='replace')
+
+    def maestro_timeout_diagnostic(self, process):
+        report = {'schema': 'form.maestro-timeout/v1', 'state': 'unavailable'}
+        deadline = time.monotonic() + 4
+        try:
+            def owned():
+                return (self.processes.get('maestro-version') is process and process.poll() is None
+                        and os.getpgid(process.pid) == process.pid)
+            if not owned():
+                report['state'] = 'ownership_unavailable'
+                return
+            report.update(pid=process.pid, process_group=process.pid)
+            state, raw = diagnostic_capture(['/bin/ps', '-p', str(process.pid), '-o', 'pid=,pgid=,state=,comm='],
+                                            self.cwd, {}, min(deadline, time.monotonic() + 1))
+            report['process_probe'] = state
+            fields = raw.decode('utf-8', errors='replace').strip().split(maxsplit=3)
+            if state != 'complete' or len(fields) != 4 or fields[:2] != [str(process.pid)] * 2:
+                return
+            if re.fullmatch(r'[RSDTIZUXW][A-Za-z+<Nsl]*', fields[2]):
+                report['process_state'] = fields[2][0]
+            home = Path(self.env.get('JAVA_HOME', ''))
+            java, jcmd = home / 'bin/java', home / 'bin/jcmd'
+            if not home.is_absolute() or not java.is_file() or not jcmd.is_file():
+                report['state'] = 'java_tool_unavailable'
+                return
+            if not re.search(r'^JAVA_VERSION="17(?:[.\"]|$)', (home / 'release').read_text(), re.M):
+                report['state'] = 'java_tool_unavailable'
+                return
+            if not Path(fields[3]).is_absolute() or Path(fields[3]).resolve() != java.resolve():
+                report['state'] = 'leader_not_selected_java'
+                return
+            if not owned() or time.monotonic() >= deadline:
+                report['state'] = 'ownership_unavailable'
+                return
+            # Attach only to the live owned leader after the pinned launcher has exec'd Java.
+            probe_env = {'JAVA_HOME': str(home), 'PATH': str(home / 'bin'),
+                         'JAVA_TOOL_OPTIONS': self.env.get('JAVA_TOOL_OPTIONS', '') + ' -XX:-UsePerfData'}
+            state, raw = diagnostic_capture([str(jcmd), str(process.pid), 'Thread.print'],
+                                            self.cwd, probe_env, deadline)
+            report.update(state=state, frames=sanitized_thread_frames(raw))
+        except (KeyboardInterrupt, SystemExit):
+            report['state'] = 'interrupted'
+        except Exception:
+            report['state'] = 'unavailable'
+        finally:
+            # A diagnostic failure must not replace the original timeout or prevent caller cleanup.
+            try:
+                (self.output / 'maestro-version-diagnostic.json').write_text(json.dumps(report) + '\n')
+            except BaseException:
+                pass
 
     def wait_ready(self, name, predicate, timeout):
         deadline = time.monotonic() + timeout

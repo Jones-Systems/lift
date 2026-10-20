@@ -240,6 +240,140 @@ with ci.owned_scratch(root, {}) as scratch:
                     self.assertIn('original journey failure', (root / 'parent.log').read_text())
 
 
+    def diagnostic_fixture(self):
+        from types import SimpleNamespace
+        home = self.root / 'java17'
+        (home / 'bin').mkdir(parents=True)
+        for name in ('java', 'jcmd'):
+            (home / 'bin' / name).touch()
+        (home / 'release').write_text('JAVA_VERSION="17.0.1"\n')
+        children = e2e.Children(self.root, {'JAVA_HOME': str(home),
+                                'JAVA_TOOL_OPTIONS': '-Djava.io.tmpdir=' + str(self.root)}, self.root)
+        process = SimpleNamespace(pid=12345, poll=lambda: None,
+                                  wait=unittest.mock.Mock(side_effect=subprocess.TimeoutExpired('hidden', 60)))
+        children.processes['maestro-version'] = process
+        return children, process, home
+
+    def test_version_timeout_retains_hashable_sanitized_diagnostic_without_changing_failure_or_deadline(self):
+        children, process, home = self.diagnostic_fixture()
+        raw = (b'"secret-thread-name" arbitrary properties private-test-token\n'
+               b'   java.lang.Thread.State: WAITING (parking)\n'
+               b'\tat java.base@17.0.1/java.lang.Thread.sleep(Native Method)\n'
+               b'\tat maestro.cli.Main.main(Main.kt:12)\n'
+               b'  - locked <secret-address>\n' + b'x' * 800)
+        captures = [('complete', f'12345 12345 S {home}/bin/java\n'.encode()), ('complete', raw)]
+        with patch.object(children, 'start', return_value=process), \
+             patch.object(e2e.os, 'getpgid', return_value=12345), \
+             patch.object(e2e, 'diagnostic_capture', side_effect=captures, create=True) as capture:
+            with self.assertRaisesRegex(TimeoutError, '^maestro-version timed out$'):
+                children.command('maestro-version', ['/owned/maestro', '--version'])
+        self.assertTrue((self.root / 'maestro-version-diagnostic.json').is_file(), 'timeout diagnostic must be retained')
+        process.wait.assert_called_once_with(timeout=60)
+        self.assertEqual(capture.call_args_list[0].args[0], ['/bin/ps', '-p', '12345', '-o', 'pid=,pgid=,state=,comm='])
+        self.assertEqual(capture.call_args_list[1].args[0], [str(home / 'bin/jcmd'), '12345', 'Thread.print'])
+        self.assertLessEqual(capture.call_args_list[1].args[3] - capture.call_args_list[0].args[3], 4)
+        path = self.root / 'maestro-version-diagnostic.json'
+        text = path.read_text()
+        self.assertNotIn('secret', text)
+        self.assertNotIn('private-test-token', text)
+        self.assertNotIn(str(home), text)
+        self.assertEqual(json.loads(text)['frames'], ['java.lang.Thread.State: WAITING',
+                         'at java.base@17.0.1/java.lang.Thread.sleep(Native Method)',
+                         'at maestro.cli.Main.main(Main.kt:12)'])
+        manifest = {'status': 'failed', 'source_sha': '1' * 40}
+        with patch.dict(os.environ, {}, clear=True):
+            e2e.write_evidence_manifest(self.root, manifest)
+        self.assertEqual(manifest['evidence_sha256'][path.name], e2e.sha256(path))
+
+    def test_diagnostic_never_attaches_without_owned_selected_java_leader(self):
+        children, process, home = self.diagnostic_fixture()
+        for kind in ('foreign_group', 'exited', 'replaced_owner', 'shell', 'missing_tool', 'wrong_java', 'changed_group'):
+            with self.subTest(kind=kind):
+                children.processes['maestro-version'] = process
+                process.poll = lambda: 0 if kind == 'exited' else None
+                if kind == 'replaced_owner': children.processes['maestro-version'] = object()
+                if kind == 'missing_tool': (home / 'bin/jcmd').unlink()
+                executable = '/bin/sh' if kind == 'shell' else '/other/java' if kind == 'wrong_java' else str(home / 'bin/java')
+                groups = [999] if kind == 'foreign_group' else [12345, 999] if kind == 'changed_group' else [12345, 12345]
+                with patch.object(e2e.os, 'getpgid', side_effect=groups), \
+                     patch.object(e2e, 'diagnostic_capture', return_value=('complete', f'12345 12345 S {executable}'.encode())) as capture:
+                    children.maestro_timeout_diagnostic(process)
+                self.assertLessEqual(capture.call_count, 1)
+                (home / 'bin/jcmd').touch()
+
+    def test_missing_failed_hung_or_interrupted_probe_cannot_replace_original_timeout(self):
+        children, process, home = self.diagnostic_fixture()
+        for outcome in ('unavailable', 'failed', 'timed_out', 'output_limit', 'interrupted'):
+            with self.subTest(outcome=outcome), patch.object(children, 'start', return_value=process), \
+                 patch.object(e2e.os, 'getpgid', return_value=12345), \
+                 patch.object(e2e, 'diagnostic_capture', return_value=(outcome, b'private-test-token')):
+                with self.assertRaisesRegex(TimeoutError, '^maestro-version timed out$'):
+                    children.command('maestro-version', ['secret-argument'])
+                self.assertNotIn('private-test-token', (self.root / 'maestro-version-diagnostic.json').read_text())
+        with patch.object(children, 'start', return_value=process), \
+             patch.object(e2e.os, 'getpgid', side_effect=KeyboardInterrupt):
+            with self.assertRaisesRegex(TimeoutError, '^maestro-version timed out$'):
+                children.command('maestro-version', ['secret-argument'])
+        self.assertEqual(json.loads((self.root / 'maestro-version-diagnostic.json').read_text())['state'], 'interrupted')
+
+    def test_other_commands_and_successful_version_do_not_probe(self):
+        children, process, _ = self.diagnostic_fixture()
+        with patch.object(children, 'start', return_value=process), patch.object(children, 'maestro_timeout_diagnostic') as diagnostic:
+            with self.assertRaises(TimeoutError): children.command('other', ['hidden'])
+            diagnostic.assert_not_called()
+            process.wait.side_effect = None
+            process.wait.return_value = 0
+            (self.root / 'maestro-version.log').write_text('2.11.0\n')
+            with patch.object(children, 'stop'):
+                self.assertEqual(children.command('maestro-version', ['hidden']), '2.11.0\n')
+            diagnostic.assert_not_called()
+
+    def test_probe_capture_bounds_output_time_and_reaps_owned_children(self):
+        processes = []
+        original = subprocess.Popen
+        def launch(*args, **kwargs):
+            child = original(*args, **kwargs)
+            processes.append(child)
+            return child
+        with patch.object(e2e.subprocess, 'Popen', side_effect=launch):
+            state, raw = e2e.diagnostic_capture([sys.executable, '-c', 'import os; os.write(1,b"x"*10000)'],
+                                              self.root, {}, time.monotonic() + 2, limit=100)
+            self.assertEqual((state, len(raw)), ('output_limit', 100))
+            start = time.monotonic()
+            state, _ = e2e.diagnostic_capture([sys.executable, '-c', 'import time; time.sleep(30)'],
+                                            self.root, {}, start + 0.1)
+            self.assertEqual(state, 'timed_out')
+            self.assertLess(time.monotonic() - start, 1.5)
+        self.assertTrue(all(child.poll() is not None for child in processes))
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_expired_probe_budget_starts_nothing_and_frame_retention_is_bounded(self):
+        with patch.object(e2e.subprocess, 'Popen') as launch:
+            self.assertEqual(e2e.diagnostic_capture(['not-run'], self.root, {}, time.monotonic() - 1),
+                             ('timed_out', b''))
+            launch.assert_not_called()
+        raw = b'at java.lang.Thread.sleep(Native Method)\n' * 1000
+        self.assertEqual(len(e2e.sanitized_thread_frames(raw)), 256)
+
+    def test_probe_capture_cancellation_reaps_probe_and_keeps_maestro_cleanup_owned(self):
+        processes = []
+        original = subprocess.Popen
+        def launch(*args, **kwargs):
+            child = original(*args, **kwargs)
+            processes.append(child)
+            return child
+        with patch.object(e2e.subprocess, 'Popen', side_effect=launch), \
+             patch.object(e2e.selectors, 'DefaultSelector') as selector:
+            selector.return_value.__enter__.return_value.select.side_effect = KeyboardInterrupt
+            state, _ = e2e.diagnostic_capture([sys.executable, '-c', 'import time; time.sleep(30)'],
+                                            self.root, {}, time.monotonic() + 2)
+        self.assertEqual(state, 'interrupted')
+        self.assertTrue(all(child.poll() is not None for child in processes))
+        children = e2e.Children(self.root, {}, self.root)
+        child = children.start('maestro-version', [sys.executable, '-c', 'import time; time.sleep(30)'])
+        children.cleanup({}, TimeoutError('maestro-version timed out'))
+        self.assertIsNotNone(child.poll())
+
     def test_execute_orders_readiness_evidence_final_assertion_and_cleanup(self):
         from types import SimpleNamespace
         import shutil
