@@ -1,4 +1,6 @@
 name: Lift native E2E
+run-name: >-
+  lift-pair/v1 head=${{ github.event.pull_request.head.sha || inputs.source_sha || github.sha }} base=${{ github.event.pull_request.base.sha || 'none' }} ref=${{ github.event.pull_request.base.ref || github.ref_name }}
 
 on:
   workflow_dispatch:
@@ -8,6 +10,7 @@ on:
         required: false
         type: string
   pull_request:
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read

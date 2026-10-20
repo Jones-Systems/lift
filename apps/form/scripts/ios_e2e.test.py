@@ -367,6 +367,7 @@ class JourneyContractTests(unittest.TestCase):
             'a-days-3': '`a-days-${d}`', 'a-minutes-35': '`a-minutes-${m}`',
             'a-equipment-dumbbells': '`a-equipment-${e.key}`',
             'a-history-.+': '`a-history-${session.id}`',
+            'a-start-plan-.+': '`a-start-plan-${p.id}`',
             'a-mode-advanced': '`a-mode-${mode}`', 'a-mode-basic': '`a-mode-${mode}`',
             'a-setlog-1': '`a-setlog-${set.setNumber}`', 'a-setlog-2': '`a-setlog-${set.setNumber}`',
             'body-construct-stature': '`body-construct-${id}`',

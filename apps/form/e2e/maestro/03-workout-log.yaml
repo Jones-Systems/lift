@@ -14,7 +14,9 @@ name: 03-workout-log
     visible:
       id: screen-workout-start
     timeout: 30000
-- assertVisible: "Native E2E plan"
+- assertVisible:
+    id: "a-start-plan-.+"
+    text: "Native E2E plan, 15 min"
 - scrollUntilVisible:
     element:
       id: a-start
