@@ -81,7 +81,8 @@ export function withLocalPurgeAuthority<T>(db: Sqlite, capability: LocalPurgeAut
     try {
       const result = synchronous(effect(frame));
       recheck(frame);
-      if (db.pragma('foreign_key_check').length !== 0) throw new DomainError(503, 'local_purge_foreign_key_check_failed');
+      const foreignKeys = db.pragma('foreign_key_check');
+      if (!Array.isArray(foreignKeys) || foreignKeys.length !== 0) throw new DomainError(503, 'local_purge_foreign_key_check_failed');
       return result;
     } finally { live.delete(db); }
   }).immediate();
