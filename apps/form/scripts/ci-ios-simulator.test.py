@@ -340,9 +340,10 @@ with ci.owned_scratch(parent, {}) as scratch:
     def test_launch_default_and_e2e_each_build_once_with_distinct_api_and_archive(self):
         from types import SimpleNamespace
         import tarfile
-        for mode in ('launch', 'e2e'):
-            with self.subTest(mode=mode):
-                source = self.parent / (mode + '-source')
+        for mode, verify_failure in [('launch', False), ('e2e', False), ('e2e', True)]:
+            with self.subTest(mode=mode, verify_failure=verify_failure):
+                case = mode + ('-verify-failure' if verify_failure else '')
+                source = self.parent / (case + '-source')
                 app = source / 'apps/form'
                 (app / 'ios').mkdir(parents=True)
                 (app / 'package-lock.json').write_text('{}')
@@ -352,7 +353,7 @@ with ci.owned_scratch(parent, {}) as scratch:
                 (source / 'services/api/package-lock.json').write_text('{}')
                 (app / 'e2e').mkdir()
                 (app / 'e2e/journeys.json').write_text((Path(__file__).parents[1] / 'e2e/journeys.json').read_text())
-                output = self.parent / (mode + '-evidence')
+                output = self.parent / (case + '-evidence')
                 args = SimpleNamespace(source=str(source), output=str(output),
                                        scratch_parent=str(self.parent), sha='a' * 40)
                 if mode == 'e2e':
@@ -405,6 +406,14 @@ with ci.owned_scratch(parent, {}) as scratch:
                         inputs['executable'] = binary
                         (built / 'Info.plist').write_bytes(plistlib.dumps(APP_INFO))
                     if command[0] == 'codesign':
+                        if '--verify' in command:
+                            if '--ignore-resources' not in command and Path(command[-1]).parent.suffix == '.app':
+                                raise subprocess.CalledProcessError(1, command, stderr='code has no resources but signature indicates they must be present')
+                            for name, expected in [('diagnostic-Form-executable.bin', inputs['executable']),
+                                                   ('diagnostic-Form-Info.plist', plistlib.dumps(APP_INFO))]:
+                                self.assertEqual((output / name).read_bytes(), expected)
+                            if verify_failure:
+                                raise subprocess.CalledProcessError(1, command, stderr='invalid executable signature')
                         self.assertNotIn('--force', command, 'Never replace the linker signature')
                         self.assertNotIn('--sign', command)
                         self.assertEqual(Path(command[-1]).read_bytes(), inputs['executable'])
@@ -422,8 +431,26 @@ with ci.owned_scratch(parent, {}) as scratch:
                      patch.object(ci.urllib.request, 'urlretrieve'), patch.object(ci, 'sha256', side_effect=digest), \
                      patch.object(ci.time, 'sleep'), patch.object(ci, 'check_launch') as launch, \
                      patch.object(ci.e2e, 'execute') as journeys, redirect_stdout(io.StringIO()):
-                    ci.build(args)
+                    if verify_failure:
+                        with self.assertRaises(subprocess.CalledProcessError) as error:
+                            ci.build(args)
+                        self.assertEqual(error.exception.returncode, 1)
+                    else:
+                        ci.build(args)
                 manifest = json.loads((output / 'manifest.json').read_text())
+                if verify_failure:
+                    self.assertEqual(manifest['status'], 'failed')
+                    self.assertFalse(manifest['signing_verified'])
+                    self.assertEqual(manifest['signing'], 'linker-ad-hoc-simulator-unverified')
+                    self.assertFalse(manifest['authenticated_acceptance'])
+                    self.assertTrue(manifest['scratch_removed'])
+                    self.assertNotIn('executable_sha256', manifest)
+                    self.assertFalse(any(c[0] == 'ditto' or c[:3] == ['xcrun', 'simctl', 'install'] for c in calls))
+                    journeys.assert_not_called()
+                    for name in ('diagnostic-Form-executable.bin', 'diagnostic-Form-Info.plist'):
+                        self.assertEqual(manifest['diagnostic_files_sha256'][name], actual_hash(output / name))
+                        self.assertEqual(manifest['evidence_sha256'][name], actual_hash(output / name))
+                    continue
                 self.assertEqual(manifest['status'], 'passed')
                 self.assertEqual(manifest['mode'], mode)
                 signing = [c for c in calls if c[0] == 'codesign']
@@ -542,6 +569,35 @@ with ci.owned_scratch(parent, {}) as scratch:
                 self.assertFalse(manifest['signing_verified'])
                 self.assertEqual(manifest['signing'], 'linker-ad-hoc-simulator-unverified')
                 self.assertEqual((built / 'Form').read_bytes(), data)
+                self.assertEqual((self.parent / 'diagnostic-Form-executable.bin').read_bytes(), data)
+                self.assertEqual((self.parent / 'diagnostic-Form-Info.plist').read_bytes(), (built / 'Info.plist').read_bytes())
+                for name in ('diagnostic-Form-executable.bin', 'diagnostic-Form-Info.plist'):
+                    self.assertEqual(manifest['diagnostic_files_sha256'][name], ci.sha256(self.parent / name))
+
+    def test_e2e_diagnostic_copies_and_hashes_precede_signature_commands(self):
+        built = self.parent / 'Form.app'
+        built.mkdir()
+        info = plistlib.dumps(APP_INFO)
+        data = macho_fixture(plistlib.dumps(EXPECTED_ENTITLEMENTS), NATIVE_DER)
+        (built / 'Form').write_bytes(data)
+        (built / 'Info.plist').write_bytes(info)
+        manifest = {}
+        def run(command, **kwargs):
+            self.assertFalse(manifest['signing_verified'])
+            for name, original in [('diagnostic-Form-executable.bin', data),
+                                   ('diagnostic-Form-Info.plist', info)]:
+                path = self.parent / name
+                self.assertEqual(path.read_bytes(), original)
+                self.assertEqual(manifest['diagnostic_files_sha256'][name], ci.sha256(path))
+            if '--verify' in command:
+                self.assertEqual(command, ['codesign', '--verify', '--strict', '--ignore-resources', str(built / 'Form')])
+            return 0
+        with patch.object(ci, 'run', side_effect=run):
+            ci.verify_e2e_simulator(built, expected_der=NATIVE_DER, cwd=self.parent,
+                                    env={}, output=self.parent, manifest=manifest)
+        self.assertTrue(manifest['signing_verified'])
+        self.assertEqual((built / 'Form').read_bytes(), data)
+        self.assertEqual((built / 'Info.plist').read_bytes(), info)
 
     def test_e2e_verification_rejects_other_app_or_device_before_commands(self):
         built = self.parent / 'Form.app'

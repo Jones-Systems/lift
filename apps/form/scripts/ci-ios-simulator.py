@@ -431,7 +431,13 @@ def verify_e2e_simulator(built, *, expected_der, cwd, env, output, manifest):
         raise RuntimeError('E2E XML entitlement readback mismatch')
     if sections['__ents_der'] != expected_der:
         raise RuntimeError('E2E DER section differs from this invocation encoder output')
-    run(['codesign', '--verify', '--strict', str(executable)],
+    for source, name in [(executable, 'diagnostic-Form-executable.bin'),
+                         (built / 'Info.plist', 'diagnostic-Form-Info.plist')]:
+        destination = output / name
+        shutil.copyfile(source, destination)
+        manifest.setdefault('diagnostic_files_sha256', {})[name] = sha256(destination)
+    # The linker signature seals executable bytes, without a bundle resource envelope.
+    run(['codesign', '--verify', '--strict', '--ignore-resources', str(executable)],
         cwd=cwd, env=env, log=output / 'signing-verification.log', timeout=30)
     run(['codesign', '--display', '--verbose=4', str(executable)],
         cwd=cwd, env=env, log=output / 'signing-details.log', timeout=30)

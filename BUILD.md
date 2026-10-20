@@ -101,7 +101,19 @@ identity. The encoder input XML must parse to the expected entitlement dictionar
 its output must be nonempty and at most 65536 bytes. That invocation's output is
 retained in memory across compilation, and the extracted DER section must match
 it byte for byte. This proves preservation of the native encoding without a DER
-decoder. The driver independently verifies the executable's original signature.
+decoder. The driver verifies the executable's original signature with
+`codesign --verify --strict --ignore-resources Form.app/Form`. A linker ad-hoc
+signature does not seal bundle resources; the resource check is omitted while
+executable hashes and strict validation remain required. This follows Apple's
+[linker-signature verification guidance](https://developer.apple.com/documentation/macos-release-notes/macos-big-sur-11_0_1-universal-apps-release-notes)
+and the pinned [resource/strict validation separation](https://github.com/apple-oss-distributions/Security/blob/db15acbe6a7f257a859ad9a3bb86097bfe0679d9/OSX/libsecurity_codesigning/lib/StaticCode.cpp#L2788).
+Before that command, the driver retains `diagnostic-Form-executable.bin` and
+`diagnostic-Form-Info.plist`, with SHA256 values in `diagnostic_files_sha256`.
+These are diagnostic copies of the exact executable and bundle metadata, not an
+installable app or passing acceptance. A verification error still fails the run,
+leaves signing unverified and prevents packaging, installation and journeys.
+Diagnostic files survive owned scratch cleanup and are included in evidence
+hashes on successful and failed verification paths.
 Missing, malformed or mismatched evidence fails the build. The manifest records
 `signing: linker-ad-hoc-simulator` and `signing_verified: true` only after those
 checks, together with the simulator entitlements, `simulator_der_matches_input`
