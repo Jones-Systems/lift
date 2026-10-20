@@ -10,7 +10,7 @@ appId: com.jonessystems.form.private
       id: a-email-field-input
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-email-field-input
 - eraseText
@@ -21,7 +21,7 @@ appId: com.jonessystems.form.private
       id: a-password-field-input
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-password-field-input
 - eraseText

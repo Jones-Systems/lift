@@ -7,7 +7,7 @@ name: 07-body-session-only
       id: a-entry-body
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-entry-body
 - runFlow: helpers/body-setup.yaml
@@ -24,7 +24,7 @@ name: 07-body-session-only
       id: a-entry-body
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-entry-body
 - runFlow: helpers/body-setup.yaml
@@ -61,7 +61,7 @@ name: 07-body-session-only
       id: a-entry-body
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-entry-body
 - runFlow: helpers/body-setup.yaml

@@ -13,7 +13,7 @@ name: 01-auth-create
       id: a-email-field-input
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-email-field-input
 - eraseText
@@ -24,7 +24,7 @@ name: 01-auth-create
       id: a-password-field-input
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-password-field-input
 - eraseText
@@ -43,14 +43,14 @@ name: 01-auth-create
       id: a-email-error
     direction: UP
     timeout: 30000
-    centerElement: true
+    centerElement: false
 - assertVisible: "That email and password don’t match an account.*"
 - scrollUntilVisible:
     element:
       id: a-email-mode
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-email-mode
 - scrollUntilVisible:
@@ -58,7 +58,7 @@ name: 01-auth-create
       id: a-name-field-input
     direction: UP
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-name-field-input
 - eraseText

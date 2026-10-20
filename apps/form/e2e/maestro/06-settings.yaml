@@ -24,7 +24,7 @@ name: 06-settings
       id: a-row-name
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - assertVisible: "${E2E_EXPECTED_NAME}"
 - tapOn:
     id: a-row-name
@@ -43,7 +43,7 @@ name: 06-settings
       id: a-unit-load
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn: "${E2E_EXPECTED_LOAD_UNIT}"
 # Find the checked radio first, then its label on the radio or a child node.
 - assertVisible:
@@ -57,7 +57,7 @@ name: 06-settings
       id: a-row-privacy
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-row-privacy
 - extendedWaitUntil:
@@ -86,14 +86,14 @@ name: 06-settings
       id: a-row-name
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - assertVisible: "${E2E_EXPECTED_NAME}"
 - scrollUntilVisible:
     element:
       id: a-unit-load
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - assertVisible:
     text: "${E2E_EXPECTED_LOAD_UNIT}"
     childOf:
@@ -106,7 +106,7 @@ name: 06-settings
       id: a-back
     direction: UP
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-back
 - extendedWaitUntil:

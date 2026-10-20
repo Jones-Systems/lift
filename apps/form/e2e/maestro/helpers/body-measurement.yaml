@@ -11,7 +11,7 @@ appId: com.jonessystems.form.private
       id: body-value-input
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: body-value-input
 - inputText: "170"
@@ -21,7 +21,7 @@ appId: com.jonessystems.form.private
       id: body-by-self
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: body-by-self
 - scrollUntilVisible:
@@ -29,7 +29,7 @@ appId: com.jonessystems.form.private
       id: body-tool-tape
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: body-tool-tape
 - tapOn:
@@ -39,7 +39,7 @@ appId: com.jonessystems.form.private
       id: body-added-stature:none
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - assertVisible: "170.0 cm"
 - tapOn:
     id: a-footer-secondary

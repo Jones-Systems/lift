@@ -10,7 +10,7 @@ name: 02-onboarding-first-plan
       id: a-name-field-input
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-name-field-input
 - eraseText
@@ -96,7 +96,7 @@ name: 02-onboarding-first-plan
       id: a-equipment-dumbbells
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-equipment-dumbbells
 - tapOn:
@@ -106,7 +106,7 @@ name: 02-onboarding-first-plan
       id: a-ready-plan
     direction: UP
     timeout: 30000
-    centerElement: true
+    centerElement: false
 - assertVisible: "Native E2E plan"
 - tapOn:
     id: a-go-today
@@ -119,6 +119,6 @@ name: 02-onboarding-first-plan
       id: a-today-primary
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - assertVisible: "Native E2E plan"
 - takeScreenshot: 02-onboarding-first-plan

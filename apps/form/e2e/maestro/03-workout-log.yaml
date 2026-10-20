@@ -7,7 +7,7 @@ name: 03-workout-log
       id: a-today-primary
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-today-primary
 - extendedWaitUntil:
@@ -22,7 +22,7 @@ name: 03-workout-log
       id: a-start
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-start
 - extendedWaitUntil:
@@ -34,7 +34,7 @@ name: 03-workout-log
       id: a-workout-primary
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-workout-primary
 - scrollUntilVisible:
@@ -42,14 +42,14 @@ name: 03-workout-log
       id: a-setlog-1
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - assertVisible: "Set 1.*12 reps.*Saved"
 - scrollUntilVisible:
     element:
       id: a-workout-primary
     direction: UP
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-workout-primary
 - scrollUntilVisible:
@@ -57,7 +57,7 @@ name: 03-workout-log
       id: a-setlog-2
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - assertVisible: "Set 2.*12 reps.*Saved"
 - tapOn:
     id: a-setlog-1
@@ -120,7 +120,7 @@ name: 03-workout-log
       id: a-history-all
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-history-all
 - extendedWaitUntil:
