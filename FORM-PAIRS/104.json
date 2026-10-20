@@ -1,7 +1,7 @@
 {
   "form_pr": 104,
-  "form_head": "c70f0452574dd24163d76b2f65d86c3e360f7e1c",
-  "merge_base": "03d04be0ad59c2552dac550204734de0aa2c2dc9",
+  "form_head": "93e3440974142eb5b407156006f308518c73b20f",
+  "merge_base": "c8bc5e5cadacdebdc6e18ce39c57d8048da6a311",
   "files": [
     {
       "path": "services/api/src/wearables/index.ts",
