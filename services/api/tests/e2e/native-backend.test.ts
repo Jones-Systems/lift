@@ -8,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import type { Domain } from '../../src/domain.js';
 import type { FirstPlanReceipt } from '../../src/integration/first-plan/contracts.js';
-import { startBackend, type BackendOptions } from './native-backend.js';
+import { startBackend, witnessSignOut, type BackendOptions } from './native-backend.js';
 
 const email = 'e2e-primary@synthetic.invalid';
 const password = 'Synthetic-E2E-Only-2026!';
@@ -218,3 +218,74 @@ test('SIGINT also closes both listeners and cleans owned scratch', () => fixture
   child.kill('SIGINT'); assert.equal(await exit(child), 130);
   assert.equal(existsSync(f.options.root), false);
 }));
+
+test('sign-out dispatch emits one sanitized HTTP witness', () => fixture(async f => {
+  const child = f.launch(), ready = await f.ready(child);
+  const response = await request(ready.origin, '/api/auth/sign-out', undefined, {});
+  assert.equal(response.status, 200);
+  child.kill('SIGTERM'); assert.equal(await exit(child), 143);
+  const lines = f.logs().split('\n').filter(line => line.startsWith('{"event":"native-e2e-sign-out"'));
+  assert.equal(lines.length, 1, 'sign-out HTTP result must have one diagnostic witness');
+  assert.deepEqual(JSON.parse(lines[0]!), { event: 'native-e2e-sign-out',
+    authorizationPresent: false, cookiePresent: false, originPresent: false, refererPresent: false,
+    status: 200, success: true, errorCode: null });
+}));
+
+test('sign-out witness preserves response and excludes adversarial header and body values', async () => {
+  const secret = 'DO-NOT-RETAIN-synthetic-sensitive-value';
+  for (const [body, status, code] of [
+    [JSON.stringify({ success: true, token: secret }), 200, null],
+    [JSON.stringify({ code: 'MISSING_OR_NULL_ORIGIN', message: secret }), 403, 'MISSING_OR_NULL_ORIGIN'],
+    [JSON.stringify({ code: 'INVALID_ORIGIN', message: secret }), 403, 'INVALID_ORIGIN'],
+    [JSON.stringify({ code: 'INVALID_REFERER', message: secret }), 403, 'INVALID_REFERER'],
+    [JSON.stringify({ code: secret, message: secret }), 500, 'UNCLASSIFIED_ERROR'],
+    [JSON.stringify({ code: { value: secret } }), 400, 'UNCLASSIFIED_ERROR'],
+    [JSON.stringify({ error: { code: secret } }), 400, 'UNCLASSIFIED_ERROR'],
+    ['null', 400, 'UNCLASSIFIED_ERROR'],
+    ['[]', 400, 'UNCLASSIFIED_ERROR'],
+    [secret, 500, 'MALFORMED_RESPONSE'],
+    [secret.repeat(200), 500, 'OVERSIZED_RESPONSE'],
+    [null, 204, null],
+    [null, 503, 'MALFORMED_RESPONSE'],
+  ] as const) {
+    const request = new Request('http://127.0.0.1/api/auth/sign-out?private=' + secret, { method: 'POST',
+      headers: { authorization: secret, cookie: secret, origin: secret, referer: secret } });
+    const response = new Response(body, { status, headers: { 'x-private': secret } });
+    const lines: string[] = [];
+    const returned = await witnessSignOut(request, () => {
+      request.headers.delete('cookie');
+      return response;
+    }, line => lines.push(line));
+    assert.equal(returned, response);
+    assert.equal(returned.bodyUsed, false);
+    assert.equal(returned.status, status);
+    assert.equal(returned.headers.get('x-private'), secret);
+    assert.equal(await returned.text(), body ?? '');
+    assert.equal(lines.length, 1);
+    assert.ok(lines[0]!.length < 300);
+    assert.equal(lines[0]!.includes(secret), false);
+    assert.deepEqual(JSON.parse(lines[0]!), { event: 'native-e2e-sign-out', authorizationPresent: true,
+      cookiePresent: true, originPresent: true, refererPresent: true, status, success: status < 300, errorCode: code });
+  }
+});
+
+test('sign-out witness restricts method and path and leaves dispatch and sink failures alone', async () => {
+  for (const [method, path] of [['GET', '/api/auth/sign-out'], ['POST', '/api/auth/sign-in/email'],
+    ['POST', '/api/auth/sign-out/'], ['POST', '/v1/me']] as const) {
+    const response = Response.json({ success: true });
+    let dispatches = 0;
+    const lines: string[] = [];
+    assert.equal(await witnessSignOut(new Request('http://127.0.0.1' + path, { method }), () => {
+      dispatches++; return response;
+    }, line => lines.push(line)), response);
+    assert.equal(dispatches, 1);
+    assert.deepEqual(lines, []);
+    assert.equal(response.bodyUsed, false);
+  }
+  const request = new Request('http://127.0.0.1/api/auth/sign-out', { method: 'POST' });
+  const failure = new Error('synthetic dispatch failure');
+  await assert.rejects(witnessSignOut(request, () => { throw failure; }, () => assert.fail('no response to report')),
+    error => error === failure);
+  const response = Response.json({ success: true });
+  assert.equal(await witnessSignOut(request, () => response, () => { throw failure; }), response);
+});

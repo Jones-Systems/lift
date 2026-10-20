@@ -121,6 +121,47 @@ function assertFinalState(server: FormServer, email: string, expected: unknown):
   return json({ plans: plans.length, completedWorkouts: workouts.length, activeSets: active.length, voidedSets: voided.length });
 }
 
+async function signOutErrorCode(response: Response): Promise<string | null> {
+  if (response.ok) return null;
+  try {
+    const reader = response.clone().body?.getReader();
+    if (!reader) return 'MALFORMED_RESPONSE';
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > 4096) return 'OVERSIZED_RESPONSE';
+        chunks.push(value);
+      }
+    } finally {
+      // A cloned stream's cancellation can wait for the original consumer.
+      void reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+    const body: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const code = body && typeof body === 'object' && !Array.isArray(body)
+      ? (body as Record<string, unknown>).code : undefined;
+    return typeof code === 'string' && ['MISSING_OR_NULL_ORIGIN', 'INVALID_ORIGIN', 'INVALID_REFERER'].includes(code)
+      ? code : 'UNCLASSIFIED_ERROR';
+  } catch { return 'MALFORMED_RESPONSE'; }
+}
+
+export async function witnessSignOut(request: Request, dispatch: () => Response | Promise<Response>,
+  emit: (line: string) => void = line => console.log(line)): Promise<Response> {
+  if (request.method !== 'POST' || new URL(request.url).pathname !== '/api/auth/sign-out') return dispatch();
+  const presence = { authorizationPresent: request.headers.has('authorization'), cookiePresent: request.headers.has('cookie'),
+    originPresent: request.headers.has('origin'), refererPresent: request.headers.has('referer') };
+  const response = await dispatch();
+  const errorCode = await signOutErrorCode(response);
+  // Fixture diagnostics must never change the HTTP response, even if the sink fails.
+  try { emit(JSON.stringify({ event: 'native-e2e-sign-out', ...presence,
+    status: response.status, success: response.ok, errorCode })); } catch {}
+  return response;
+}
+
 export async function startBackend(options: BackendOptions, signal?: AbortSignal): Promise<Ready & { stop: () => Promise<void> }> {
   const url = validate(options);
   signal?.throwIfAborted();
@@ -136,8 +177,8 @@ export async function startBackend(options: BackendOptions, signal?: AbortSignal
     if (failures.length) throw new AggregateError(failures, 'Native E2E cleanup failed');
   })();
   try {
-    const api = createAdaptorServer({ fetch: (request, env) => form
-      ? form.handleRequest(request, env.incoming.socket.remoteAddress ?? 'unknown') : json({ error: 'starting' }, 503) }) as Server;
+    const api = createAdaptorServer({ fetch: (request, env) => witnessSignOut(request, () => form
+      ? form.handleRequest(request, env.incoming.socket.remoteAddress ?? 'unknown') : json({ error: 'starting' }, 503)) }) as Server;
     listeners.push(api);
     const apiPort = await bind(api, Number(url.port || '80'));
     signal?.throwIfAborted();
