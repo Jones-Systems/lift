@@ -35,7 +35,7 @@ contract also needs Node 24, without installed npm dependencies.
 | `form208` | API voice `standard-wire`, `turn-controller`; usage `standard-observation`, `standard-composition`, `live-composition`; APP Standard `wire-codec` | Wire bounds and app/API interoperability, turn and synthetic usage accounting |
 | `simulator-portable` | `python3 -B scripts/ci-ios-simulator.test.py`; `python3 -B scripts/ios_e2e.test.py` in `apps/form` | Portable build-driver and E2E helper lifecycle, evidence and diagnostic checks, without native compilation |
 | `native-e2e-backend` | API `tests/e2e/native-backend.test.ts` after compilation | Real local no-Origin authentication, allowlist, onboarding, deterministic legacy first plan, persisted workout/profile state, session revocation and owned-backend cleanup |
-| `native-e2e-app` | APP integration `account-switch-session`, `settings-mode-http`, `manual-progress-session`, `runtime-lifecycle-composition` | Existing app authentication, settings and manual-session lifecycle regressions affected by the native journeys |
+| `native-e2e-app` | APP integration `account-switch-session`, `settings-mode-http`, `manual-progress-session`, `runtime-lifecycle-composition`; renderer `tests/renderer/onboarding-save.test.tsx` | App authentication, settings/manual-session lifecycle and injury save/navigation concurrency regressions affected by native journeys |
 
 To run a group, use `--group GROUP_ID` (repeatable). Board, Standard interop and
 both native E2E groups automatically include `api-compile` first: workers and app tests load

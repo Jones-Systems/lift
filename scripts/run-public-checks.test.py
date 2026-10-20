@@ -104,6 +104,25 @@ class PublicChecksTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             checks.selection(self.root, ["native-e2e-backend"])
 
+    def test_native_app_group_requires_onboarding_renderer_regression(self):
+        contract = checks.selection(ROOT, ["native-e2e-app"])
+        renderer = "apps/form/tests/renderer/onboarding-save.test.tsx"
+        commands = [command for command in contract["commands"] if renderer in command["test_sources"]]
+        self.assertEqual(len(commands), 1, "Native app qualification must include the onboarding renderer regression")
+        self.assertEqual(commands[0]["cwd"], "apps/form")
+        self.assertEqual(commands[0]["argv"], ["npm", "run", "test:renderer", "--", "--runTestsByPath",
+                                               "tests/renderer/onboarding-save.test.tsx"])
+        self.assertIn("apps/form/jest.config.cjs", commands[0]["test_sources"])
+        for command in contract["commands"]:
+            for source in command["test_sources"]:
+                path = self.root / source
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("")
+        self.assertEqual(checks.selection(self.root, ["native-e2e-app"]), contract)
+        (self.root / renderer).unlink()
+        with self.assertRaises(FileNotFoundError):
+            checks.selection(self.root, ["native-e2e-app"])
+
     def test_simulator_portable_requires_both_driver_and_e2e_helper_tests(self):
         contract = checks.selection(ROOT, ["simulator-portable"])
         self.assertEqual([command["argv"][2] for command in contract["commands"]],

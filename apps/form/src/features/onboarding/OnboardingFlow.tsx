@@ -544,6 +544,8 @@ export function OnboardingFlow({ resources, account, speech, firstPlan, firstPla
       footer = (
         <StepFooter label="Continue" disabled={injuryTooLong} loading={busy} onPress={() => {
           const answer = { ...injury, skipped: false };
+          // The save guard must capture the submitted draft before React commits its queued state.
+          localDraft.current = { ...localDraft.current, injury: answer };
           setInjury(answer);
           void save({ step: 'injuries', answers: { injuryHistory: serializeInjury(answer) } }, hasInjuryDetail(answer) ? 'injury-check' : 'coach');
         }} />

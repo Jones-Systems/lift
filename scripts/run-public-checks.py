@@ -105,6 +105,10 @@ def selection(root, requested):
             if group in APP_TESTS:
                 sources = APP_TESTS[group]
                 add(group, APP, ["node", "--test", "--test-concurrency=1", *sources], sources)
+            if group == "native-e2e-app":
+                renderer = "tests/renderer/onboarding-save.test.tsx"
+                add(group, APP, ["npm", "run", "test:renderer", "--", "--runTestsByPath", renderer],
+                    [renderer, "jest.config.cjs", "tests/renderer/setup.ts", "tests/renderer/resolver.cjs"])
     payload = {"schema": "lift.public-check-groups/v1", "groups": groups, "commands": commands}
     payload["manifest_sha256"] = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     return payload
