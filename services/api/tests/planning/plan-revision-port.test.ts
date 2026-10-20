@@ -1,6 +1,7 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { Domain } from '../../src/domain.js';
+import { DomainError } from '../../src/errors.js';
 import { createCanonicalAccountWriter } from '../../src/integration/account-modules/canonical-writer.js';
 import { createPlanRevisionPort } from '../../src/planning/plan-revision-port.js';
 import { createWearablePersistence, wearablePersistenceSql } from '../../src/wearables/persistence/index.js';
@@ -38,7 +39,10 @@ test('PATCH and suggestions share revision history; undo appends and leaves old 
   f.domain.patchPlan(f.one.accountId, f.plan.id, { expectedRevision: 1, name: 'Edited' });
   assert.deepEqual(f.domain.session(f.one.accountId, session.id).planSnapshot, snapshot);
   f.within(() => f.domain.completeSession(f.one.accountId, session.id, session.revision));
-  assert.throws(() => f.apply(f.accept), /stale_revision/);
+  assert.throws(() => f.apply(f.accept), (error: unknown) =>
+    error instanceof DomainError && error.status === 409 && error.code === 'stale_revision' &&
+    typeof error.details === 'object' && error.details !== null &&
+    'revision' in error.details && error.details.revision === 2);
   assert.deepEqual(f.receipts(), []);
   const accept = { ...f.accept, expectedRevision: 2 };
   assert.deepEqual(f.apply(accept), { revision: 3 });
