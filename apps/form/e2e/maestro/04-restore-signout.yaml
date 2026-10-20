@@ -20,7 +20,7 @@ name: 04-restore-signout
       id: a-sign-out
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: a-sign-out
 - extendedWaitUntil:
