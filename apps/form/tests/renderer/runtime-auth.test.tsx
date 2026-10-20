@@ -141,6 +141,38 @@ afterEach(async () => {
   await act(async () => { await Promise.all(pendingCleanup.splice(0).map(finish => finish())); });
 });
 
+test.each(['allowlist', 'closed'] as const)('empty-session startup applies deferred %s registration capabilities', async registration => {
+  const response = deferred<Response>();
+  const capabilities = { authentication: {
+    emailPassword: { status: 'configured', registration, passwordRecovery: 'unconfigured' },
+    apple: { status: 'unconfigured' }, google: { status: 'unconfigured' }, phone: { status: 'unconfigured' },
+    session: { transport: 'bearer', expiresInSeconds: 3600 } } };
+  pendingCleanup.push(async () => { response.resolve(json(capabilities)); });
+  const storage: SessionStorage = {
+    async load() { return null; },
+    async save() { throw new Error('Empty-session startup must not save a session'); },
+    async clear() {},
+  };
+  const calls: string[] = [];
+  const api = new FormTransport(origin, storage, async url => {
+    const path = new URL(String(url)).pathname;
+    calls.push(path);
+    if (path !== '/v1/capabilities') throw new Error(`Unexpected startup request: ${path}`);
+    return response.promise;
+  });
+  jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false);
+  await render(<FormRuntime resources={new FormResources(api)} renderSettings={() => null} />);
+  expect(await screen.findByTestId('screen-sign-in')).toBeTruthy();
+  await fireEvent.press(screen.getByTestId('a-signin-email'));
+  expect(screen.queryByTestId('a-email-mode')).toBeNull();
+
+  await act(async () => { response.resolve(json(capabilities)); });
+
+  expect(calls).toEqual(['/v1/capabilities']);
+  if (registration === 'allowlist') expect(screen.getByText('Create an account')).toBeTruthy();
+  else expect(screen.queryByTestId('a-email-mode')).toBeNull();
+});
+
 async function assertRetainedBlocked(f: Awaited<ReturnType<typeof mountRuntime>>, retained: SettingsSlotContext) {
   const before = f.calls.length;
   await act(async () => {
