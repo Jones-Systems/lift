@@ -318,6 +318,31 @@ with ci.owned_scratch(root, {}) as scratch:
 
 
 class JourneyContractTests(unittest.TestCase):
+    def test_email_navigation_waits_for_capability_notice_to_clear_before_targeting_buttons(self):
+        source = (REPO / 'apps/form/e2e/maestro/helpers/open-email.yaml').read_text()
+        commands = re.split(r'^- ', source.split('\n---\n', 1)[1], flags=re.M)[1:]
+        self.assertTrue(commands)
+        readiness = commands[0]
+        self.assertTrue(readiness.startswith('extendedWaitUntil:\n'),
+                        'Wait for capability readiness before evaluating or tapping either email button')
+        self.assertRegex(readiness, r'(?m)^    notVisible:\n      id: a-signin-error$')
+        timeout = re.search(r'(?m)^    timeout: (\d+)$', readiness)
+        self.assertIsNotNone(timeout, 'The readiness wait must fail within a bounded deadline')
+        self.assertGreater(int(timeout.group(1)), 0)
+        self.assertLessEqual(int(timeout.group(1)), 30000)
+        self.assertNotRegex(readiness, r'(?m)^\s*(?:when|runFlow|tapOn):')
+        for selector in ('a-signin-email', 'a-signin-email-link'):
+            with self.subTest(selector=selector):
+                branches = [command for command in commands[1:-1]
+                            if re.search(r'(?m)^        id: ' + selector + r'$', command)]
+                self.assertEqual(len(branches), 1, 'Retain both conditional email navigation paths')
+                self.assertTrue(branches[0].startswith('runFlow:\n'))
+                self.assertRegex(branches[0], r'when:\n      visible:\n        id: ' + selector + r'\n')
+                self.assertRegex(branches[0], r'tapOn:\n          id: ' + selector + r'(?:\n|$)')
+        self.assertTrue(commands[-1].startswith('extendedWaitUntil:\n'))
+        self.assertRegex(commands[-1], r'(?m)^    visible:\n      id: screen-email$')
+        self.assertRegex(commands[-1], r'(?m)^    timeout: 30000$')
+
     def test_single_contract_names_order_and_screenshots(self):
         contract = e2e.load_contract(REPO / 'apps/form/e2e/journeys.json')
         flows = REPO / 'apps/form/e2e/maestro'
