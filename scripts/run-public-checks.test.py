@@ -46,6 +46,32 @@ class PublicChecksTests(unittest.TestCase):
         self.assertTrue(any("dist/tests/community/board/persistence-races.test.js" in c["argv"] for c in contract["commands"]))
         self.assertEqual(contract, checks.selection(ROOT, ["form208", "form196"]))
 
+    def test_lifecycle_exact_sources_and_fresh_compile(self):
+        contract = checks.selection(ROOT, ['lifecycle'])
+        self.assertEqual(contract["groups"], ['api-compile', 'lifecycle'])
+        command = next(c for c in contract["commands"] if c["group"] == 'lifecycle')
+        self.assertEqual(command["test_sources"], ['services/api/tests/lifecycle-purge-executor.test.ts', 'services/api/tests/lifecycle.test.ts', 'services/api/tests/lifecycle-http.test.ts', 'services/api/tests/lifecycle-export.test.ts', 'services/api/tests/bug-intake/lifecycle-chain.test.ts', 'services/api/tests/usage-limits/lifecycle.test.ts'])
+        self.assertEqual(command["argv"], ["node", "--test", "--test-concurrency=1", 'dist/tests/lifecycle-purge-executor.test.js', 'dist/tests/lifecycle.test.js', 'dist/tests/lifecycle-http.test.js', 'dist/tests/lifecycle-export.test.js', 'dist/tests/bug-intake/lifecycle-chain.test.js', 'dist/tests/usage-limits/lifecycle.test.js'])
+
+    def test_restore_drill_exact_sources_and_fresh_compile(self):
+        contract = checks.selection(ROOT, ["restore-drill"])
+        self.assertEqual(contract["groups"], ["api-compile", "restore-drill"])
+        command = next(c for c in contract["commands"] if c["group"] == "restore-drill")
+        self.assertEqual(command["test_sources"], [
+            "services/api/tests/runtime-modules/closed-read-admission.test.ts",
+            "services/api/tests/runtime-modules/closed-read-storage.test.ts",
+            "services/api/tests/runtime-modules/relocated-admission.test.ts",
+            "services/api/tests/runtime-modules/restore-admission.test.ts",
+            "services/api/tests/runtime-modules/restore-drill.test.ts",
+        ])
+        self.assertEqual(command["argv"], ["node", "--test", "--test-concurrency=1",
+            "dist/tests/runtime-modules/closed-read-admission.test.js",
+            "dist/tests/runtime-modules/closed-read-storage.test.js",
+            "dist/tests/runtime-modules/relocated-admission.test.js",
+            "dist/tests/runtime-modules/restore-admission.test.js",
+            "dist/tests/runtime-modules/restore-drill.test.js",
+        ])
+
     def test_health_discovery_includes_new_branch_tests_and_refuses_missing_baseline(self):
         for source in checks.BASELINE_HEALTH:
             target = self.root / checks.API / source
