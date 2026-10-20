@@ -21,7 +21,7 @@ HELPER = "scripts/run-public-checks.py"
 HARNESS_TEST = "scripts/run-public-checks.test.py"
 SOURCE_HOOK = "scripts/integration/source-hook.mjs"
 SOURCE_RESOLVER = "scripts/integration/source-resolution.mjs"
-GROUP_IDS = ("runner-contract", "api-compile", "app-static", "form104-139", "form196", "form203", "form208", "simulator-portable")
+GROUP_IDS = ("runner-contract", "api-compile", "app-static", "form104-139", "form196", "form203", "form208", "simulator-portable", 'plan16')
 BASELINE_HEALTH = (
     "tests/wearables/app.test.mjs", "tests/wearables/ingestion.test.mjs",
     "tests/wearables/providers.test.mjs", "tests/wearables/suggestions.test.mjs",
@@ -39,6 +39,7 @@ APP_TESTS = {
     "form208": ("src/voice-coaching/standard/tests/wire-codec.test.cjs",),
 }
 API_TESTS = {
+    'plan16': ('tests/planning/plan-revision-port.test.ts',),
     "form196": ("tests/community/board/correction.test.ts", "tests/community/board/board.test.ts", "tests/community/board/persistence-races.test.ts"),
     "form208": ("tests/voice-coaching/standard-wire.test.ts", "tests/voice-coaching/turn-controller.test.ts",
                 "tests/usage-limits/standard-observation.test.ts", "tests/usage-limits/standard-composition.test.ts",
@@ -55,7 +56,7 @@ def selection(root, requested):
     if chosen - set(GROUP_IDS):
         raise ValueError("Unknown public check group")
     # APP interop and the board's worker load fresh emitted API JavaScript.
-    if chosen & {"form196", "form208"}:
+    if chosen & {"form196", "form208", 'plan16'}:
         chosen.add("api-compile")
     groups = [group for group in GROUP_IDS if group in chosen]
     health = sorted(str(path.relative_to(root / API)) for directory in

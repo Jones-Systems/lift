@@ -46,6 +46,13 @@ class PublicChecksTests(unittest.TestCase):
         self.assertTrue(any("dist/tests/community/board/persistence-races.test.js" in c["argv"] for c in contract["commands"]))
         self.assertEqual(contract, checks.selection(ROOT, ["form208", "form196"]))
 
+    def test_plan16_exact_sources_and_fresh_compile(self):
+        contract = checks.selection(ROOT, ['plan16'])
+        self.assertEqual(contract["groups"], ['api-compile', 'plan16'])
+        command = next(c for c in contract["commands"] if c["group"] == 'plan16')
+        self.assertEqual(command["test_sources"], ['services/api/tests/planning/plan-revision-port.test.ts'])
+        self.assertEqual(command["argv"], ["node", "--test", "--test-concurrency=1", 'dist/tests/planning/plan-revision-port.test.js'])
+
     def test_health_discovery_includes_new_branch_tests_and_refuses_missing_baseline(self):
         for source in checks.BASELINE_HEALTH:
             target = self.root / checks.API / source

@@ -224,18 +224,22 @@ export class Domain {
   }
   patchPlan(accountId: string, id: string, patch: Patch<PlanFields> & { expectedRevision: number }) {
     assertAccountActive(this.db, accountId);
-    return this.db.transaction(() => {
-      assertAccountActive(this.db, accountId);
-      const current = this.plan(accountId, id); revision(current.revision, patch.expectedRevision);
-      if ('schema' in current) throw new DomainError(409, 'source_plan_legacy_edit_denied');
-      if (current.archived) throw new DomainError(409, 'plan_archived');
-      const next: PlanFields = { name: patch.name ?? current.name, minutes: patch.minutes ?? current.minutes, items: patch.items ?? current.items };
-      this.validateItems(accountId, id, next.items);
-      this.db.prepare('UPDATE plans SET data=?,revision=revision+1,updated_at=? WHERE account_id=? AND id=? AND revision=?')
-        .run(JSON.stringify(next), now(), accountId, id, current.revision);
-      this.db.prepare('INSERT INTO plan_revisions VALUES (?,?,?,?,?)').run(accountId, id, current.revision + 1, JSON.stringify({ ...next, archived: false }), now());
-      this.retainItems(accountId, id, next.items); return this.plan(accountId, id);
-    }).immediate();
+    return this.db.transaction(() => this.mutatePlanWithinWrite(accountId, id, patch)).immediate();
+  }
+  // Shared mutation authority for the HTTP adapter and transaction-bound internal ports.
+  mutatePlanWithinWrite(accountId: string, id: string, patch: Patch<PlanFields> & { expectedRevision: number }) {
+    if (!this.db.inTransaction) throw new DomainError(503, 'plan_write_transaction_required');
+    assertAccountActive(this.db, accountId);
+    const current = this.plan(accountId, id); revision(current.revision, patch.expectedRevision);
+    if ('schema' in current) throw new DomainError(409, 'source_plan_legacy_edit_denied');
+    if (current.archived) throw new DomainError(409, 'plan_archived');
+    const next: PlanFields = { name: patch.name ?? current.name, minutes: patch.minutes ?? current.minutes, items: patch.items ?? current.items };
+    this.validateItems(accountId, id, next.items);
+    const changed = this.db.prepare('UPDATE plans SET data=?,revision=revision+1,updated_at=? WHERE account_id=? AND id=? AND revision=?')
+      .run(JSON.stringify(next), now(), accountId, id, current.revision);
+    if (changed.changes !== 1) throw new DomainError(409, 'stale_revision');
+    this.db.prepare('INSERT INTO plan_revisions VALUES (?,?,?,?,?)').run(accountId, id, current.revision + 1, JSON.stringify({ ...next, archived: false }), now());
+    this.retainItems(accountId, id, next.items); return this.plan(accountId, id);
   }
   archivePlan(accountId: string, id: string, expected: number) {
     assertAccountActive(this.db, accountId);
