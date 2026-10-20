@@ -8,6 +8,7 @@ import os
 import plistlib
 from pathlib import Path
 import signal
+import struct
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,48 @@ from unittest.mock import patch
 spec = importlib.util.spec_from_file_location('simulator_ci', Path(__file__).with_name('ci-ios-simulator.py'))
 ci = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ci)
+
+
+EXPECTED_ENTITLEMENTS = {'application-identifier': 'com.jonessystems.form.private',
+                         'keychain-access-groups': ['com.jonessystems.form.private']}
+APP_INFO = {'CFBundleIdentifier': 'com.jonessystems.form.private',
+            'CFBundleExecutable': 'Form', 'CFBundleSupportedPlatforms': ['iPhoneSimulator']}
+
+
+def fake_derq(command):
+    source = Path(command[command.index('-i') + 1]).read_bytes()
+    output = Path(command[command.index('-o') + 1])
+    if '-f' in command:
+        output.write_bytes(b'DER-FIXTURE' + source)
+    elif source.startswith(b'DER-FIXTURE'):
+        output.write_bytes(source[len(b'DER-FIXTURE'):])
+    else:
+        raise subprocess.CalledProcessError(66, command)
+
+
+def macho_fixture(xml=None, der=None, *, slots=(0,), flags=0x20002, segment=b'__TEXT'):
+    sections = [(b'__entitlements', xml), (b'__ents_der', der)]
+    sections = [(name, data) for name, data in sections if data is not None]
+    segment_size = 72 + 80 * len(sections)
+    payload_offset = 32 + segment_size + 16
+    payload = b''
+    section_commands = b''
+    for name, data in sections:
+        section_commands += struct.pack('<16s16sQQIIIIIIII', name, segment, 0, len(data),
+                                        payload_offset + len(payload), 0, 0, 0, 0, 0, 0, 0)
+        payload += data
+    blob_offset = 12 + 8 * len(slots)
+    index, blobs = b'', b''
+    for slot in slots:
+        blob = struct.pack('>IIII', 0xfade0c02 if slot == 0 else 0xfade7171, 16, 0x20400, flags)
+        index += struct.pack('>II', slot, blob_offset + len(blobs))
+        blobs += blob
+    signature = struct.pack('>III', 0xfade0cc0, blob_offset + len(blobs), len(slots)) + index + blobs
+    header = struct.pack('<IIIIIIII', 0xfeedfacf, 0x100000c, 0, 2, 2, segment_size + 16, 0, 0)
+    segment_command = struct.pack('<II16sQQQQIIII', 0x19, segment_size, segment, 0, 0, 0, 0,
+                                  0, 0, len(sections), 0) + section_commands
+    signature_command = struct.pack('<IIII', 0x1d, 16, payload_offset + len(payload), len(signature))
+    return header + segment_command + signature_command + payload + signature
 
 
 class LifecycleTests(unittest.TestCase):
@@ -306,7 +349,7 @@ with ci.owned_scratch(parent, {}) as scratch:
                                        scratch_parent=str(self.parent), sha='a' * 40)
                 if mode == 'e2e':
                     args.mode = mode
-                calls = []
+                calls, inputs = [], {}
                 def capture(command, **kwargs):
                     if command[:2] == ['git', 'rev-parse']: return args.sha
                     if command[:2] == ['git', 'status']: return ''
@@ -322,32 +365,47 @@ with ci.owned_scratch(parent, {}) as scratch:
                             archive.add(source / 'apps', arcname='apps')
                             archive.add(source / 'services', arcname='services')
                     calls.append(command)
-                    if command[:2] == ['codesign', '--display']:
-                        entitlements = {'application-identifier': 'com.jonessystems.form.private',
-                                        'keychain-access-groups': ['com.jonessystems.form.private']}
-                        return subprocess.CompletedProcess(command, 0, plistlib.dumps(entitlements).decode(),
-                                                           'Identifier=com.jonessystems.form.private\nSignature=adhoc\n')
                     return subprocess.CompletedProcess(command, 0, '', '')
                 def run(command, *, cwd, env, log, **kwargs):
                     self.assertEqual(env['EXPO_PUBLIC_FORM_API_URL'],
                                      'http://127.0.0.1:47621' if mode == 'e2e' else 'http://127.0.0.1:9')
                     calls.append(command)
+                    if command[0] == '/usr/bin/derq':
+                        fake_derq(command)
+                    if command[:2] == ['node', '-e']:
+                        flags = json.loads(command[-1])
+                        self.assertEqual(flags[:7], ['-Xlinker', '-sectcreate', '-Xlinker', '__TEXT',
+                                                      '-Xlinker', '__entitlements', '-Xlinker'])
+                        self.assertEqual(flags[8:15], ['-Xlinker', '-sectcreate', '-Xlinker', '__TEXT',
+                                                       '-Xlinker', '__ents_der', '-Xlinker'])
+                        inputs['xml'] = Path(flags[7]).read_bytes()
+                        inputs['der'] = Path(flags[15]).read_bytes()
+                        self.assertEqual(plistlib.loads(inputs['xml']), EXPECTED_ENTITLEMENTS)
+                        self.assertEqual(inputs['der'], b'DER-FIXTURE' + inputs['xml'])
                     if command[0] == 'xcodebuild':
+                        if mode == 'e2e':
+                            self.assertTrue(inputs, 'E2E XML and DER inputs must be configured before linking')
+                        else:
+                            self.assertFalse(inputs)
+                        self.assertIn('CODE_SIGNING_ALLOWED=NO', command)
+                        self.assertFalse(any(c.startswith('OTHER_LDFLAGS=') for c in command))
                         built = Path(command[command.index('-derivedDataPath') + 1]) / 'Build/Products/Release-iphonesimulator/Form.app'
                         built.mkdir(parents=True)
                         (built / 'main.jsbundle').write_text('bundle')
-                        (built / 'Form').write_text('executable')
-                        (built / 'Info.plist').write_bytes(plistlib.dumps({
-                            'CFBundleIdentifier': 'com.jonessystems.form.private',
-                            'CFBundleExecutable': 'Form', 'CFBundleSupportedPlatforms': ['iPhoneSimulator']}))
-                    if command[:2] == ['codesign', '--force']:
-                        (Path(command[-1]) / 'Form').write_text('signed executable')
+                        binary = macho_fixture(inputs.get('xml'), inputs.get('der'))
+                        (built / 'Form').write_bytes(binary)
+                        inputs['executable'] = binary
+                        (built / 'Info.plist').write_bytes(plistlib.dumps(APP_INFO))
+                    if command[0] == 'codesign':
+                        self.assertNotIn('--force', command, 'Never replace the linker signature')
+                        self.assertNotIn('--sign', command)
+                        self.assertEqual(Path(command[-1]).read_bytes(), inputs['executable'])
                     if command[0] == 'ditto': Path(command[-1]).write_text('archive fixture')
                     log.write_text('fixture command completed')
                     return 0
                 actual_hash = ci.sha256
                 def digest(path):
-                    if path.name == 'Form': calls.append(['hash-executable', path.read_text()])
+                    if path.name == 'Form': calls.append(['hash-executable', path.read_bytes()])
                     if path.name == 'expo-template.tgz':
                         return '6b19d4235ab57c66fac699de7a2c57fe0ea277bf8a355ed45b2a37258bd93366'
                     return actual_hash(path)
@@ -362,24 +420,24 @@ with ci.owned_scratch(parent, {}) as scratch:
                 self.assertEqual(manifest['mode'], mode)
                 signing = [c for c in calls if c[0] == 'codesign']
                 if mode == 'e2e':
-                    self.assertEqual(len(signing), 3, 'E2E must sign, verify and read back its signature')
-                    sign, verify, readback = signing
-                    self.assertEqual(sign[1:4], ['--force', '--sign', '-'])
-                    self.assertIn('--entitlements', sign)
-                    self.assertEqual(verify[1:3], ['--verify', '--strict'])
-                    self.assertIn('--entitlements', readback)
+                    self.assertEqual(len(signing), 2)
+                    self.assertEqual(signing[0][1:3], ['--verify', '--strict'])
+                    self.assertEqual(signing[1][1], '--display')
                     hash_index = next(i for i, c in enumerate(calls) if c[0] == 'hash-executable')
                     zip_index = next(i for i, c in enumerate(calls) if c[0] == 'ditto')
                     install_index = next(i for i, c in enumerate(calls) if c[:3] == ['xcrun', 'simctl', 'install'])
-                    self.assertLess(calls.index(readback), hash_index)
+                    self.assertLess(calls.index(signing[-1]), hash_index)
                     self.assertLess(hash_index, zip_index)
                     self.assertLess(zip_index, install_index)
-                    self.assertEqual(calls[hash_index][1], 'signed executable')
-                    self.assertEqual(manifest['signing'], 'ad-hoc-simulator')
+                    self.assertEqual(calls[hash_index][1], inputs['executable'])
+                    self.assertEqual(manifest['signing'], 'linker-ad-hoc-simulator')
                     self.assertTrue(manifest['signing_verified'])
-                    self.assertEqual(manifest['signing_entitlements'], {
-                        'application-identifier': 'com.jonessystems.form.private',
-                        'keychain-access-groups': ['com.jonessystems.form.private']})
+                    self.assertEqual(manifest['simulator_entitlements'], EXPECTED_ENTITLEMENTS)
+                    self.assertEqual(manifest['host_signature_slots'], [0])
+                    self.assertEqual(manifest['host_signature_flags'], '0x20002')
+                    for name in ('simulator-entitlements-embedded.plist', 'simulator-entitlements-embedded.der',
+                                 'simulator-entitlements-decoded.plist'):
+                        self.assertIn(name, manifest['evidence_sha256'])
                 else:
                     self.assertEqual(signing, [])
                     self.assertEqual(manifest['signing'], 'disabled')
@@ -396,65 +454,170 @@ with ci.owned_scratch(parent, {}) as scratch:
                                              ['xcrun', 'simctl', 'delete', 'owned-device']])
 
 
-    def test_e2e_signing_rejects_unverified_or_incorrect_readback(self):
-        bundle_id = 'com.jonessystems.form.private'
-        expected = {'application-identifier': bundle_id, 'keychain-access-groups': [bundle_id]}
-        valid_xml = plistlib.dumps(expected).decode()
-        valid_details = 'Identifier=' + bundle_id + '\nSignature=adhoc\n'
+    def test_e2e_readback_rejects_missing_malformed_mismatched_sections_and_signature(self):
+        xml = plistlib.dumps(EXPECTED_ENTITLEMENTS)
+        der = b'DER-FIXTURE' + xml
+        other = plistlib.dumps(dict(EXPECTED_ENTITLEMENTS, **{'application-identifier': 'other.app'}))
+        extra = plistlib.dumps(dict(EXPECTED_ENTITLEMENTS, **{'keychain-access-groups': ['other.app']}))
         cases = [
-            ('missing', plistlib.dumps({}).decode(), valid_details, 0, None),
-            ('wrong-app', plistlib.dumps(dict(expected, **{'application-identifier': 'other.app'})).decode(), valid_details, 0, None),
-            ('extra-group', plistlib.dumps(dict(expected, **{'keychain-access-groups': [bundle_id, 'other.app']})).decode(), valid_details, 0, None),
-            ('extra-entitlement', plistlib.dumps(dict(expected, **{'get-task-allow': True})).decode(), valid_details, 0, None),
-            ('malformed', 'not a plist', valid_details, 0, None),
-            ('empty', '', valid_details, 0, None),
-            ('non-adhoc', valid_xml, valid_details.replace('adhoc', 'developer'), 0, None),
-            ('wrong-identifier', valid_xml, valid_details.replace(bundle_id, 'other.app'), 0, None),
-            ('failed-readback', valid_xml, valid_details, 1, None),
-            ('failed-verify', valid_xml, valid_details, 0, '--verify'),
-            ('failed-sign', valid_xml, valid_details, 0, '--force'),
+            ('missing-xml', macho_fixture(None, der)),
+            ('missing-der', macho_fixture(xml, None)),
+            ('empty-xml', macho_fixture(b'', der)),
+            ('empty-der', macho_fixture(xml, b'')),
+            ('malformed-xml', macho_fixture(b'not XML', der)),
+            ('malformed-der', macho_fixture(xml, b'not DER')),
+            ('wrong-xml-app', macho_fixture(other, der)),
+            ('wrong-xml-group', macho_fixture(extra, der)),
+            ('wrong-der-app', macho_fixture(xml, b'DER-FIXTURE' + other)),
+            ('wrong-der-group', macho_fixture(xml, b'DER-FIXTURE' + extra)),
+            ('extra-entitlement', macho_fixture(plistlib.dumps(dict(EXPECTED_ENTITLEMENTS, extra=True)), der)),
+            ('signature-xml-entitlements', macho_fixture(xml, der, slots=(0, 5))),
+            ('signature-der-entitlements', macho_fixture(xml, der, slots=(0, 7))),
+            ('signature-not-linker', macho_fixture(xml, der, flags=2)),
+            ('signature-not-adhoc', macho_fixture(xml, der, flags=0x20000)),
+            ('wrong-segment', macho_fixture(xml, der, segment=b'__DATA')),
+            ('truncated', macho_fixture(xml, der)[:-1]),
         ]
         built = self.parent / 'Form.app'
         built.mkdir()
-        (built / 'Info.plist').write_bytes(plistlib.dumps({
-            'CFBundleIdentifier': bundle_id, 'CFBundleExecutable': 'Form',
-            'CFBundleSupportedPlatforms': ['iPhoneSimulator']}))
-        for name, xml, details, status, failure in cases:
+        (built / 'Info.plist').write_bytes(plistlib.dumps(APP_INFO))
+        for name, data in cases:
             with self.subTest(name=name):
+                (built / 'Form').write_bytes(data)
                 manifest = {}
                 def run(command, **kwargs):
-                    if '--entitlements' in command:
-                        path = Path(command[command.index('--entitlements') + 1])
-                        self.assertEqual(plistlib.loads(path.read_bytes()), expected)
-                    if failure in command:
-                        raise subprocess.CalledProcessError(1, command)
+                    self.assertEqual(command[0], '/usr/bin/derq', 'Invalid sections must fail before signature verification')
+                    fake_derq(command)
                     return 0
-                result = subprocess.CompletedProcess(['codesign'], status, xml, details)
-                with patch.object(ci, 'run', side_effect=run), \
-                        patch.object(ci.subprocess, 'run', return_value=result):
+                with patch.object(ci, 'run', side_effect=run):
                     with self.assertRaises((RuntimeError, ValueError, subprocess.CalledProcessError)):
-                        ci.sign_e2e_simulator(built, scratch=self.parent, cwd=self.parent,
-                                              env={}, output=self.parent, manifest=manifest)
+                        ci.verify_e2e_simulator(built, cwd=self.parent, env={}, output=self.parent, manifest=manifest)
                 self.assertFalse(manifest['signing_verified'])
-                self.assertEqual(manifest['signing'], 'ad-hoc-simulator-unverified')
+                self.assertEqual((built / 'Form').read_bytes(), data)
 
-    def test_e2e_signing_rejects_other_app_or_device_build_before_mutation(self):
+    def test_macho_reader_rejects_invalid_ranges_headers_and_duplicate_evidence(self):
+        xml = plistlib.dumps(EXPECTED_ENTITLEMENTS)
+        valid = macho_fixture(xml, b'DER-FIXTURE' + xml)
+        mutations = [(0, 0), (4, 7), (12, 6), (16, 0), (20, 0xffffffff),
+                     (36, 7), (96, 0xffff), (152, 0xffffffff)]
+        executable = self.parent / 'Form'
+        for offset, value in mutations:
+            with self.subTest(offset=offset):
+                data = bytearray(valid)
+                struct.pack_into('<I', data, offset, value)
+                executable.write_bytes(data)
+                with self.assertRaises(RuntimeError):
+                    ci.simulator_macho_evidence(executable)
+        duplicate = bytearray(valid)
+        duplicate[184:200] = duplicate[104:120]
+        for data in [duplicate, macho_fixture(xml, b'der', slots=(0, 0)),
+                     macho_fixture(xml, b'der', slots=())]:
+            executable.write_bytes(data)
+            with self.assertRaises(RuntimeError):
+                ci.simulator_macho_evidence(executable)
+
+    def test_e2e_signature_command_failure_remains_unverified(self):
         built = self.parent / 'Form.app'
         built.mkdir()
-        for key, value in [('CFBundleIdentifier', 'other.app'),
-                           ('CFBundleExecutable', 'Other'),
+        xml = plistlib.dumps(EXPECTED_ENTITLEMENTS)
+        data = macho_fixture(xml, b'DER-FIXTURE' + xml)
+        (built / 'Form').write_bytes(data)
+        (built / 'Info.plist').write_bytes(plistlib.dumps(APP_INFO))
+        for failing in ('--verify', '--display'):
+            with self.subTest(failing=failing):
+                manifest = {}
+                def run(command, **kwargs):
+                    if command[0] == '/usr/bin/derq': fake_derq(command)
+                    if failing in command: raise subprocess.CalledProcessError(1, command)
+                    return 0
+                with patch.object(ci, 'run', side_effect=run), self.assertRaises(subprocess.CalledProcessError):
+                    ci.verify_e2e_simulator(built, cwd=self.parent, env={}, output=self.parent, manifest=manifest)
+                self.assertFalse(manifest['signing_verified'])
+                self.assertEqual(manifest['signing'], 'linker-ad-hoc-simulator-unverified')
+                self.assertEqual((built / 'Form').read_bytes(), data)
+
+    def test_e2e_verification_rejects_other_app_or_device_before_commands(self):
+        built = self.parent / 'Form.app'
+        built.mkdir()
+        for key, value in [('CFBundleIdentifier', 'other.app'), ('CFBundleExecutable', 'Other'),
                            ('CFBundleSupportedPlatforms', ['iPhoneOS'])]:
             with self.subTest(key=key):
-                info = {'CFBundleIdentifier': 'com.jonessystems.form.private',
-                        'CFBundleExecutable': 'Form', 'CFBundleSupportedPlatforms': ['iPhoneSimulator']}
-                info[key] = value
-                (built / 'Info.plist').write_bytes(plistlib.dumps(info))
-                with patch.object(ci, 'run') as run, patch.object(ci.subprocess, 'run') as native:
-                    with self.assertRaisesRegex(RuntimeError, 'requires the Form simulator app'):
-                        ci.sign_e2e_simulator(built, scratch=self.parent, cwd=self.parent,
-                                              env={}, output=self.parent, manifest={})
+                (built / 'Info.plist').write_bytes(plistlib.dumps(dict(APP_INFO, **{key: value})))
+                with patch.object(ci, 'run') as run, self.assertRaisesRegex(RuntimeError, 'requires the Form simulator app'):
+                    ci.verify_e2e_simulator(built, cwd=self.parent, env={}, output=self.parent, manifest={})
                 run.assert_not_called()
-                native.assert_not_called()
+
+    def test_e2e_der_generation_failure_cleans_scratch_before_linking(self):
+        for failure in ('encode', 'decode', 'identity'):
+            with self.subTest(failure=failure):
+                manifest = {}
+                def run(command, **kwargs):
+                    self.assertEqual(command[0], '/usr/bin/derq')
+                    if '-f' in command:
+                        self.assertEqual(command[:5], ['/usr/bin/derq', 'query', '-f', 'xml', '-i'])
+                        self.assertEqual(command[-1], '--raw')
+                        self.assertEqual(command[6], '-o')
+                        self.assertEqual(len(command), 9)
+                    else:
+                        self.assertEqual(command[:3], ['/usr/bin/derq', 'query', '-i'])
+                        self.assertEqual(command[4], '-o')
+                        self.assertEqual(command[-2:], ['--raw', '--xml'])
+                        self.assertEqual(len(command), 8)
+                    if (failure == 'encode' and '-f' in command) or (failure == 'decode' and '--xml' in command):
+                        raise subprocess.CalledProcessError(66, command)
+                    fake_derq(command)
+                    if failure == 'identity' and '--xml' in command:
+                        Path(command[command.index('-o') + 1]).write_bytes(plistlib.dumps({}))
+                    return 0
+                with patch.object(ci, 'run', side_effect=run):
+                    with self.assertRaises((RuntimeError, subprocess.CalledProcessError)):
+                        with ci.owned_scratch(self.parent, manifest) as scratch:
+                            ci.prepare_e2e_entitlements(app=self.parent, scratch=scratch, env={},
+                                                        output=self.parent, manifest=manifest)
+                self.assertFalse(Path(manifest['scratch_root']).exists())
+
+    def test_link_settings_change_only_form_release_and_preserve_existing_flags(self):
+        module = self.parent / 'node_modules/xcode'
+        module.mkdir(parents=True)
+        (module / 'index.js').write_text("""
+const fs = require('fs');
+exports.project = path => {
+    let data;
+    return {
+        parseSync: () => { data = JSON.parse(fs.readFileSync(path)); },
+        pbxNativeTargetSection: () => data.targets,
+        pbxXCConfigurationList: () => data.lists,
+        pbxXCBuildConfigurationSection: () => data.configurations,
+        writeSync: () => JSON.stringify(data),
+    };
+};
+""")
+        project = self.parent / 'project.pbxproj'
+        initial = {
+            'targets': {'app': {'name': 'Form', 'productType': '"com.apple.product-type.application"',
+                                'buildConfigurationList': 'form-list'},
+                        'other': {'name': 'Other', 'productType': '"com.apple.product-type.application"',
+                                  'buildConfigurationList': 'other-list'}},
+            'lists': {'form-list': {'buildConfigurations': [{'value': 'release'}, {'value': 'debug'}]},
+                      'other-list': {'buildConfigurations': [{'value': 'other-release'}]}},
+            'configurations': {'release': {'name': 'Release', 'buildSettings': {'OTHER_LDFLAGS': ['"$(inherited)"', '-ObjC']}},
+                               'debug': {'name': 'Debug', 'buildSettings': {'OTHER_LDFLAGS': '-ObjC'}},
+                               'other-release': {'name': 'Release', 'buildSettings': {'OTHER_LDFLAGS': '-ObjC'}}}}
+        flags = ['-Xlinker', '-sectcreate', '-Xlinker', '__TEXT', '-Xlinker', '__entitlements',
+                 '-Xlinker', '/fixture/path with spaces/entitlements.plist']
+        project.write_text(json.dumps(initial))
+        result = subprocess.run(['node', '-e', ci.E2E_LINK_SCRIPT, str(project), json.dumps(flags)],
+                                cwd=self.parent, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        actual = json.loads(project.read_text())
+        initial['configurations']['release']['buildSettings']['OTHER_LDFLAGS'] += [json.dumps(flag) for flag in flags]
+        self.assertEqual(actual, initial)
+        initial['targets']['duplicate'] = initial['targets']['app']
+        project.write_text(json.dumps(initial))
+        result = subprocess.run(['node', '-e', ci.E2E_LINK_SCRIPT, str(project), json.dumps(flags)],
+                                cwd=self.parent, capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(json.loads(project.read_text()), initial)
 
 
 if __name__ == '__main__':

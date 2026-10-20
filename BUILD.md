@@ -82,17 +82,32 @@ The requested source SHA must also contain the E2E tooling and journeys.
 `Form-e2e-simulator-arm64.zip`. This artifact requires the synthetic backend to
 exercise its authenticated paths. Default `--mode launch` retains disabled
 port 9, its process-survival check and `Form-simulator-arm64.zip`.
-After compilation, only E2E mode ad-hoc signs the simulator app with
-`application-identifier` and one `keychain-access-groups` entry, both scoped to
-`com.jonessystems.form.private`, so the real SecureStore path can use Keychain.
-This local simulator identity uses no developer account, certificate or
-provisioning profile. The driver verifies the signature and reads back the exact
-entitlements and ad-hoc identity before hashing the executable, packaging or
-installing it. Missing, malformed or mismatched readback fails the build.
-The manifest records `signing: ad-hoc-simulator` and `signing_verified: true`
-only after these checks; readback and signing logs remain in evidence. Ordinary
-launch mode retains `signing: disabled`. Native Keychain behavior is qualified
-by the hosted journeys, not by the portable signing checks.
+Only E2E mode adds simulator Keychain entitlements to the generated Form Release
+target's link inputs. It embeds XML in `__TEXT,__entitlements` and DER in
+`__TEXT,__ents_der`; both contain only `application-identifier` and one
+`keychain-access-groups` entry scoped to `com.jonessystems.form.private`.
+The driver uses the runner's `/usr/bin/derq` for DER encoding and readback and
+the existing locked `xcode` package for target-specific link settings, preserving
+other targets and existing flags. It follows the pinned
+[rules_apple linking mechanism](https://github.com/bazelbuild/rules_apple/blob/27c50237cc62dfb8fb08a657ca941f6cb1498274/apple/internal/linking_support.bzl#L501)
+and [DER encoding command](https://github.com/bazelbuild/rules_apple/blob/27c50237cc62dfb8fb08a657ca941f6cb1498274/apple/internal/entitlements_support.bzl#L380).
+
+There is no post-build re-signing. The linker-created ad-hoc host signature is
+retained, and iOS entitlement slots in that signature are rejected: simulator
+entitlements and host code-signature entitlements are separate mechanisms.
+Before final executable hashing, packaging or installation, the driver reads
+both sections from the arm64 executable, decodes DER, checks both exact
+identities, and independently verifies the executable's original signature.
+Missing, malformed or mismatched evidence fails the build. The manifest records
+`signing: linker-ad-hoc-simulator` and `signing_verified: true` only after those
+checks, together with the simulator entitlements and host signature flags/slots.
+Input files, extracted sections, decoded DER and verification logs remain in
+hashed evidence. No developer account, certificate or provisioning profile is
+used. Ordinary launch mode retains `signing: disabled`. Portable checks use
+synthetic Mach-O fixtures and a fake DER tool; native Keychain and simulator
+launch behavior require the hosted journeys. The target-settings check also
+uses the repository's existing Node prerequisite.
+
 `apps/form/e2e/journeys.json` owns fixture inputs, expected profile values,
 journey names and screenshot basenames. The journeys cover email account
 creation/error, onboarding/first plan, workout set editing/removal/history,
