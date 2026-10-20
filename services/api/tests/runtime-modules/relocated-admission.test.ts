@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { prepareRelocatedAdmission, RuntimeOwner, type PrepareRelocatedAdmissionInput } from '../../src/runtime-modules/admission.js';
 import { operateClosedStorage } from '../../src/runtime-modules/storage-operations.js';
@@ -114,3 +114,19 @@ test('postcommit failure retains lock and committed admission as an unknown outc
   assert.equal(existsSync(join(f.input.configuration.authorityDirectory,'owner.lock')),true);
   assert.throws(()=>prepareRelocatedAdmission({...f.input,destination:join(f.d.root,'forbidden-retry.sqlite')}));
 });
+
+
+for (const point of ['closed-read:cleanup', 'closed-read:after-close'] as const)
+ test(`relocation preserves intact owner evidence when snapshot settlement fails at ${point}`, async t => {
+  const f=await fixture(t); let reached=false;
+  assert.throws(()=>prepareRelocatedAdmission(f.input, current=>{
+    if(current===point){reached=true;throw new Error('synthetic snapshot settlement failure');}
+  }));
+  assert.equal(reached,true); f.unchanged();
+  const lockPath=join(f.input.configuration.authorityDirectory,'owner.lock');
+  assert.equal(existsSync(lockPath),true); assert.equal(existsSync(join(lockPath,'owner.json')),true);
+  const owner=JSON.parse(readFileSync(join(lockPath,'owner.json'),'utf8')) as {nonce:string;operationId:string};
+  assert.equal(owner.operationId,f.input.operationId); assert.match(owner.nonce,/^[0-9a-f-]{36}$/);
+  assert.equal(readdirSync(lockPath).some(name=>name.startsWith('.closed-read-')),point==='closed-read:cleanup');
+  assert.throws(()=>new RuntimeOwner(f.input.configuration,f.input.mainPath));
+ });

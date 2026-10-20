@@ -7,6 +7,7 @@ import { migrationDigests } from './migrations.js';
 
 const maxBytes = 1024 * 1024 * 1024, maxMs = 30000, maxSidecarBytes = 1024 * 1024;
 const active = new WeakSet<AuthorityLock>(), held = new WeakSet<AuthorityLock>();
+const settledInspections = new WeakSet<AuthorityLock>();
 const suffixes = ['-wal', '-shm', '-journal'] as const;
 // A source-only seam may lower bounds or supply a deterministic clock, never raise production ceilings.
 export type ClosedReadBounds = { maxBytes?: number; maxMs?: number; now?: () => number };
@@ -199,6 +200,7 @@ export function readClosedReceipts(lock: AuthorityLock, path: string, expected: 
 // Synchronous companion for admission: inspect the captured copy, never the preserved candidate.
 export function inspectClosedStorageSnapshot<T>(lock: AuthorityLock, path: string, expected: FileIdentity, digest: string,
   operation: (db: Database.Database) => T, fault: FaultPoint = noFault, bounds: ClosedReadBounds = {}): T {
+  settledInspections.delete(lock);
   acquire(lock); let snapshot: Snapshot | undefined, result: T | undefined; const errors: unknown[] = [];
   try {
     snapshot = new Snapshot(lock,path,expected,digest,fault,bounds); result = operation(snapshot.open());
@@ -206,8 +208,25 @@ export function inspectClosedStorageSnapshot<T>(lock: AuthorityLock, path: strin
       typeof (result as {then?:unknown}).then === 'function') throw new Error('Closed read requires synchronous inspection');
     snapshot.afterInspection();
   } catch (error) { errors.push(error); }
-  finally { if (snapshot) errors.push(...snapshot.finish()); active.delete(lock); if (errors.length) held.add(lock); }
+  finally {
+    let settled = false;
+    try {
+      if (snapshot) {
+        const finishErrors = snapshot.finish(); errors.push(...finishErrors);
+        settled = finishErrors.length === 0;
+      }
+    } catch (error) { errors.push(error); }
+    finally {
+      active.delete(lock);
+      if (settled) settledInspections.add(lock);
+      if (errors.length) held.add(lock);
+    }
+  }
   if (errors.length) fail(errors); return result as T;
+}
+// This proves cleanup and source revalidation, not acceptance of the inspector's result.
+export function closedSnapshotInspectionSettled(lock: AuthorityLock): boolean {
+  return settledInspections.has(lock);
 }
 // Only the closed-storage consumer borrows this connection; its awaited settlement precedes all teardown.
 // The cooperative deadline/cache settings do not forcibly interrupt native calls or cap total native memory.
