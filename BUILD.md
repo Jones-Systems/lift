@@ -86,7 +86,7 @@ Only E2E mode adds simulator Keychain entitlements to the generated Form Release
 target's link inputs. It embeds XML in `__TEXT,__entitlements` and DER in
 `__TEXT,__ents_der`; both contain only `application-identifier` and one
 `keychain-access-groups` entry scoped to `com.jonessystems.form.private`.
-The driver uses the runner's `/usr/bin/derq` for DER encoding and readback and
+The driver uses the runner's `/usr/bin/derq` only for DER encoding and
 the existing locked `xcode` package for target-specific link settings, preserving
 other targets and existing flags. It follows the pinned
 [rules_apple linking mechanism](https://github.com/bazelbuild/rules_apple/blob/27c50237cc62dfb8fb08a657ca941f6cb1498274/apple/internal/linking_support.bzl#L501)
@@ -96,15 +96,20 @@ There is no post-build re-signing. The linker-created ad-hoc host signature is
 retained, and iOS entitlement slots in that signature are rejected: simulator
 entitlements and host code-signature entitlements are separate mechanisms.
 Before final executable hashing, packaging or installation, the driver reads
-both sections from the arm64 executable, decodes DER, checks both exact
-identities, and independently verifies the executable's original signature.
+both sections from the arm64 executable and checks the extracted XML's exact
+identity. The encoder input XML must parse to the expected entitlement dictionary;
+its output must be nonempty and at most 65536 bytes. That invocation's output is
+retained in memory across compilation, and the extracted DER section must match
+it byte for byte. This proves preservation of the native encoding without a DER
+decoder. The driver independently verifies the executable's original signature.
 Missing, malformed or mismatched evidence fails the build. The manifest records
 `signing: linker-ad-hoc-simulator` and `signing_verified: true` only after those
-checks, together with the simulator entitlements and host signature flags/slots.
-Input files, extracted sections, decoded DER and verification logs remain in
-hashed evidence. No developer account, certificate or provisioning profile is
+checks, together with the simulator entitlements, `simulator_der_matches_input`
+and host signature flags/slots. Input files, extracted sections and verification
+logs remain in hashed evidence. No developer account, certificate or provisioning profile is
 used. Ordinary launch mode retains `signing: disabled`. Portable checks use
-synthetic Mach-O fixtures and a fake DER tool; native Keychain and simulator
+synthetic Mach-O fixtures, the retained native DER fixture and a fake that accepts
+only the qualified encoder command; native Keychain and simulator
 launch behavior require the hosted journeys. The target-settings check also
 uses the repository's existing Node prerequisite.
 

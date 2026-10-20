@@ -309,25 +309,24 @@ fs.writeFileSync(process.argv[1], project.writeSync());
 """
 
 
-def decode_simulator_der(path, *, cwd, env, output, name):
-    decoded = output / (name + '.plist')
-    run(['/usr/bin/derq', 'query', '-i', str(path), '-o', str(decoded), '--raw', '--xml'],
-        cwd=cwd, env=env, log=output / (name + '.log'), timeout=30)
-    if plistlib.loads(decoded.read_bytes()) != E2E_ENTITLEMENTS:
-        raise RuntimeError('E2E DER entitlement readback mismatch')
-
-
 def prepare_e2e_entitlements(*, app, scratch, env, output, manifest):
     xml = scratch / 'e2e-simulator-entitlements.plist'
     der = scratch / 'e2e-simulator-entitlements.der'
     xml.write_bytes(plistlib.dumps(E2E_ENTITLEMENTS))
+    xml_input = xml.read_bytes()
+    if plistlib.loads(xml_input) != E2E_ENTITLEMENTS:
+        raise RuntimeError('E2E XML encoder input mismatch')
     # Simulator entitlements belong in Mach-O sections, never the host signature.
     # Encoding/linking follows rules_apple 27c50237 (see BUILD.md).
     run(['/usr/bin/derq', 'query', '-f', 'xml', '-i', str(xml), '-o', str(der), '--raw'],
         cwd=app, env=env, log=output / 'simulator-entitlements-encode.log', timeout=30)
+    if xml.read_bytes() != xml_input:
+        raise RuntimeError('E2E XML encoder input changed')
+    if not der.is_file() or not 0 < der.stat().st_size <= 65536:
+        raise RuntimeError('missing, empty or oversized E2E DER encoder output')
+    expected_der = der.read_bytes()
     for path in (xml, der):
         shutil.copyfile(path, output / ('simulator-entitlements-input' + path.suffix))
-    decode_simulator_der(der, cwd=app, env=env, output=output, name='simulator-entitlements-input-decoded')
     flags = []
     for section, path in [('__entitlements', xml), ('__ents_der', der)]:
         for argument in ('-sectcreate', '__TEXT', section, str(path)):
@@ -335,6 +334,8 @@ def prepare_e2e_entitlements(*, app, scratch, env, output, manifest):
     run(['node', '-e', E2E_LINK_SCRIPT, str(app / 'ios/Form.xcodeproj/project.pbxproj'), json.dumps(flags)],
         cwd=app, env=env, log=output / 'simulator-entitlements-link.log', timeout=30)
     manifest['simulator_entitlements_link_flags'] = flags
+    # Carry this invocation's encoder output through compilation, not an artifact path.
+    return expected_der
 
 
 def simulator_macho_evidence(executable):
@@ -411,13 +412,15 @@ def simulator_macho_evidence(executable):
         return sections, slots, flags
 
 
-def verify_e2e_simulator(built, *, cwd, env, output, manifest):
+def verify_e2e_simulator(built, *, expected_der, cwd, env, output, manifest):
     info = plistlib.loads((built / 'Info.plist').read_bytes())
     if (info.get('CFBundleIdentifier') != E2E_ENTITLEMENTS['application-identifier'] or
             info.get('CFBundleExecutable') != 'Form' or
             info.get('CFBundleSupportedPlatforms') != ['iPhoneSimulator']):
         raise RuntimeError('E2E verification requires the Form simulator app')
     manifest.update(signing='linker-ad-hoc-simulator-unverified', signing_verified=False)
+    if not isinstance(expected_der, bytes) or not 0 < len(expected_der) <= 65536:
+        raise RuntimeError('missing, empty or oversized expected E2E DER input')
     executable = built / 'Form'
     sections, slots, flags = simulator_macho_evidence(executable)
     xml = output / 'simulator-entitlements-embedded.plist'
@@ -426,13 +429,15 @@ def verify_e2e_simulator(built, *, cwd, env, output, manifest):
     der.write_bytes(sections['__ents_der'])
     if plistlib.loads(xml.read_bytes()) != E2E_ENTITLEMENTS:
         raise RuntimeError('E2E XML entitlement readback mismatch')
-    decode_simulator_der(der, cwd=cwd, env=env, output=output, name='simulator-entitlements-decoded')
+    if sections['__ents_der'] != expected_der:
+        raise RuntimeError('E2E DER section differs from this invocation encoder output')
     run(['codesign', '--verify', '--strict', str(executable)],
         cwd=cwd, env=env, log=output / 'signing-verification.log', timeout=30)
     run(['codesign', '--display', '--verbose=4', str(executable)],
         cwd=cwd, env=env, log=output / 'signing-details.log', timeout=30)
     manifest.update(signing='linker-ad-hoc-simulator', signing_verified=True,
-                    simulator_entitlements=E2E_ENTITLEMENTS, host_signature_slots=slots,
+                    simulator_entitlements=E2E_ENTITLEMENTS, simulator_der_matches_input=True,
+                    host_signature_slots=slots,
                     host_signature_flags=hex(flags))
 
 
@@ -521,7 +526,7 @@ def build(args):
             manifest['pod_lock_sha256'] = sha256(app / 'ios/Podfile.lock')
             if mode == 'e2e':
                 manifest['stage'] = 'simulator-entitlements'
-                prepare_e2e_entitlements(app=app, scratch=scratch, env=env, output=output, manifest=manifest)
+                expected_der = prepare_e2e_entitlements(app=app, scratch=scratch, env=env, output=output, manifest=manifest)
             manifest['stage'] = 'build'
             derived = scratch / 'DerivedData'
             run(['xcodebuild', '-workspace', str(app / 'ios/Form.xcworkspace'),
@@ -536,7 +541,7 @@ def build(args):
                 raise RuntimeError('Release app is missing its embedded JS bundle')
             if mode == 'e2e':
                 manifest['stage'] = 'signing'
-                verify_e2e_simulator(built, cwd=app, env=env,
+                verify_e2e_simulator(built, expected_der=expected_der, cwd=app, env=env,
                                    output=output, manifest=manifest)
             manifest['embedded_js_sha256'] = sha256(bundle)
             manifest['executable_sha256'] = sha256(built / 'Form')

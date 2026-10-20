@@ -26,15 +26,23 @@ APP_INFO = {'CFBundleIdentifier': 'com.jonessystems.form.private',
             'CFBundleExecutable': 'Form', 'CFBundleSupportedPlatforms': ['iPhoneSimulator']}
 
 
+# Native encoder output from hosted run 39348122865, source ecd1206a66443549f767858f44405b8619cf16f4.
+# SHA256: 0c9973f433b0fe892339ce464e83373309d8467e2b8385f620d4b0c5fc787737
+NATIVE_DER = bytes.fromhex(
+    '7079020101b07430370c166170706c69636174696f6e2d6964656e7469666965720c1d'
+    '636f6d2e6a6f6e657373797374656d732e666f726d2e7072697661746530390c166b65'
+    '79636861696e2d6163636573732d67726f757073301f0c1d636f6d2e6a6f6e657373'
+    '797374656d732e666f726d2e70726976617465')
+
+
 def fake_derq(command):
-    source = Path(command[command.index('-i') + 1]).read_bytes()
-    output = Path(command[command.index('-o') + 1])
-    if '-f' in command:
-        output.write_bytes(b'DER-FIXTURE' + source)
-    elif source.startswith(b'DER-FIXTURE'):
-        output.write_bytes(source[len(b'DER-FIXTURE'):])
-    else:
-        raise subprocess.CalledProcessError(66, command)
+    if (len(command) != 9 or command[:5] != ['/usr/bin/derq', 'query', '-f', 'xml', '-i'] or
+            command[6] != '-o' or command[8] != '--raw'):
+        raise subprocess.CalledProcessError(65, command, stderr='InvalidArguments')
+    source = Path(command[5]).read_bytes()
+    if plistlib.loads(source) != EXPECTED_ENTITLEMENTS:
+        raise ValueError('Unexpected encoder input')
+    Path(command[7]).write_bytes(NATIVE_DER)
 
 
 def macho_fixture(xml=None, der=None, *, slots=(0,), flags=0x20002, segment=b'__TEXT'):
@@ -381,7 +389,7 @@ with ci.owned_scratch(parent, {}) as scratch:
                         inputs['xml'] = Path(flags[7]).read_bytes()
                         inputs['der'] = Path(flags[15]).read_bytes()
                         self.assertEqual(plistlib.loads(inputs['xml']), EXPECTED_ENTITLEMENTS)
-                        self.assertEqual(inputs['der'], b'DER-FIXTURE' + inputs['xml'])
+                        self.assertEqual(inputs['der'], NATIVE_DER)
                     if command[0] == 'xcodebuild':
                         if mode == 'e2e':
                             self.assertTrue(inputs, 'E2E XML and DER inputs must be configured before linking')
@@ -420,6 +428,7 @@ with ci.owned_scratch(parent, {}) as scratch:
                 self.assertEqual(manifest['mode'], mode)
                 signing = [c for c in calls if c[0] == 'codesign']
                 if mode == 'e2e':
+                    self.assertEqual(sum(c[0] == '/usr/bin/derq' for c in calls), 1)
                     self.assertEqual(len(signing), 2)
                     self.assertEqual(signing[0][1:3], ['--verify', '--strict'])
                     self.assertEqual(signing[1][1], '--display')
@@ -436,7 +445,7 @@ with ci.owned_scratch(parent, {}) as scratch:
                     self.assertEqual(manifest['host_signature_slots'], [0])
                     self.assertEqual(manifest['host_signature_flags'], '0x20002')
                     for name in ('simulator-entitlements-embedded.plist', 'simulator-entitlements-embedded.der',
-                                 'simulator-entitlements-decoded.plist'):
+                                 'simulator-entitlements-input.der', 'simulator-entitlements-input.plist'):
                         self.assertIn(name, manifest['evidence_sha256'])
                 else:
                     self.assertEqual(signing, [])
@@ -456,7 +465,7 @@ with ci.owned_scratch(parent, {}) as scratch:
 
     def test_e2e_readback_rejects_missing_malformed_mismatched_sections_and_signature(self):
         xml = plistlib.dumps(EXPECTED_ENTITLEMENTS)
-        der = b'DER-FIXTURE' + xml
+        der = NATIVE_DER
         other = plistlib.dumps(dict(EXPECTED_ENTITLEMENTS, **{'application-identifier': 'other.app'}))
         extra = plistlib.dumps(dict(EXPECTED_ENTITLEMENTS, **{'keychain-access-groups': ['other.app']}))
         cases = [
@@ -468,8 +477,8 @@ with ci.owned_scratch(parent, {}) as scratch:
             ('malformed-der', macho_fixture(xml, b'not DER')),
             ('wrong-xml-app', macho_fixture(other, der)),
             ('wrong-xml-group', macho_fixture(extra, der)),
-            ('wrong-der-app', macho_fixture(xml, b'DER-FIXTURE' + other)),
-            ('wrong-der-group', macho_fixture(xml, b'DER-FIXTURE' + extra)),
+            ('wrong-der-app', macho_fixture(xml, NATIVE_DER.replace(b'private', b'foreign', 1))),
+            ('wrong-der-group', macho_fixture(xml, NATIVE_DER[:-1] + b'x')),
             ('extra-entitlement', macho_fixture(plistlib.dumps(dict(EXPECTED_ENTITLEMENTS, extra=True)), der)),
             ('signature-xml-entitlements', macho_fixture(xml, der, slots=(0, 5))),
             ('signature-der-entitlements', macho_fixture(xml, der, slots=(0, 7))),
@@ -485,19 +494,17 @@ with ci.owned_scratch(parent, {}) as scratch:
             with self.subTest(name=name):
                 (built / 'Form').write_bytes(data)
                 manifest = {}
-                def run(command, **kwargs):
-                    self.assertEqual(command[0], '/usr/bin/derq', 'Invalid sections must fail before signature verification')
-                    fake_derq(command)
-                    return 0
-                with patch.object(ci, 'run', side_effect=run):
-                    with self.assertRaises((RuntimeError, ValueError, subprocess.CalledProcessError)):
-                        ci.verify_e2e_simulator(built, cwd=self.parent, env={}, output=self.parent, manifest=manifest)
+                with patch.object(ci, 'run') as run:
+                    with self.assertRaises((RuntimeError, ValueError)):
+                        ci.verify_e2e_simulator(built, expected_der=NATIVE_DER, cwd=self.parent,
+                                                env={}, output=self.parent, manifest=manifest)
+                run.assert_not_called()
                 self.assertFalse(manifest['signing_verified'])
                 self.assertEqual((built / 'Form').read_bytes(), data)
 
     def test_macho_reader_rejects_invalid_ranges_headers_and_duplicate_evidence(self):
         xml = plistlib.dumps(EXPECTED_ENTITLEMENTS)
-        valid = macho_fixture(xml, b'DER-FIXTURE' + xml)
+        valid = macho_fixture(xml, NATIVE_DER)
         mutations = [(0, 0), (4, 7), (12, 6), (16, 0), (20, 0xffffffff),
                      (36, 7), (96, 0xffff), (152, 0xffffffff)]
         executable = self.parent / 'Form'
@@ -520,18 +527,18 @@ with ci.owned_scratch(parent, {}) as scratch:
         built = self.parent / 'Form.app'
         built.mkdir()
         xml = plistlib.dumps(EXPECTED_ENTITLEMENTS)
-        data = macho_fixture(xml, b'DER-FIXTURE' + xml)
+        data = macho_fixture(xml, NATIVE_DER)
         (built / 'Form').write_bytes(data)
         (built / 'Info.plist').write_bytes(plistlib.dumps(APP_INFO))
         for failing in ('--verify', '--display'):
             with self.subTest(failing=failing):
                 manifest = {}
                 def run(command, **kwargs):
-                    if command[0] == '/usr/bin/derq': fake_derq(command)
+                    self.assertEqual(command[0], 'codesign')
                     if failing in command: raise subprocess.CalledProcessError(1, command)
                     return 0
                 with patch.object(ci, 'run', side_effect=run), self.assertRaises(subprocess.CalledProcessError):
-                    ci.verify_e2e_simulator(built, cwd=self.parent, env={}, output=self.parent, manifest=manifest)
+                    ci.verify_e2e_simulator(built, expected_der=NATIVE_DER, cwd=self.parent, env={}, output=self.parent, manifest=manifest)
                 self.assertFalse(manifest['signing_verified'])
                 self.assertEqual(manifest['signing'], 'linker-ad-hoc-simulator-unverified')
                 self.assertEqual((built / 'Form').read_bytes(), data)
@@ -544,30 +551,24 @@ with ci.owned_scratch(parent, {}) as scratch:
             with self.subTest(key=key):
                 (built / 'Info.plist').write_bytes(plistlib.dumps(dict(APP_INFO, **{key: value})))
                 with patch.object(ci, 'run') as run, self.assertRaisesRegex(RuntimeError, 'requires the Form simulator app'):
-                    ci.verify_e2e_simulator(built, cwd=self.parent, env={}, output=self.parent, manifest={})
+                    ci.verify_e2e_simulator(built, expected_der=NATIVE_DER, cwd=self.parent, env={}, output=self.parent, manifest={})
                 run.assert_not_called()
 
     def test_e2e_der_generation_failure_cleans_scratch_before_linking(self):
-        for failure in ('encode', 'decode', 'identity'):
+        for failure in ('encode', 'missing', 'empty', 'oversized', 'changed-xml'):
             with self.subTest(failure=failure):
                 manifest = {}
                 def run(command, **kwargs):
                     self.assertEqual(command[0], '/usr/bin/derq')
-                    if '-f' in command:
-                        self.assertEqual(command[:5], ['/usr/bin/derq', 'query', '-f', 'xml', '-i'])
-                        self.assertEqual(command[-1], '--raw')
-                        self.assertEqual(command[6], '-o')
-                        self.assertEqual(len(command), 9)
-                    else:
-                        self.assertEqual(command[:3], ['/usr/bin/derq', 'query', '-i'])
-                        self.assertEqual(command[4], '-o')
-                        self.assertEqual(command[-2:], ['--raw', '--xml'])
-                        self.assertEqual(len(command), 8)
-                    if (failure == 'encode' and '-f' in command) or (failure == 'decode' and '--xml' in command):
-                        raise subprocess.CalledProcessError(66, command)
+                    if failure == 'encode':
+                        raise subprocess.CalledProcessError(65, command)
+                    if failure == 'missing':
+                        return 0
                     fake_derq(command)
-                    if failure == 'identity' and '--xml' in command:
-                        Path(command[command.index('-o') + 1]).write_bytes(plistlib.dumps({}))
+                    if failure in ('empty', 'oversized'):
+                        Path(command[7]).write_bytes(b'' if failure == 'empty' else b'x' * 65537)
+                    if failure == 'changed-xml':
+                        Path(command[5]).write_bytes(plistlib.dumps({}))
                     return 0
                 with patch.object(ci, 'run', side_effect=run):
                     with self.assertRaises((RuntimeError, subprocess.CalledProcessError)):
@@ -575,6 +576,48 @@ with ci.owned_scratch(parent, {}) as scratch:
                             ci.prepare_e2e_entitlements(app=self.parent, scratch=scratch, env={},
                                                         output=self.parent, manifest=manifest)
                 self.assertFalse(Path(manifest['scratch_root']).exists())
+
+    def test_e2e_encoder_rejects_wrong_xml_before_native_command(self):
+        wrong_xml = plistlib.dumps({'application-identifier': 'other.app'})
+        with patch.object(ci.plistlib, 'dumps', return_value=wrong_xml), patch.object(ci, 'run') as run:
+            with self.assertRaisesRegex(RuntimeError, 'XML encoder input mismatch'):
+                ci.prepare_e2e_entitlements(app=self.parent, scratch=self.parent, env={},
+                                            output=self.parent, manifest={})
+        run.assert_not_called()
+
+    def test_e2e_readback_rejects_invalid_or_altered_expected_der(self):
+        built = self.parent / 'Form.app'
+        built.mkdir()
+        (built / 'Info.plist').write_bytes(plistlib.dumps(APP_INFO))
+        (built / 'Form').write_bytes(macho_fixture(plistlib.dumps(EXPECTED_ENTITLEMENTS), NATIVE_DER))
+        for expected in (None, b'', b'x' * 65537, NATIVE_DER[:-1] + b'x'):
+            with self.subTest(expected_size=None if expected is None else len(expected)):
+                manifest = {}
+                with patch.object(ci, 'run') as run, self.assertRaises(RuntimeError):
+                    ci.verify_e2e_simulator(built, expected_der=expected, cwd=self.parent,
+                                            env={}, output=self.parent, manifest=manifest)
+                run.assert_not_called()
+                self.assertFalse(manifest['signing_verified'])
+
+    def test_e2e_expected_der_is_retained_from_owned_encoder_invocation(self):
+        built = self.parent / 'Form.app'
+        built.mkdir()
+        (built / 'Info.plist').write_bytes(plistlib.dumps(APP_INFO))
+        (built / 'Form').write_bytes(macho_fixture(plistlib.dumps(EXPECTED_ENTITLEMENTS), NATIVE_DER))
+        manifest = {}
+        def run(command, **kwargs):
+            if command[0] == '/usr/bin/derq': fake_derq(command)
+            return 0
+        with ci.owned_scratch(self.parent, manifest) as scratch, patch.object(ci, 'run', side_effect=run) as commands:
+            expected = ci.prepare_e2e_entitlements(app=self.parent, scratch=scratch, env={},
+                                                   output=self.parent, manifest=manifest)
+            self.assertEqual(expected, NATIVE_DER)
+            (scratch / 'e2e-simulator-entitlements.der').write_bytes(b'altered after encoding')
+            ci.verify_e2e_simulator(built, expected_der=expected, cwd=self.parent,
+                                    env={}, output=self.parent, manifest=manifest)
+            self.assertEqual(sum(call.args[0][0] == '/usr/bin/derq' for call in commands.call_args_list), 1)
+            self.assertTrue(manifest['simulator_der_matches_input'])
+        self.assertFalse(scratch.exists())
 
     def test_link_settings_change_only_form_release_and_preserve_existing_flags(self):
         module = self.parent / 'node_modules/xcode'
