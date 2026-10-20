@@ -33,6 +33,8 @@ contract also needs Node 24, without installed npm dependencies.
 | `form196` | API board `correction`, `board`, `persistence-races`; APP feature-board `controller` | Board correction and controller state, persistence and race regressions |
 | `form203` | APP API `community-group-role-controller`; community matching `controller` | Community role and matching controller regressions |
 | `form208` | API voice `standard-wire`, `turn-controller`; usage `standard-observation`, `standard-composition`, `live-composition`; APP Standard `wire-codec` | Wire bounds and app/API interoperability, turn and synthetic usage accounting |
+| `lifecycle` | API lifecycle executor, service, HTTP, export, Bug Intake chain and usage lifecycle | Synthetic single-use local purge authority, atomic category execution and retained external residuals; no provider or operational deletion claim |
+| `restore-drill` | API relocated admission, existing restore admission and joined restore drill | Synthetic snapshot identity, current suppression, relocated admission and deletion-intent barriers; no runtime schema adoption, retention, encryption, off-host or RPO/RTO qualification |
 | `simulator-portable` | `python3 -B scripts/ci-ios-simulator.test.py` in `apps/form` | Portable build-driver lifecycle/diagnostic checks, without native compilation |
 
 To run a group, use `--group GROUP_ID` (repeatable). Board and Standard interop
