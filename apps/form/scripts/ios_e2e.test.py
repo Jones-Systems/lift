@@ -301,20 +301,33 @@ with ci.owned_scratch(root, {}) as scratch:
                 self.assertLessEqual(capture.call_count, 1)
                 (home / 'bin/jcmd').touch()
 
-    def test_missing_failed_hung_or_interrupted_probe_cannot_replace_original_timeout(self):
+    def test_missing_failed_or_hung_probe_preserves_timeout_and_cancellation_propagates(self):
         children, process, home = self.diagnostic_fixture()
-        for outcome in ('unavailable', 'failed', 'timed_out', 'output_limit', 'interrupted'):
+        for outcome in ('unavailable', 'failed', 'timed_out', 'output_limit'):
             with self.subTest(outcome=outcome), patch.object(children, 'start', return_value=process), \
                  patch.object(e2e.os, 'getpgid', return_value=12345), \
                  patch.object(e2e, 'diagnostic_capture', return_value=(outcome, b'private-test-token')):
                 with self.assertRaisesRegex(TimeoutError, '^maestro-version timed out$'):
                     children.command('maestro-version', ['secret-argument'])
                 self.assertNotIn('private-test-token', (self.root / 'maestro-version-diagnostic.json').read_text())
+        for cancellation in (KeyboardInterrupt(), SystemExit(143)):
+            with patch.object(children, 'start', return_value=process), \
+                 patch.object(e2e.os, 'getpgid', side_effect=cancellation):
+                with self.assertRaises(type(cancellation)) as caught:
+                    children.command('maestro-version', ['secret-argument'])
+            self.assertIs(caught.exception, cancellation)
+            self.assertEqual(json.loads((self.root / 'maestro-version-diagnostic.json').read_text())['state'], 'interrupted')
+            with patch.object(children, 'start', return_value=process), \
+                 patch.object(e2e.os, 'getpgid', side_effect=ProcessLookupError), \
+                 patch.object(Path, 'write_text', side_effect=cancellation):
+                with self.assertRaises(type(cancellation)) as caught:
+                    children.command('maestro-version', ['secret-argument'])
+            self.assertIs(caught.exception, cancellation)
         with patch.object(children, 'start', return_value=process), \
-             patch.object(e2e.os, 'getpgid', side_effect=KeyboardInterrupt):
+             patch.object(e2e.os, 'getpgid', side_effect=ProcessLookupError), \
+             patch.object(Path, 'write_text', side_effect=OSError):
             with self.assertRaisesRegex(TimeoutError, '^maestro-version timed out$'):
                 children.command('maestro-version', ['secret-argument'])
-        self.assertEqual(json.loads((self.root / 'maestro-version-diagnostic.json').read_text())['state'], 'interrupted')
 
     def test_other_commands_and_successful_version_do_not_probe(self):
         children, process, _ = self.diagnostic_fixture()
@@ -362,17 +375,48 @@ with ci.owned_scratch(root, {}) as scratch:
             child = original(*args, **kwargs)
             processes.append(child)
             return child
-        with patch.object(e2e.subprocess, 'Popen', side_effect=launch), \
-             patch.object(e2e.selectors, 'DefaultSelector') as selector:
-            selector.return_value.__enter__.return_value.select.side_effect = KeyboardInterrupt
-            state, _ = e2e.diagnostic_capture([sys.executable, '-c', 'import time; time.sleep(30)'],
-                                            self.root, {}, time.monotonic() + 2)
-        self.assertEqual(state, 'interrupted')
+        for cancellation in (KeyboardInterrupt(), SystemExit(143)):
+            with patch.object(e2e.subprocess, 'Popen', side_effect=launch), \
+                 patch.object(e2e.selectors, 'DefaultSelector') as selector:
+                selector.return_value.__enter__.return_value.select.side_effect = cancellation
+                with self.assertRaises(type(cancellation)) as caught:
+                    e2e.diagnostic_capture([sys.executable, '-c', 'import time; time.sleep(30)'],
+                                           self.root, {}, time.monotonic() + 2)
+            self.assertIs(caught.exception, cancellation)
         self.assertTrue(all(child.poll() is not None for child in processes))
         children = e2e.Children(self.root, {}, self.root)
         child = children.start('maestro-version', [sys.executable, '-c', 'import time; time.sleep(30)'])
-        children.cleanup({}, TimeoutError('maestro-version timed out'))
+        for sig in e2e.SIGNALS:
+            self.addCleanup(signal.signal, sig, signal.getsignal(sig))
+        with patch.object(children, 'stop', wraps=children.stop) as stop:
+            children.cleanup({}, SystemExit(143))
+        self.assertIn(unittest.mock.call('maestro-version', signal.SIGTERM, 0.2), stop.call_args_list)
         self.assertIsNotNone(child.poll())
+
+        program = r'''
+import importlib.util, pathlib, sys
+from unittest.mock import patch
+spec = importlib.util.spec_from_file_location('e2e', sys.argv[1])
+e2e = importlib.util.module_from_spec(spec); spec.loader.exec_module(e2e)
+root = pathlib.Path(sys.argv[2])
+children = e2e.Children(root, {}, root)
+error = None
+try:
+    with patch.object(e2e.selectors, 'DefaultSelector') as selector:
+        selector.return_value.__enter__.return_value.select.side_effect = SystemExit(143)
+        children.command('maestro-version', [sys.executable, '-c', 'import time; time.sleep(30)'], timeout=.01)
+except BaseException as exc:
+    error = exc
+    raise
+finally:
+    children.cleanup({}, error)
+    assert all(p.poll() is not None for p in children.processes.values())
+'''
+        completed = subprocess.run([sys.executable, '-B', '-c', program,
+                                    str(Path(__file__).with_name('ios_e2e.py')), str(self.root)],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+        self.assertEqual(completed.returncode, 143, completed.stderr.decode())
+        self.assertEqual(json.loads((self.root / 'maestro-version-diagnostic.json').read_text())['state'], 'interrupted')
 
     def test_execute_orders_readiness_evidence_final_assertion_and_cleanup(self):
         from types import SimpleNamespace

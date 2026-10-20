@@ -222,7 +222,7 @@ def diagnostic_capture(command, cwd, env, deadline, limit=65536):
     except subprocess.TimeoutExpired:
         state = 'timed_out'
     except (KeyboardInterrupt, SystemExit):
-        state = 'interrupted'
+        raise
     except Exception:
         state = 'unavailable'
     finally:
@@ -327,13 +327,14 @@ class Children:
             report.update(state=state, frames=sanitized_thread_frames(raw))
         except (KeyboardInterrupt, SystemExit):
             report['state'] = 'interrupted'
+            raise
         except Exception:
             report['state'] = 'unavailable'
         finally:
-            # A diagnostic failure must not replace the original timeout or prevent caller cleanup.
+            # Ordinary diagnostic failure must not replace timeout; cancellation must reach caller cleanup.
             try:
                 (self.output / 'maestro-version-diagnostic.json').write_text(json.dumps(report) + '\n')
-            except BaseException:
+            except Exception:
                 pass
 
     def wait_ready(self, name, predicate, timeout):
