@@ -10,14 +10,15 @@ name: 06-settings
     timeout: 30000
 - tapOn:
     id: a-mode-advanced
+# Maestro iOS exposes React Native radio state as text, not its checked boolean.
 - assertVisible:
     id: a-mode-advanced
-    checked: true
+    text: "radio button, checked"
 - tapOn:
     id: a-mode-basic
 - assertVisible:
     id: a-mode-basic
-    checked: true
+    text: "radio button, checked"
 - scrollUntilVisible:
     element:
       id: a-row-name
@@ -44,9 +45,13 @@ name: 06-settings
     timeout: 20000
     centerElement: true
 - tapOn: "${E2E_EXPECTED_LOAD_UNIT}"
+# Maestro 2.11 searches the scoped unit node itself and its descendants.
 - assertVisible:
-    text: "${E2E_EXPECTED_LOAD_UNIT}"
-    checked: true
+    text: "radio button, checked"
+    childOf:
+      text: "${E2E_EXPECTED_LOAD_UNIT}"
+      childOf:
+        id: a-unit-load
 - scrollUntilVisible:
     element:
       id: a-row-privacy
@@ -90,8 +95,11 @@ name: 06-settings
     timeout: 20000
     centerElement: true
 - assertVisible:
-    text: "${E2E_EXPECTED_LOAD_UNIT}"
-    checked: true
+    text: "radio button, checked"
+    childOf:
+      text: "${E2E_EXPECTED_LOAD_UNIT}"
+      childOf:
+        id: a-unit-load
 - takeScreenshot: 06-settings
 - scrollUntilVisible:
     element:
