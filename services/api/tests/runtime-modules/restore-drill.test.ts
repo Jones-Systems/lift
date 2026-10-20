@@ -99,8 +99,8 @@ test('Tier R16 joined restore keeps later disablements, holds missing intent and
     const community = await populateCommunity(first.server, a, b);
     const cIntent = await initiate(first.server, c);
     await first.server.close();
-    mkdirSync(join(f.d.root, 'drill-test-backups'), { mode: 0o700 });
-    const backupPath = join(f.d.root, 'drill-test-backups', 'before-disable.sqlite');
+    mkdirSync(join(f.d.root, 'backups', 'drill-test'), { mode: 0o700 });
+    const backupPath = join(f.d.root, 'backups', 'drill-test', 'before-disable.sqlite');
     const snapshotAt = Date.now();
     const manifest = await operateClosedStorage({ configuration: f.d.configuration, mainPath: f.d.path,
       expectedClosedDigest: fileDigest(f.d.path, f.d.configuration.ownerUid), action: 'backup', destination: backupPath });
@@ -180,8 +180,8 @@ for (const faultKind of ['interrupted', 'moving-authority'] as const)
       await provision(f.d);
       const initial = await f.runtime(), a = await login(initial.server, drillEmails[0], true);
       await initial.server.close();
-      mkdirSync(join(f.d.root, 'drill-test-backups'), { mode: 0o700 });
-      const backup = join(f.d.root, 'drill-test-backups', 'fault.sqlite');
+      mkdirSync(join(f.d.root, 'backups', 'drill-test'), { mode: 0o700 });
+      const backup = join(f.d.root, 'backups', 'drill-test', 'fault.sqlite');
       await operateClosedStorage({ configuration: f.d.configuration, mainPath: f.d.path,
         expectedClosedDigest: fileDigest(f.d.path, f.d.configuration.ownerUid), action: 'backup', destination: backup });
       const input = relocation(f.d, backup), preserved = readFileSync(f.d.path);

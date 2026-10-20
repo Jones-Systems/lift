@@ -14,7 +14,7 @@ import type { TestContext } from 'node:test';
 
 async function fixture(t:TestContext) {
   const d=await deployment(t); await provision(d); const running=await start(d); await running.server.close();
-  const backups=join(d.root,'relocation-test-backups'); mkdirSync(backups,{mode:0o700});
+  const backups=join(d.root,'backups','relocation-test'); mkdirSync(backups,{mode:0o700});
   const backup=join(backups,'snapshot.sqlite');
   const manifest=await operateClosedStorage({configuration:d.configuration,mainPath:d.path,
     expectedClosedDigest:fileDigest(d.path,d.configuration.ownerUid),action:'backup',destination:backup});
