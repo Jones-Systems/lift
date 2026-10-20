@@ -36,11 +36,17 @@ BASELINE_HEALTH = (
 APP_TESTS = {
     "form196": ("src/features/feature-board/tests/controller.test.cjs",),
     "form203": ("src/api/tests/community-group-role-controller.test.cjs", "src/community/matching/__tests__/controller.test.cjs"),
-    "form208": ("src/voice-coaching/standard/tests/wire-codec.test.cjs",),
+    "form208": ("src/voice-coaching/standard/tests/wire-codec.test.cjs",
+                "src/voice-coaching/realtime/tests/peer-slot.test.cjs",
+                "src/voice-coaching/realtime/tests/controller.test.cjs",
+                "src/voice-coaching/realtime/tests/host-controller.test.cjs"),
 }
 API_TESTS = {
     "form196": ("tests/community/board/correction.test.ts", "tests/community/board/board.test.ts", "tests/community/board/persistence-races.test.ts"),
     "form208": ("tests/voice-coaching/standard-wire.test.ts", "tests/voice-coaching/turn-controller.test.ts",
+                "tests/voice-coaching/realtime/provider.test.ts", "tests/voice-coaching/request-scope.test.ts",
+                "tests/voice-coaching/app-session-controller.test.cjs",
+                "tests/voice-coaching/realtime/synthetic-composition.test.cjs",
                 "tests/usage-limits/standard-observation.test.ts", "tests/usage-limits/standard-composition.test.ts",
                 "tests/usage-limits/live-composition.test.ts"),
 }
@@ -91,8 +97,14 @@ def selection(root, requested):
         else:
             if group in API_TESTS:
                 sources = API_TESTS[group]
-                emitted = ["dist/" + source.removesuffix(".ts") + ".js" for source in sources]
-                add(group, API, ["node", "--test", "--test-concurrency=1", *emitted], sources)
+                compiled = [source for source in sources if source.endswith(".ts")]
+                emitted = ["dist/" + source.removesuffix(".ts") + ".js" for source in compiled]
+                add(group, API, ["node", "--test", "--test-concurrency=1", *emitted], compiled)
+                source_tests = [source for source in sources if source.endswith(".cjs")]
+                if source_tests:
+                    add(group, API, ["node", "--experimental-transform-types", "--import", f"./{SOURCE_HOOK}",
+                                    "--test", "--test-isolation=none", "--test-concurrency=1", *source_tests],
+                        [SOURCE_HOOK, SOURCE_RESOLVER, *source_tests])
             if group in APP_TESTS:
                 sources = APP_TESTS[group]
                 add(group, APP, ["node", "--test", "--test-concurrency=1", *sources], sources)
