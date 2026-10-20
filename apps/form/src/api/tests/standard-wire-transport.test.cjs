@@ -149,3 +149,13 @@ test('late old Standard 401 cannot touch replacement token, storage, retained re
     assert.equal(next.signal.aborted, false); assert.equal(next.stops(), stops); assert.equal(f.calls.length, 1);
   } finally { response.resolve(new Response('', { status: 401 })); changes.remove(); for (const owner of owners) await owner.producer.dispose(); }
 });
+
+test('bounded wire exchange excludes ambient cookies while retaining its bearer and encoded result', async () => {
+  const f = await fixture(async init => init.credentials !== 'omit'
+    ? new Response('{"code":"MISSING_OR_NULL_ORIGIN"}', { status: 403 })
+    : new Response(codec.encodeResult(result)));
+  assert.deepEqual(await createStandardCoachingTransport(f.api, { limits, deadlineMs }).run(input()), result);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0].headers.Authorization, 'Bearer original');
+  assert.equal(JSON.parse(f.storage.value).token, 'original');
+});
