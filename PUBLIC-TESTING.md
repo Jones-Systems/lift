@@ -32,7 +32,7 @@ contract also needs Node 24, without installed npm dependencies.
 | `form104-139` | Every `*.test.mjs` recursively in API `tests/wearables/` and `tests/direct-provider-transport/` | Synthetic wearable ingestion/providers/suggestions, persistence/checkpoints, upload/purge, canonical consumer and provider transport/auth coverage present at this SHA |
 | `form196` | API board `correction`, `board`, `persistence-races`; APP feature-board `controller` | Board correction and controller state, persistence and race regressions |
 | `form203` | APP API `community-group-role-controller`; community matching `controller` | Community role and matching controller regressions |
-| `form208` | API voice `standard-wire`, `turn-controller`; usage `standard-observation`, `standard-composition`, `live-composition`; APP Standard `wire-codec` | Wire bounds and app/API interoperability, turn and synthetic usage accounting |
+| `form208` | API voice `standard-wire`, `turn-controller`, Realtime `provider`, `request-scope`, `app-session-controller`, synthetic Realtime composition; usage `standard-observation`, `standard-composition`, `live-composition`; APP Standard `wire-codec` and Realtime `peer-slot`, `controller`, `host-controller` | Wire bounds, app/API interoperability, turn and synthetic usage accounting, Realtime cancellation/currentness/local cleanup and unconfirmed termination; no live provider or physical microphone proof |
 | `simulator-portable` | `python3 -B scripts/ci-ios-simulator.test.py` in `apps/form` | Portable build-driver lifecycle/diagnostic checks, without native compilation |
 
 To run a group, use `--group GROUP_ID` (repeatable). Board and Standard interop

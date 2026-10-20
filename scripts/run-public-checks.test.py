@@ -46,6 +46,23 @@ class PublicChecksTests(unittest.TestCase):
         self.assertTrue(any("dist/tests/community/board/persistence-races.test.js" in c["argv"] for c in contract["commands"]))
         self.assertEqual(contract, checks.selection(ROOT, ["form208", "form196"]))
 
+    def test_voice_composition_uses_source_hook_and_retains_realtime_regressions(self):
+        commands = checks.selection(ROOT, ["form208"])["commands"]
+        voice = [command for command in commands if command["group"] == "form208"]
+        self.assertEqual(len(voice), 3)
+        compiled, source, app = voice
+        self.assertIn("dist/tests/voice-coaching/realtime/provider.test.js", compiled["argv"])
+        self.assertIn("dist/tests/voice-coaching/request-scope.test.js", compiled["argv"])
+        self.assertFalse(any(".cjs.js" in arg for arg in compiled["argv"]))
+        self.assertEqual(source["argv"][:7], ["node", "--experimental-transform-types", "--import",
+                         f"./{checks.SOURCE_HOOK}", "--test", "--test-isolation=none", "--test-concurrency=1"])
+        self.assertEqual(source["argv"][7:], ["tests/voice-coaching/app-session-controller.test.cjs",
+                         "tests/voice-coaching/realtime/synthetic-composition.test.cjs"])
+        self.assertIn(f"{checks.API}/{checks.SOURCE_RESOLVER}", source["test_sources"])
+        self.assertEqual(app["argv"][3:], list(checks.APP_TESTS["form208"]))
+        for name in ("peer-slot", "controller", "host-controller"):
+            self.assertIn(f"src/voice-coaching/realtime/tests/{name}.test.cjs", app["argv"])
+
     def test_health_discovery_includes_new_branch_tests_and_refuses_missing_baseline(self):
         for source in checks.BASELINE_HEALTH:
             target = self.root / checks.API / source
