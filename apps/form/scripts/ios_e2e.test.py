@@ -625,6 +625,22 @@ class JourneyContractTests(unittest.TestCase):
                 self.assertEqual(text.count('scrollUntilVisible:'), text.count('centerElement: true'))
                 self.assertNotIn('centerElement: false', text)
 
+    def test_body_value_keyboard_is_dismissed_and_proved_gone_before_commit(self):
+        # Run 39664906828: hideKeyboard left the decimal pad up and the commit tap typed a 0.
+        text = (REPO / 'apps/form/e2e/maestro/helpers/body-measurement.yaml').read_text()
+        self.assertNotIn('- hideKeyboard', text)
+        steps = [text.index(step) for step in (
+            'inputText: "170"', "tapOn: 'Who measured\\?'", 'notVisible: "Delete"', 'id: body-measure-commit')]
+        self.assertEqual(steps, sorted(steps))
+        self.assertIn("measuredBy: 'Who measured?'", (REPO / 'apps/form/src/body/copy.ts').read_text())
+        self.assertIn('keyboardType="decimal-pad"', (REPO / 'apps/form/src/body/BodyFlow.tsx').read_text())
+
+    def test_session_only_clearing_checks_match_values_inside_merged_rows(self):
+        # A bare full-text "170.0 cm" never matches a merged row, so its absence proves nothing.
+        text = (REPO / 'apps/form/e2e/maestro/07-body-session-only.yaml').read_text()
+        self.assertNotIn('assertNotVisible: "170.0 cm"', text)
+        self.assertEqual(text.count("assertNotVisible: '.*170\\.0 cm.*'"), 3)
+
     def test_flow_selectors_have_current_source_declarations(self):
         source_root = REPO / 'apps/form/src'
         source = '\n'.join(path.read_text() for path in source_root.rglob('*.tsx')

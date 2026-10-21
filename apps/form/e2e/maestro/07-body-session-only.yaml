@@ -30,7 +30,7 @@ name: 07-body-session-only
 - runFlow: helpers/body-setup.yaml
 - assertNotVisible:
     id: "body-added-.+"
-- assertNotVisible: "170.0 cm"
+- assertNotVisible: '.*170\.0 cm.*'
 - runFlow: helpers/body-measurement.yaml
 - pressKey: Home
 - launchApp:
@@ -45,7 +45,7 @@ name: 07-body-session-only
     timeout: 30000
 - assertNotVisible:
     id: "body-result-.+"
-- assertNotVisible: "170.0 cm"
+- assertNotVisible: '.*170\.0 cm.*'
 - takeScreenshot: 07-body-session-only-background
 - runFlow: helpers/body-setup.yaml
 - runFlow: helpers/body-measurement.yaml
@@ -67,7 +67,7 @@ name: 07-body-session-only
 - runFlow: helpers/body-setup.yaml
 - assertNotVisible:
     id: "body-added-.+"
-- assertNotVisible: "170.0 cm"
+- assertNotVisible: '.*170\.0 cm.*'
 - takeScreenshot: 07-body-session-only
 - tapOn:
     id: a-footer-secondary

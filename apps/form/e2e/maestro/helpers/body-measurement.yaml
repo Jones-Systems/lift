@@ -17,7 +17,13 @@ appId: com.jonessystems.form.private
 - tapOn:
     id: body-value-input
 - inputText: "170"
-- hideKeyboard
+# The decimal pad has no return key and its delete key has no `delete` id, so
+# hideKeyboard treats it as already hidden. A tap on a plain label is not
+# handled by any control, so the list dismisses the keyboard.
+- tapOn: 'Who measured\?'
+- extendedWaitUntil:
+    notVisible: "Delete"
+    timeout: 5000
 - scrollUntilVisible:
     element:
       id: body-by-self
