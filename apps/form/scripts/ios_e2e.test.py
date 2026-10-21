@@ -372,6 +372,28 @@ with ci.owned_scratch(root, {}) as scratch:
         raw = b'at java.lang.Thread.sleep(Native Method)\n' * 1000
         self.assertEqual(len(e2e.sanitized_thread_frames(raw)), 256)
 
+    def test_host_settle_is_bounded_records_samples_and_never_fails(self):
+        cpus = os.cpu_count() or 1
+        def run(loads):
+            now, sleeps = [0.0], []
+            def sleep(seconds):
+                sleeps.append(seconds)
+                now[0] += seconds
+            with patch.object(e2e.os, 'getloadavg', side_effect=[(value, 0, 0) for value in loads]):
+                return e2e.settle_host(sleep=sleep, clock=lambda: now[0]), sleeps
+        result, sleeps = run([cpus + 3, cpus + 1, cpus - 0.5])
+        self.assertEqual((result['settled'], result['seconds'], len(result['samples'])), (True, 10.0, 3))
+        self.assertEqual(sleeps, [e2e.HOST_SETTLE_INTERVAL] * 2)
+        steps = e2e.HOST_SETTLE_SECONDS // e2e.HOST_SETTLE_INTERVAL
+        result, sleeps = run([cpus * 4] * (steps + 1))
+        self.assertFalse(result['settled'])
+        self.assertEqual(result['seconds'], e2e.HOST_SETTLE_SECONDS)
+        self.assertEqual(len(sleeps), steps)
+        self.assertLessEqual(len(result['samples']), 60)
+        with patch.object(e2e.os, 'getloadavg', side_effect=OSError):
+            result = e2e.settle_host(sleep=self.fail, clock=lambda: 0.0)
+        self.assertEqual((result['settled'], result['samples']), (False, [[0.0, None]]))
+
     def test_group_signal_tolerates_darwin_eperm_only_after_leader_exit(self):
         import errno
         processes = []
@@ -517,6 +539,7 @@ finally:
                     return Response(b'{"accepted":true}')
                 manifest = {}
                 with patch.object(e2e, 'Children', FakeChildren), \
+                     patch.object(e2e, 'settle_host', side_effect=lambda: events.append('settle') or {'settled': True}), \
                      patch.object(e2e, 'install_maestro', return_value=Path('/owned/maestro')), \
                      patch.object(e2e.urllib.request, 'urlopen', side_effect=assert_final):
                     if outcome == 'passed':
@@ -528,6 +551,9 @@ finally:
                 self.assertLess(events.index('recorder-ready'), events.index('maestro'))
                 self.assertEqual(events[-2:], ['recorder-finalize', 'backend-stop'])
                 self.assertEqual(manifest['startup_seconds'], {'java-version': 0.5})
+                self.assertEqual(events[:2], ['settle', 'java-version'])
+                self.assertEqual(manifest['host_settle'], {'settled': True})
+                self.assertIn('load_at_finish', manifest)
                 if outcome == 'passed':
                     self.assertEqual(manifest['journeys_passed'], e2e.FLOW_NAMES)
                     self.assertTrue(manifest['backend_root_removed'])

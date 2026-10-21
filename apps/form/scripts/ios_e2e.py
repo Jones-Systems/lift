@@ -190,6 +190,41 @@ def cleanup_signals(cancelled):
                 signal.signal(sig, handler)
 
 
+HOST_SETTLE_SECONDS = 240
+HOST_SETTLE_INTERVAL = 5
+
+
+def sample_load():
+    try:
+        return round(os.getloadavg()[0], 2)
+    except OSError:
+        return None
+
+
+def settle_host(sleep=time.sleep, clock=time.monotonic):
+    """Bounded wait for fresh-simulator background work to stop oversubscribing the host.
+
+    Hosted runs showed trivial JVM starts taking 18s and local API calls exceeding
+    the app's 15s request limit right after the new device booted. This never
+    fails the run; it records the samples so the effect stays measurable.
+    """
+    cpus = os.cpu_count() or 1
+    start, samples, settled = clock(), [], False
+    while True:
+        load, elapsed = sample_load(), round(clock() - start, 1)
+        samples.append([elapsed, load])
+        if load is None:
+            break
+        if load <= cpus:
+            settled = True
+            break
+        if elapsed >= HOST_SETTLE_SECONDS:
+            break
+        sleep(HOST_SETTLE_INTERVAL)
+    return {'cpu_count': cpus, 'threshold_load': cpus, 'settled': settled,
+            'seconds': samples[-1][0], 'samples': samples[-60:]}
+
+
 def signal_group(process, signum):
     """Signal an owned session group that may already have exited."""
     try:
@@ -441,6 +476,7 @@ def execute(*, tree, scratch, output, device, env, manifest):
     original_error = None
     database = scratch / 'backend-data'
     try:
+        manifest['host_settle'] = settle_host()
         java = children.command('java-version', ['java', '-version'])
         match = re.search(r'version "(\d+)', java)
         if not match or int(match.group(1)) < 17:
@@ -495,6 +531,7 @@ def execute(*, tree, scratch, output, device, env, manifest):
         original_error = exc
         raise
     finally:
+        manifest['load_at_finish'] = sample_load()
         try:
             children.cleanup(manifest, original_error)
         finally:
