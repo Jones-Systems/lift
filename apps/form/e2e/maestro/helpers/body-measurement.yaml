@@ -40,7 +40,10 @@ appId: com.jonessystems.form.private
     direction: DOWN
     timeout: 20000
     centerElement: false
-- assertVisible: "170.0 cm"
+# Pressable rows expose label, optional detail and value as one accessible text.
+- assertVisible:
+    id: body-added-stature:none
+    text: 'Standing height, 170\.0 cm'
 - tapOn:
     id: a-footer-secondary
 - extendedWaitUntil:
@@ -49,4 +52,4 @@ appId: com.jonessystems.form.private
     timeout: 30000
 - assertVisible:
     id: "body-result-stature:none"
-- assertVisible: "170.0 cm"
+    text: 'Standing height, .*, 170\.0 cm'

@@ -25,7 +25,10 @@ name: 06-settings
     direction: DOWN
     timeout: 20000
     centerElement: false
-- assertVisible: "${E2E_EXPECTED_NAME}"
+# The settings row exposes its label and value as one accessible text.
+- assertVisible:
+    id: a-row-name
+    text: "Name, ${E2E_EXPECTED_NAME}"
 - tapOn:
     id: a-row-name
 - extendedWaitUntil:
@@ -87,7 +90,9 @@ name: 06-settings
     direction: DOWN
     timeout: 20000
     centerElement: false
-- assertVisible: "${E2E_EXPECTED_NAME}"
+- assertVisible:
+    id: a-row-name
+    text: "Name, ${E2E_EXPECTED_NAME}"
 - scrollUntilVisible:
     element:
       id: a-unit-load

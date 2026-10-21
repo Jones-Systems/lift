@@ -602,6 +602,20 @@ class JourneyContractTests(unittest.TestCase):
             self.assertIn('\n- takeScreenshot: ' + flow['screenshot'] + '\n', source)
             self.assertRegex(source, r'assertVisible:|assertNotVisible:|extendedWaitUntil:')
 
+    def test_pressable_row_values_are_asserted_through_their_merged_row_text(self):
+        # A Pressable AccountRow is one accessibility element: "label, [detail, ]value".
+        flows = '\n'.join(path.read_text() for path in (REPO / 'apps/form/e2e/maestro').rglob('*.yaml'))
+        self.assertNotIn('assertVisible: "${E2E_EXPECTED_NAME}"', flows)
+        self.assertNotIn('assertVisible: "170.0 cm"', flows)
+        self.assertEqual(flows.count('text: "Name, ${E2E_EXPECTED_NAME}"'), 2)
+        self.assertIn("text: 'Standing height, 170\\.0 cm'", flows)
+        self.assertIn("text: 'Standing height, .*, 170\\.0 cm'", flows)
+        settings = (REPO / 'apps/form/src/settings/SettingsScreen.tsx').read_text()
+        self.assertIn('<AccountRow label="Name" value={profile.name} testID="a-row-name" onPress=', settings)
+        self.assertIn("label: 'Standing height'", (REPO / 'apps/form/src/body/session.ts').read_text())
+        row = (REPO / 'apps/form/src/features/shared/ui.tsx').read_text()
+        self.assertRegex(row, r'\{label\}</Txt>\s*\{detail \?[^\n]*\n[^\n]*\n\s*\{value \?')
+
     def test_flow_selectors_have_current_source_declarations(self):
         source_root = REPO / 'apps/form/src'
         source = '\n'.join(path.read_text() for path in source_root.rglob('*.tsx')
