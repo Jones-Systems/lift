@@ -65,7 +65,7 @@ class EvidenceTests(unittest.TestCase):
             e2e.install_maestro(other, unsafe)
         self.assertFalse((other / 'escape').exists())
 
-    def report(self, names=None, extra='', status='PASSED'):
+    def report(self, names=None, extra='', status='SUCCESS'):
         names = e2e.FLOW_NAMES if names is None else names
         return '<testsuites><testsuite tests="' + str(len(names)) + '" failures="0">' + ''.join(
             '<testcase name="' + name + '" status="' + status + '">' + extra + '</testcase>' for name in names
@@ -76,6 +76,31 @@ class EvidenceTests(unittest.TestCase):
         report.write_text(self.report())
         self.assertEqual(e2e.validate_junit(report, e2e.FLOW_NAMES), e2e.FLOW_NAMES)
 
+    def test_junit_accepts_the_hosted_maestro_success_report(self):
+        # Run 39670865743 passed all seven journeys; Maestro 2.11.0 wrote status="SUCCESS".
+        report = self.root / 'junit.xml'
+        report.write_text('<?xml version=\'1.0\' encoding=\'UTF-8\'?>\n<testsuites>\n  <testsuite name="Test Suite" '
+                          'device="Form-CI - iOS 27.0" tests="7" failures="0" time="978.288">\n' + ''.join(
+                              '    <testcase id="' + name + '" name="' + name + '" classname="' + name + '" file="/flows/'
+                              + name + '.yaml" time="1.0" status="SUCCESS"/>\n' for name in e2e.FLOW_NAMES)
+                          + '  </testsuite>\n</testsuites>\n')
+        self.assertEqual(e2e.validate_junit(report, e2e.FLOW_NAMES), e2e.FLOW_NAMES)
+
+    def test_journey_screenshot_is_the_one_flattened_debug_capture(self):
+        flow = {'name': '07-body-session-only', 'screenshot': '07-body-session-only'}
+        debug = self.root / 'maestro-debug' / flow['name'] / 'takeScreenshot'
+        debug.mkdir(parents=True)
+        (debug / '07-body-session-only-results.png').write_bytes(png_bytes())
+        with self.assertRaisesRegex(RuntimeError, 'expected one screenshot'):
+            e2e.journey_screenshot(self.root, flow)
+        (debug / '07-body-session-only.png').write_bytes(png_bytes())
+        self.assertEqual(e2e.journey_screenshot(self.root, flow), debug / '07-body-session-only.png')
+        copy = self.root / 'maestro-results'
+        copy.mkdir()
+        (copy / '07-body-session-only.png').write_bytes(png_bytes())
+        with self.assertRaisesRegex(RuntimeError, 'expected one screenshot'):
+            e2e.journey_screenshot(self.root, flow)
+
     def test_junit_missing_malformed_empty_skipped_wrong_name_duplicate_or_failure_refused(self):
         report = self.root / 'junit.xml'
         with self.assertRaises(FileNotFoundError):
@@ -83,7 +108,10 @@ class EvidenceTests(unittest.TestCase):
         invalid = ['', '<broken', self.report([]), self.report(e2e.FLOW_NAMES[:-1]),
                    self.report(['wrong'] + e2e.FLOW_NAMES[1:]), self.report(e2e.FLOW_NAMES + [e2e.FLOW_NAMES[0]]),
                    self.report(extra='<skipped/>'), self.report(extra='<error/>'), self.report(extra='<failure/>'),
-                   self.report(status='SKIPPED'), self.report(status='PENDING'),
+                   self.report(status='SKIPPED'), self.report(status='PENDING'), self.report(status='PASSED'),
+                   self.report(status='success'), self.report(status='WARNING'), self.report(status='ERROR'),
+                   self.report(status='CANCELED'), self.report(status='STOPPED'),
+                   self.report().replace(' status="SUCCESS"', ''),
                    self.report().replace('failures="0"', 'failures="1"'),
                    self.report().replace('tests="7"', 'tests="0"')]
         for text in invalid:
@@ -509,9 +537,10 @@ finally:
                         if outcome == 'failed': raise RuntimeError('journey failed')
                         if outcome == 'timeout': raise TimeoutError('journey timed out')
                         (output / 'junit.xml').write_text(owner.report())
-                        images = output / 'maestro-results'
-                        images.mkdir()
-                        for flow in e2e.FLOW_NAMES: (images / (flow + '.png')).write_bytes(png_bytes())
+                        for flow in e2e.FLOW_NAMES:
+                            images = output / 'maestro-debug' / flow / 'takeScreenshot'
+                            images.mkdir(parents=True)
+                            (images / (flow + '.png')).write_bytes(png_bytes())
                     def start(self, name, command):
                         events.append(name)
                         if name == 'backend':
@@ -556,6 +585,8 @@ finally:
                 self.assertIn('load_at_finish', manifest)
                 if outcome == 'passed':
                     self.assertEqual(manifest['journeys_passed'], e2e.FLOW_NAMES)
+                    self.assertEqual(sorted(manifest['journey_screenshots']), sorted(
+                        'maestro-debug/' + flow + '/takeScreenshot/' + flow + '.png' for flow in e2e.FLOW_NAMES))
                     self.assertTrue(manifest['backend_root_removed'])
                     self.assertIn('assert-final', events)
                 else:

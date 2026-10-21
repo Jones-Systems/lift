@@ -144,13 +144,14 @@ The job limit is 80 minutes, with 75 minutes for build/journeys and 20 minutes
 for Maestro. There are no automatic journey retries. Public compute eligibility
 does not provide unlimited artifact storage; evidence retention is one day.
 
-Acceptance requires all seven exact-name JUnit testcases with no failures,
-errors or skips; a complete CRC-checked PNG per journey; a finalized MP4 with
+Acceptance requires all seven exact-name JUnit testcases with Maestro status
+`SUCCESS` and no failures, errors or skips; a complete CRC-checked PNG per journey; a finalized MP4 with
 video payload and `moov`; and the backend's persisted plan/workout/set/profile
 assertions. `manifest.json` records the source, tool pins, synthetic scope and
 SHA256 of every other retained evidence file, including `summary.md`. The
-Actions summary records the manifest hash. Screenshots and hierarchy/debug
-output remain under `maestro-results` and `maestro-debug`; `journeys.mp4`
+Actions summary records the manifest hash. Each journey's screenshot is the
+one `maestro-debug/<journey>/takeScreenshot/<journey>.png`, beside that
+journey's hierarchy and debug output; `journeys.mp4`
 records the entire suite. These validations prove evidence completeness, not
 visual correctness. Inspect the actual PNGs and video frames from the same run
 before claiming that the journeys rendered correctly.

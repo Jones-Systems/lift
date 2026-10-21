@@ -96,9 +96,18 @@ def validate_junit(path, expected):
             if int(node.get('tests')) != len(list(node.iter('testcase'))):
                 raise ValueError('JUnit test count mismatch')
     for case in cases:
-        if case.get('status', 'PASSED').upper() not in ('PASSED', 'PASS'):
+        # Maestro writes its FlowStatus enum; SUCCESS is the only passing value.
+        if case.get('status') != 'SUCCESS':
             raise ValueError('JUnit journey did not pass')
     return [case.get('name') for case in cases]
+
+
+def journey_screenshot(output, flow):
+    # Flattened debug output holds each flow's takeScreenshot files under its name.
+    expected = output / 'maestro-debug' / flow['name'] / 'takeScreenshot' / (flow['screenshot'] + '.png')
+    if list(output.rglob(flow['screenshot'] + '.png')) != [expected]:
+        raise RuntimeError('expected one screenshot for ' + flow['name'])
+    return expected
 
 
 def validate_png(path):
@@ -513,10 +522,8 @@ def execute(*, tree, scratch, output, device, env, manifest):
         manifest['journeys_passed'] = validate_junit(output / 'junit.xml', FLOW_NAMES)
         screenshots = {}
         for flow in contract['flows']:
-            paths = list((output / 'maestro-results').rglob(flow['screenshot'] + '.png'))
-            if len(paths) != 1:
-                raise RuntimeError('expected one screenshot for ' + flow['name'])
-            screenshots[str(paths[0].relative_to(output))] = validate_png(paths[0])
+            path = journey_screenshot(output, flow)
+            screenshots[str(path.relative_to(output))] = validate_png(path)
         manifest['journey_screenshots'] = screenshots
         request = urllib.request.Request(control + '/assert-final-state',
                     data=json.dumps(contract['expected']).encode(), method='POST',
