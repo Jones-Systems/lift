@@ -369,19 +369,24 @@ with ci.owned_scratch(root, {}) as scratch:
         self.assertEqual(len(e2e.sanitized_thread_frames(raw)), 256)
 
     def test_probe_capture_cancellation_reaps_probe_and_keeps_maestro_cleanup_owned(self):
+        from types import SimpleNamespace
         processes = []
         original = subprocess.Popen
         def launch(*args, **kwargs):
             child = original(*args, **kwargs)
             processes.append(child)
             return child
+        # Freeze the driver clock so slow hosted process launches cannot expire the
+        # probe budget before the injected cancellation is reached.
+        frozen = SimpleNamespace(monotonic=lambda: 0.0, sleep=time.sleep)
         for cancellation in (KeyboardInterrupt(), SystemExit(143)):
-            with patch.object(e2e.subprocess, 'Popen', side_effect=launch), \
+            with patch.object(e2e, 'time', frozen), \
+                 patch.object(e2e.subprocess, 'Popen', side_effect=launch), \
                  patch.object(e2e.selectors, 'DefaultSelector') as selector:
                 selector.return_value.__enter__.return_value.select.side_effect = cancellation
                 with self.assertRaises(type(cancellation)) as caught:
                     e2e.diagnostic_capture([sys.executable, '-c', 'import time; time.sleep(30)'],
-                                           self.root, {}, time.monotonic() + 2)
+                                           self.root, {}, 2)
             self.assertIs(caught.exception, cancellation)
         self.assertTrue(all(child.poll() is not None for child in processes))
         children = e2e.Children(self.root, {}, self.root)
@@ -394,7 +399,7 @@ with ci.owned_scratch(root, {}) as scratch:
         self.assertIsNotNone(child.poll())
 
         program = r'''
-import importlib.util, pathlib, sys
+import importlib.util, pathlib, sys, time, types
 from unittest.mock import patch
 spec = importlib.util.spec_from_file_location('e2e', sys.argv[1])
 e2e = importlib.util.module_from_spec(spec); spec.loader.exec_module(e2e)
@@ -402,7 +407,10 @@ root = pathlib.Path(sys.argv[2])
 children = e2e.Children(root, {}, root)
 error = None
 try:
-    with patch.object(e2e.selectors, 'DefaultSelector') as selector:
+    # The frozen driver clock keeps the ps probe budget open on slow runners;
+    # subprocess.wait still uses the real clock, so the version timeout fires.
+    with patch.object(e2e, 'time', types.SimpleNamespace(monotonic=lambda: 0.0, sleep=time.sleep)), \
+         patch.object(e2e.selectors, 'DefaultSelector') as selector:
         selector.return_value.__enter__.return_value.select.side_effect = SystemExit(143)
         children.command('maestro-version', [sys.executable, '-c', 'import time; time.sleep(30)'], timeout=.01)
 except BaseException as exc:
