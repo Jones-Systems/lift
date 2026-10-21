@@ -277,6 +277,8 @@ with ci.owned_scratch(root, {}) as scratch:
         self.assertNotIn('secret', text)
         self.assertNotIn('private-test-token', text)
         self.assertNotIn(str(home), text)
+        self.assertEqual(len(json.loads(text)['load_average']), 3)
+        self.assertEqual(json.loads(text)['cpu_count'], os.cpu_count())
         self.assertEqual(json.loads(text)['frames'], ['java.lang.Thread.State: WAITING',
                          'at java.base@17.0.1/java.lang.Thread.sleep(Native Method)',
                          'at maestro.cli.Main.main(Main.kt:12)'])
@@ -340,6 +342,8 @@ with ci.owned_scratch(root, {}) as scratch:
             with patch.object(children, 'stop'):
                 self.assertEqual(children.command('maestro-version', ['hidden']), '2.11.0\n')
             diagnostic.assert_not_called()
+        self.assertEqual(list(children.durations), ['maestro-version'])
+        self.assertGreaterEqual(children.durations['maestro-version'], 0)
 
     def test_probe_capture_bounds_output_time_and_reaps_owned_children(self):
         processes = []
@@ -475,6 +479,7 @@ finally:
                     def __init__(self, cwd, env, output):
                         owner.assertEqual(cwd, tree / 'services/api')
                         self.env = env
+                        self.durations = {'java-version': 0.5}
                     def command(self, name, command, timeout=60):
                         events.append(name)
                         if name == 'java-version': return 'openjdk version "17.0.1"'
@@ -522,6 +527,7 @@ finally:
                 self.assertLess(events.index('backend-ready'), events.index('recorder'))
                 self.assertLess(events.index('recorder-ready'), events.index('maestro'))
                 self.assertEqual(events[-2:], ['recorder-finalize', 'backend-stop'])
+                self.assertEqual(manifest['startup_seconds'], {'java-version': 0.5})
                 if outcome == 'passed':
                     self.assertEqual(manifest['journeys_passed'], e2e.FLOW_NAMES)
                     self.assertTrue(manifest['backend_root_removed'])

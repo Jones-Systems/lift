@@ -269,6 +269,8 @@ class Children:
     def __init__(self, cwd, env, output):
         self.cwd, self.env, self.output = cwd, env, output
         self.processes = {}
+        # Completed command durations separate slow startup from a hang across runs.
+        self.durations = {}
 
     def start(self, name, command, env=None):
         if name in self.processes and self.processes[name].poll() is None:
@@ -280,6 +282,7 @@ class Children:
         return process
 
     def command(self, name, command, timeout=60):
+        started = time.monotonic()
         process = self.start(name, command)
         try:
             status = process.wait(timeout=timeout)
@@ -290,6 +293,7 @@ class Children:
         if status:
             # Arguments include the ephemeral control token; never embed them in an exception.
             raise RuntimeError(name + ' exited ' + str(status))
+        self.durations[name] = round(time.monotonic() - started, 3)
         if name != 'maestro':
             self.stop(name, signal.SIGTERM, 2)
             del self.processes[name]
@@ -299,6 +303,12 @@ class Children:
         report = {'schema': 'form.maestro-timeout/v1', 'state': 'unavailable'}
         deadline = time.monotonic() + 4
         try:
+            try:
+                # Host saturation evidence that needs no subprocess or attach.
+                report.update(load_average=[round(value, 2) for value in os.getloadavg()],
+                              cpu_count=os.cpu_count())
+            except OSError:
+                pass
             def owned():
                 return (self.processes.get('maestro-version') is process and process.poll() is None
                         and os.getpgid(process.pid) == process.pid)
@@ -425,6 +435,7 @@ def execute(*, tree, scratch, output, device, env, manifest):
                      XDG_STATE_HOME=str(scratch / 'maestro-state'),
                      JAVA_TOOL_OPTIONS='-Djava.io.tmpdir=' + str(scratch))
     children = Children(tree / 'services/api', child_env, output)
+    manifest['startup_seconds'] = children.durations
     manifest.update(journeys_contract_sha256=sha256(contract_path), maestro_version=MAESTRO_VERSION,
                     maestro_zip_sha256=MAESTRO_SHA256)
     original_error = None
