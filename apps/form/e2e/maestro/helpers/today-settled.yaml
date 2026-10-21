@@ -1,0 +1,10 @@
+appId: com.jonessystems.form.private
+# After a launch, Today shows "Create a plan" until the stored plan loads; the
+# plan summary and Start then push every row below them down. Wait for the
+# loaded plan so a tap aimed below it cannot land on Start.
+---
+- extendedWaitUntil:
+    visible:
+      id: a-today-primary
+      text: "Start"
+    timeout: 30000

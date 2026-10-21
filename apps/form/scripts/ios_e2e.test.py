@@ -666,6 +666,23 @@ class JourneyContractTests(unittest.TestCase):
         self.assertIn("measuredBy: 'Who measured?'", (REPO / 'apps/form/src/body/copy.ts').read_text())
         self.assertIn('keyboardType="decimal-pad"', (REPO / 'apps/form/src/body/BodyFlow.tsx').read_text())
 
+    def test_today_rows_below_the_plan_are_reached_only_after_the_plan_loads(self):
+        # Run 39677396386 attempt 2 tapped a-entry-body before the plan loaded and hit Start.
+        settled = (REPO / 'apps/form/e2e/maestro/helpers/today-settled.yaml').read_text()
+        self.assertIn('      id: a-today-primary\n      text: "Start"\n', settled)
+        reached = 0
+        for path in sorted((REPO / 'apps/form/e2e/maestro').glob('0*.yaml')):
+            lines = path.read_text().splitlines()
+            for index, line in enumerate(lines):
+                if line in ('      id: a-entry-body', '      id: a-today-primary') and lines[index - 2] == '- scrollUntilVisible:':
+                    reached += 1
+                    with self.subTest(flow=path.name, line=index + 1):
+                        self.assertEqual(lines[index - 3], '- runFlow: helpers/today-settled.yaml')
+        self.assertEqual(reached, 5)
+        today = (REPO / 'apps/form/src/features/training/screens.tsx').read_text()
+        self.assertIn('<PrimaryAction label="Start" captureId="a-today-primary" onPress={onStart} />', today)
+        self.assertIn('<PrimaryAction label="Create a plan" icon="plus" captureId="a-today-primary"', today)
+
     def test_session_only_clearing_checks_match_values_inside_merged_rows(self):
         # A bare full-text "170.0 cm" never matches a merged row, so its absence proves nothing.
         text = (REPO / 'apps/form/e2e/maestro/07-body-session-only.yaml').read_text()

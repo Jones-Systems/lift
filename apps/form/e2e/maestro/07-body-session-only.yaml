@@ -2,6 +2,7 @@ appId: com.jonessystems.form.private
 name: 07-body-session-only
 ---
 - runFlow: helpers/ensure-home.yaml
+- runFlow: helpers/today-settled.yaml
 - scrollUntilVisible:
     element:
       id: a-entry-body
@@ -19,6 +20,7 @@ name: 07-body-session-only
     visible:
       id: screen-today
     timeout: 30000
+- runFlow: helpers/today-settled.yaml
 - scrollUntilVisible:
     element:
       id: a-entry-body
@@ -56,6 +58,7 @@ name: 07-body-session-only
     visible:
       id: screen-today
     timeout: 30000
+- runFlow: helpers/today-settled.yaml
 - scrollUntilVisible:
     element:
       id: a-entry-body

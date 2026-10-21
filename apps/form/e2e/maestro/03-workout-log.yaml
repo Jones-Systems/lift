@@ -2,6 +2,7 @@ appId: com.jonessystems.form.private
 name: 03-workout-log
 ---
 - runFlow: helpers/ensure-home.yaml
+- runFlow: helpers/today-settled.yaml
 - scrollUntilVisible:
     element:
       id: a-today-primary
