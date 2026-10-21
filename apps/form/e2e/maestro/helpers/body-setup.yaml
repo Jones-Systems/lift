@@ -1,4 +1,6 @@
 appId: com.jonessystems.form.private
+# Body screens keep a sticky footer over the list. Centre each target so a
+# partly covered row is never tapped through to the footer action.
 ---
 - extendedWaitUntil:
     visible:
@@ -23,7 +25,7 @@ appId: com.jonessystems.form.private
       id: body-check-one_person
     direction: DOWN
     timeout: 20000
-    centerElement: false
+    centerElement: true
 - tapOn:
     id: body-check-one_person
 - scrollUntilVisible:
@@ -31,7 +33,7 @@ appId: com.jonessystems.form.private
       id: body-check-full_body
     direction: DOWN
     timeout: 20000
-    centerElement: false
+    centerElement: true
 - tapOn:
     id: body-check-full_body
 - scrollUntilVisible:
@@ -39,7 +41,7 @@ appId: com.jonessystems.form.private
       id: body-check-camera_level
     direction: DOWN
     timeout: 20000
-    centerElement: false
+    centerElement: true
 - tapOn:
     id: body-check-camera_level
 - scrollUntilVisible:
@@ -47,7 +49,7 @@ appId: com.jonessystems.form.private
       id: body-check-even_light
     direction: DOWN
     timeout: 20000
-    centerElement: false
+    centerElement: true
 - tapOn:
     id: body-check-even_light
 - scrollUntilVisible:
@@ -55,7 +57,7 @@ appId: com.jonessystems.form.private
       id: body-check-clothing
     direction: DOWN
     timeout: 20000
-    centerElement: false
+    centerElement: true
 - tapOn:
     id: body-check-clothing
 - scrollUntilVisible:
@@ -63,7 +65,7 @@ appId: com.jonessystems.form.private
       id: body-check-stance
     direction: DOWN
     timeout: 20000
-    centerElement: false
+    centerElement: true
 - tapOn:
     id: body-check-stance
 - scrollUntilVisible:
@@ -71,7 +73,7 @@ appId: com.jonessystems.form.private
       id: body-check-front_facing
     direction: DOWN
     timeout: 20000
-    centerElement: false
+    centerElement: true
 - tapOn:
     id: body-check-front_facing
 - scrollUntilVisible:
@@ -79,14 +81,14 @@ appId: com.jonessystems.form.private
       id: body-view
     direction: UP
     timeout: 20000
-    centerElement: false
+    centerElement: true
 - tapOn: "Side"
 - scrollUntilVisible:
     element:
       id: body-check-side_facing
     direction: DOWN
     timeout: 20000
-    centerElement: false
+    centerElement: true
 - tapOn:
     id: body-check-side_facing
 - tapOn:

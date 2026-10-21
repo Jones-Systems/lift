@@ -616,6 +616,15 @@ class JourneyContractTests(unittest.TestCase):
         row = (REPO / 'apps/form/src/features/shared/ui.tsx').read_text()
         self.assertRegex(row, r'\{label\}</Txt>\s*\{detail \?[^\n]*\n[^\n]*\n\s*\{value \?')
 
+    def test_body_footer_screens_centre_scroll_targets_clear_of_the_footer(self):
+        # Run 39658529514 tapped a footer-covered checklist row through to body-protocol-enter.
+        for name in ('body-setup.yaml', 'body-measurement.yaml'):
+            text = (REPO / 'apps/form/e2e/maestro/helpers' / name).read_text()
+            with self.subTest(helper=name):
+                self.assertGreater(text.count('scrollUntilVisible:'), 0)
+                self.assertEqual(text.count('scrollUntilVisible:'), text.count('centerElement: true'))
+                self.assertNotIn('centerElement: false', text)
+
     def test_flow_selectors_have_current_source_declarations(self):
         source_root = REPO / 'apps/form/src'
         source = '\n'.join(path.read_text() for path in source_root.rglob('*.tsx')

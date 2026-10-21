@@ -1,4 +1,6 @@
 appId: com.jonessystems.form.private
+# Body screens keep a sticky footer over the list. Centre each target so a
+# partly covered row is never tapped through to the footer action.
 ---
 - extendedWaitUntil:
     visible:
@@ -11,7 +13,7 @@ appId: com.jonessystems.form.private
       id: body-value-input
     direction: DOWN
     timeout: 20000
-    centerElement: false
+    centerElement: true
 - tapOn:
     id: body-value-input
 - inputText: "170"
@@ -21,7 +23,7 @@ appId: com.jonessystems.form.private
       id: body-by-self
     direction: DOWN
     timeout: 20000
-    centerElement: false
+    centerElement: true
 - tapOn:
     id: body-by-self
 - scrollUntilVisible:
@@ -29,7 +31,7 @@ appId: com.jonessystems.form.private
       id: body-tool-tape
     direction: DOWN
     timeout: 20000
-    centerElement: false
+    centerElement: true
 - tapOn:
     id: body-tool-tape
 - tapOn:
@@ -39,7 +41,7 @@ appId: com.jonessystems.form.private
       id: body-added-stature:none
     direction: DOWN
     timeout: 20000
-    centerElement: false
+    centerElement: true
 # Pressable rows expose label, optional detail and value as one accessible text.
 - assertVisible:
     id: body-added-stature:none
