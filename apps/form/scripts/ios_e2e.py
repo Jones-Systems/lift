@@ -190,6 +190,18 @@ def cleanup_signals(cancelled):
                 signal.signal(sig, handler)
 
 
+def signal_group(process, signum):
+    """Signal an owned session group that may already have exited."""
+    try:
+        os.killpg(process.pid, signum)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        # Darwin reports EPERM, not ESRCH, once only exited members remain.
+        if process.poll() is None:
+            raise
+
+
 def diagnostic_capture(command, cwd, env, deadline, limit=65536):
     """Keep raw diagnostic bytes in bounded memory; always reap the owned probe group."""
     if time.monotonic() >= deadline:
@@ -229,10 +241,7 @@ def diagnostic_capture(command, cwd, env, deadline, limit=65536):
         if process is not None:
             # The probe has its own session; never signal the observed Maestro group here.
             with cleanup_signals(False):
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                signal_group(process, signal.SIGKILL)
                 process.wait(timeout=0.5)
                 process.stdout.close()
     return state, bytes(data[:limit])
@@ -354,24 +363,15 @@ class Children:
             return
         was_running = process.poll() is None
         # Signal the group even after its leader exited: driver descendants may remain.
-        try:
-            os.killpg(process.pid, signum)
-        except ProcessLookupError:
-            pass
+        signal_group(process, signum)
         if was_running:
             try:
                 process.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                signal_group(process, signal.SIGKILL)
                 process.wait(timeout=0.3)
                 raise RuntimeError(name + ' needed forced termination')
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        signal_group(process, signal.SIGKILL)
         if name in ('recorder', 'backend'):
             if not was_running:
                 raise RuntimeError(name + ' exited before requested teardown')

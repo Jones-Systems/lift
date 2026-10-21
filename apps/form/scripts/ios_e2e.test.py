@@ -368,6 +368,35 @@ with ci.owned_scratch(root, {}) as scratch:
         raw = b'at java.lang.Thread.sleep(Native Method)\n' * 1000
         self.assertEqual(len(e2e.sanitized_thread_frames(raw)), 256)
 
+    def test_group_signal_tolerates_darwin_eperm_only_after_leader_exit(self):
+        import errno
+        processes = []
+        original, real_killpg = subprocess.Popen, os.killpg
+        def launch(*args, **kwargs):
+            child = original(*args, **kwargs)
+            processes.append(child)
+            return child
+        def darwin_killpg(pid, signum):
+            # Darwin rejects signalling a group whose members have all exited.
+            real_killpg(pid, signal.SIGKILL)
+            next(child for child in processes if child.pid == pid).wait()
+            raise PermissionError(errno.EPERM, 'Operation not permitted')
+        with patch.object(e2e.subprocess, 'Popen', side_effect=launch), \
+             patch.object(e2e.os, 'killpg', side_effect=darwin_killpg), \
+             patch.object(e2e.selectors, 'DefaultSelector') as selector:
+            selector.return_value.__enter__.return_value.select.side_effect = SystemExit(143)
+            with self.assertRaises(SystemExit) as caught:
+                e2e.diagnostic_capture([sys.executable, '-c', 'import time; time.sleep(30)'],
+                                       self.root, {}, time.monotonic() + 2)
+        self.assertEqual(caught.exception.code, 143)
+        self.assertTrue(all(child.poll() is not None for child in processes))
+        live = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
+        self.addCleanup(live.wait)
+        self.addCleanup(live.kill)
+        with patch.object(e2e.os, 'killpg', side_effect=PermissionError(errno.EPERM, 'Operation not permitted')):
+            with self.assertRaises(PermissionError):
+                e2e.signal_group(live, signal.SIGTERM)
+
     def test_probe_capture_cancellation_reaps_probe_and_keeps_maestro_cleanup_owned(self):
         from types import SimpleNamespace
         processes = []
