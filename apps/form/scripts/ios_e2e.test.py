@@ -635,6 +635,7 @@ class JourneyContractTests(unittest.TestCase):
             'body-by-self': '`body-by-${by}`', 'body-tool-tape': '`body-tool-${tool}`',
             'body-added-stature:none': '`body-added-${m.id}`', 'body-added-.+': '`body-added-${m.id}`',
             'body-result-stature:none': '`body-result-${m.id}`', 'body-result-.+': '`body-result-${m.id}`',
+            'a-unit-load-${E2E_EXPECTED_LOAD_UNIT}': '`${testID}-${item.value}`',
         }
         for selector in selectors:
             with self.subTest(selector=selector):

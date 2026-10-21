@@ -47,14 +47,12 @@ name: 06-settings
     direction: DOWN
     timeout: 20000
     centerElement: false
-- tapOn: "${E2E_EXPECTED_LOAD_UNIT}"
-# Find the checked radio first, then its label on the radio or a child node.
+- tapOn:
+    id: a-unit-load-${E2E_EXPECTED_LOAD_UNIT}
+# Options are flat in the iOS hierarchy; each carries its own derived ID.
 - assertVisible:
-    text: "${E2E_EXPECTED_LOAD_UNIT}"
-    childOf:
-      text: "radio button, checked"
-      childOf:
-        id: a-unit-load
+    id: a-unit-load-${E2E_EXPECTED_LOAD_UNIT}
+    text: "radio button, checked"
 - scrollUntilVisible:
     element:
       id: a-row-privacy
@@ -100,11 +98,8 @@ name: 06-settings
     timeout: 20000
     centerElement: false
 - assertVisible:
-    text: "${E2E_EXPECTED_LOAD_UNIT}"
-    childOf:
-      text: "radio button, checked"
-      childOf:
-        id: a-unit-load
+    id: a-unit-load-${E2E_EXPECTED_LOAD_UNIT}
+    text: "radio button, checked"
 - takeScreenshot: 06-settings
 - scrollUntilVisible:
     element:
