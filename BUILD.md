@@ -37,11 +37,34 @@ PYTHONDONTWRITEBYTECODE=1 python3 apps/form/scripts/ci-ios-simulator.test.py
 ```
 
 The hosted job has a 60-minute limit and its build step a 55-minute limit.
-Requests for the same source/ref serialize without cancelling active work.
+Requests for the same source/ref serialize. A PR synchronize event cancels older
+work in that PR's existing concurrency group; edits, reopens and manual dispatch
+do not request in-progress cancellation. Do not rerun cancelled superseded heads;
+the latest exact head and current base must still finish green.
 Every PR from a branch in this repository receives an exact-head simulator
 build, including draft PRs. The Lift public checks workflow runs separately.
 Manual dispatch remains available for any pushed source revision. The read-only workflow token is
 not persisted by checkout. No private secrets or signing accounts are required.
+
+The first post-checkout identity step runs stdlib self-tests and records a
+versioned SHA-256 fingerprint of the head's app tree and root attributes, the
+checked-out tooling's driver tree, workflow, helper and self-test. A separately
+domain-separated record digest binds these inputs to explicit source/tooling/
+workflow provenance. Equal content can retain its fingerprint across heads;
+the provenance record still changes. Head and tooling are separate revisions.
+An absent root `.gitattributes` is recorded as absent, never as an
+empty file. Missing objects, ref mismatches or unsupported file types/modes
+leave the fingerprint unavailable and select full/unknown.
+
+This is shadow recording only: dependency closure (including dynamic imports,
+config and install hooks) remains unproved, so identity eligibility and reuse
+are always unknown and execution is always full. No prior-run lookup, artifact
+reuse or native skipping occurs. Only after build, smoke checks and artifact
+upload succeed does `native executed <fingerprint>` record actual execution for
+that run/attempt. A skipped marker or its name alone is not a receipt; the step
+and whole job must succeed. Even a successful marker is not reuse authorization
+or qualification of another head/base. Live cancellation latency and native
+speed improvements have not been measured by these portable checks.
 
 Each invocation owns a fresh scratch directory and one simulator. Success,
 failure and handled cancellation clean those resources; the disposable VM is
