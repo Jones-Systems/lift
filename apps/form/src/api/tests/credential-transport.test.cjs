@@ -70,7 +70,10 @@ test('late replacement cannot overwrite another account and cleans up its own is
   const cleanups = [];
   const api = new FormTransport(origin, storage, async (url, init) => {
     if (url.endsWith('/sign-in/email')) return json({}, 200, { 'set-auth-token': `account-${++signIns}` });
-    if (url.endsWith('/sign-out')) { cleanups.push(init.headers.Authorization); return json({ success: true }); }
+    if (url.endsWith('/sign-out')) {
+      if (init.credentials !== 'omit') return json({ code: 'MISSING_OR_NULL_ORIGIN' }, 403);
+      cleanups.push(init.headers.Authorization); return json({ success: true });
+    }
     return new Promise(resolve => { release = resolve; });
   });
   await api.signIn('first@example.invalid', 'synthetic-password');
@@ -94,4 +97,53 @@ test('late recovery result cannot enter a newly signed-in flow', async () => {
   release(json({ success: true }));
   await rejected;
   assert.equal(JSON.parse(storage.value).token, 'new-account');
+});
+
+// Model an ambient native cookie jar: cookie-bearing auth is rejected without Origin.
+test('bearer auth isolates ambient cookies and retains the session until sign-out succeeds', async () => {
+  const storage = store(), revoked = [], calls = [];
+  let rejectRevocation = true;
+  const api = new FormTransport(origin, storage, async (url, init) => {
+    calls.push({ url, authorization: init.headers.Authorization });
+    if (init.credentials !== 'omit') return json({ code: 'MISSING_OR_NULL_ORIGIN' }, 403);
+    if (url.endsWith('/sign-in/email')) return json({ token: 'body-is-not-authority' }, 200, { 'set-auth-token': 'original' });
+    if (url.endsWith('/sign-out')) {
+      if (rejectRevocation) return json({ code: 'synthetic_revocation_denied' }, 403);
+      revoked.push(init.headers.Authorization); return json({ success: true });
+    }
+    return json({ authenticated: init.headers.Authorization === 'Bearer original' });
+  });
+  await api.signIn('synthetic@example.invalid', 'synthetic-password');
+  assert.equal(calls[0].authorization, undefined);
+  assert.equal(JSON.parse(storage.value).token, 'original');
+  await assert.rejects(api.signOut(), { status: 403, code: 'synthetic_revocation_denied' });
+  assert.equal(JSON.parse(storage.value).token, 'original');
+  assert.deepEqual(await api.request('/v1/me'), { authenticated: true });
+  assert.deepEqual(revoked, []);
+  rejectRevocation = false;
+  await api.signOut();
+  assert.deepEqual(revoked, ['Bearer original']);
+  assert.equal(storage.value, null);
+  assert.deepEqual(await api.request('/v1/me'), { authenticated: false });
+  assert.equal(calls.filter(call => call.url.endsWith('/sign-out')).length, 2);
+});
+
+test('late sign-in cleans only its issued bearer despite an ambient cookie session', async () => {
+  const storage = store(), revoked = [];
+  let release, signIns = 0;
+  const api = new FormTransport(origin, storage, async (url, init) => {
+    if (url.endsWith('/sign-in/email')) {
+      if (++signIns === 1) return new Promise(resolve => { release = resolve; });
+      return json({}, 200, { 'set-auth-token': 'current-account' });
+    }
+    if (init.credentials !== 'omit') return json({ code: 'MISSING_OR_NULL_ORIGIN' }, 403);
+    revoked.push(init.headers.Authorization); return json({ success: true });
+  });
+  const pending = api.signIn('first@example.invalid', 'synthetic-password');
+  const rejected = assert.rejects(pending, { code: 'session_changed', originalEffectUnknown: true });
+  await api.signIn('second@example.invalid', 'synthetic-password');
+  release(json({}, 200, { 'set-auth-token': 'late-account' }));
+  await rejected;
+  assert.deepEqual(revoked, ['Bearer late-account']);
+  assert.equal(JSON.parse(storage.value).token, 'current-account');
 });

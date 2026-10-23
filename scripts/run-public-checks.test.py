@@ -86,6 +86,56 @@ class PublicChecksTests(unittest.TestCase):
                                cwd=ROOT / command["cwd"], text=True, capture_output=True, timeout=10)
         self.assertEqual(child.returncode, 0, child.stdout + child.stderr)
 
+    def test_native_backend_and_app_groups_compile_first_and_require_every_input(self):
+        contract = checks.selection(ROOT, ["native-e2e-backend", "native-e2e-app"])
+        self.assertEqual(contract["groups"], ["api-compile", "native-e2e-backend", "native-e2e-app"])
+        self.assertEqual(contract["commands"][1]["argv"], ["node", "--test", "--test-concurrency=1", "dist/tests/e2e/native-backend.test.js"])
+        self.assertEqual(contract["commands"][2]["argv"][3:], list(checks.APP_TESTS["native-e2e-app"]))
+        required = contract["commands"][1]["test_sources"]
+        self.assertIn("services/api/tests/e2e/native-backend.ts", required)
+        self.assertIn(f"services/api/{checks.SOURCE_HOOK}", required)
+        for command in contract["commands"]:
+            for source in command["test_sources"]:
+                path = self.root / source
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("")
+        self.assertEqual(checks.selection(self.root, ["native-e2e-backend", "native-e2e-app"]), contract)
+        (self.root / "services/api/tests/e2e/native-backend.test.ts").unlink()
+        with self.assertRaises(FileNotFoundError):
+            checks.selection(self.root, ["native-e2e-backend"])
+
+    def test_native_app_group_requires_onboarding_renderer_regression(self):
+        contract = checks.selection(ROOT, ["native-e2e-app"])
+        renderer = "apps/form/tests/renderer/onboarding-save.test.tsx"
+        commands = [command for command in contract["commands"] if renderer in command["test_sources"]]
+        self.assertEqual(len(commands), 1, "Native app qualification must include the onboarding renderer regression")
+        self.assertEqual(commands[0]["cwd"], "apps/form")
+        self.assertEqual(commands[0]["argv"], ["npm", "run", "test:renderer", "--", "--runTestsByPath",
+                                               "tests/renderer/onboarding-save.test.tsx"])
+        self.assertIn("apps/form/jest.config.cjs", commands[0]["test_sources"])
+        for command in contract["commands"]:
+            for source in command["test_sources"]:
+                path = self.root / source
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("")
+        self.assertEqual(checks.selection(self.root, ["native-e2e-app"]), contract)
+        (self.root / renderer).unlink()
+        with self.assertRaises(FileNotFoundError):
+            checks.selection(self.root, ["native-e2e-app"])
+
+    def test_simulator_portable_requires_both_driver_and_e2e_helper_tests(self):
+        contract = checks.selection(ROOT, ["simulator-portable"])
+        self.assertEqual([command["argv"][2] for command in contract["commands"]],
+                         ["scripts/ci-ios-simulator.test.py", "scripts/ios_e2e.test.py"])
+        for command in contract["commands"]:
+            for source in command["test_sources"]:
+                path = self.root / source
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("")
+        (self.root / "apps/form/scripts/ios_e2e.test.py").unlink()
+        with self.assertRaises(FileNotFoundError):
+            checks.selection(self.root, ["simulator-portable"])
+
     def test_success_cleans_child_outputs_and_preserves_log_and_receipt(self):
         status, receipt = self.execute("from pathlib import Path; Path('child-output').mkdir(); print('public proof')")
         self.assertEqual(status, 0)

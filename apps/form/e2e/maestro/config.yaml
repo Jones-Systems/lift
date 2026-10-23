@@ -1,0 +1,18 @@
+flows:
+  - "01-auth-create.yaml"
+  - "02-onboarding-first-plan.yaml"
+  - "03-workout-log.yaml"
+  - "04-restore-signout.yaml"
+  - "05-authoritative-401.yaml"
+  - "06-settings.yaml"
+  - "07-body-session-only.yaml"
+executionOrder:
+  continueOnFailure: false
+  flowsOrder:
+    - 01-auth-create
+    - 02-onboarding-first-plan
+    - 03-workout-log
+    - 04-restore-signout
+    - 05-authoritative-401
+    - 06-settings
+    - 07-body-session-only

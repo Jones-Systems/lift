@@ -28,6 +28,16 @@ uses no accounts, signing credentials or private backend. It checks compilation,
 installation, process survival and screenshot capture. These checks do not prove
 authenticated product flows. See [BUILD.md](BUILD.md) for commands and limits.
 
+**Lift native E2E** is the separate installed-app journey suite. It builds an
+E2E-specific app against a disposable loopback backend with synthetic accounts
+and a deterministic first plan. Its artifact contains checkpoint screenshots,
+video, JUnit results and diagnostics; its app ZIP is labelled
+`Form-e2e-simulator-arm64.zip`. Download the artifact from the run's Actions page
+to review those files. GitHub does not provide an interactive simulator window.
+See [the E2E guide](BUILD.md) for the exact journeys, local checks and limits.
+Passing synthetic journeys do not qualify private research, real providers or
+features that are not wired into the installed app.
+
 `apps/` contains native app and website code, `services/api/` contains backend
 source, and `packages/` contains shared adapters. Private research, owner captures,
 operational evidence and source Git history are excluded. The full backend

@@ -1,0 +1,125 @@
+appId: com.jonessystems.form.private
+name: 02-onboarding-first-plan
+---
+- extendedWaitUntil:
+    visible:
+      id: screen-onboarding-name
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: a-name-field-input
+    direction: DOWN
+    timeout: 20000
+    centerElement: false
+- tapOn:
+    id: a-name-field-input
+- eraseText
+- inputText: "${E2E_NAME}"
+- hideKeyboard
+- tapOn:
+    id: a-continue
+- extendedWaitUntil:
+    visible:
+      id: screen-onboarding-age
+    timeout: 30000
+- tapOn: "Increase Age, years"
+- tapOn:
+    id: a-continue
+- extendedWaitUntil:
+    visible:
+      id: screen-onboarding-body
+    timeout: 30000
+- tapOn:
+    id: a-continue
+- extendedWaitUntil:
+    visible:
+      id: screen-onboarding-outcome-pain
+    timeout: 30000
+- tapOn:
+    id: a-continue
+- extendedWaitUntil:
+    visible:
+      id: screen-onboarding-goals
+    timeout: 30000
+- tapOn:
+    id: a-goal-1
+- tapOn:
+    id: a-continue
+- extendedWaitUntil:
+    visible:
+      id: screen-onboarding-outcome-plans
+    timeout: 30000
+- tapOn:
+    id: a-continue
+- extendedWaitUntil:
+    visible:
+      id: screen-onboarding-experience
+    timeout: 30000
+- tapOn:
+    id: a-exp-new
+- tapOn:
+    id: a-continue
+- extendedWaitUntil:
+    visible:
+      id: screen-onboarding-injury
+    timeout: 30000
+- tapOn:
+    id: a-area-knee
+- tapOn:
+    id: a-continue
+- extendedWaitUntil:
+    visible:
+      id: screen-onboarding-injury-check
+    timeout: 30000
+- tapOn:
+    id: a-check-no
+- tapOn:
+    id: a-continue
+- extendedWaitUntil:
+    visible:
+      id: screen-onboarding-coach
+    timeout: 30000
+- tapOn:
+    id: a-style-direct
+- tapOn:
+    id: a-continue
+- extendedWaitUntil:
+    visible:
+      id: screen-onboarding-plan
+    timeout: 30000
+- tapOn:
+    id: a-days-3
+- tapOn:
+    id: a-minutes-35
+- scrollUntilVisible:
+    element:
+      id: a-equipment-dumbbells
+    direction: DOWN
+    timeout: 20000
+    centerElement: false
+- tapOn:
+    id: a-equipment-dumbbells
+- tapOn:
+    id: a-build
+- scrollUntilVisible:
+    element:
+      id: a-ready-plan
+    direction: UP
+    timeout: 30000
+    centerElement: false
+- assertVisible: "Native E2E plan"
+- tapOn:
+    id: a-go-today
+- extendedWaitUntil:
+    visible:
+      id: screen-today
+    timeout: 30000
+- runFlow: helpers/today-settled.yaml
+- scrollUntilVisible:
+    element:
+      id: a-today-primary
+    direction: DOWN
+    timeout: 20000
+    centerElement: false
+- assertVisible: "Native E2E plan"
+- takeScreenshot: 02-onboarding-first-plan
