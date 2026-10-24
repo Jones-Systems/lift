@@ -28,8 +28,15 @@ uses no accounts, signing credentials or private backend. It checks compilation,
 installation, process survival and screenshot capture. These checks do not prove
 authenticated product flows. See [BUILD.md](BUILD.md) for commands and limits.
 
-**Lift native E2E** is the separate installed-app journey suite. It builds an
-E2E-specific app against a disposable loopback backend with synthetic accounts
+The required routine merge check is **Public app, API and portable checks**.
+The launch workflow remains an existing paired Form qualification hold under
+[PAIRED-DEVELOPMENT.md](PAIRED-DEVELOPMENT.md).
+
+**Lift native E2E** is the separate advisory installed-app journey suite. It
+runs nightly, manually, or on relevant same-repository PRs carrying the
+`native-e2e` label. Its five journeys retain account creation and first plan,
+workout logging, session lifecycle, settings and session-only measurements.
+It builds an E2E-specific app against a disposable loopback backend with synthetic accounts
 and a deterministic first plan. Its artifact contains checkpoint screenshots,
 video, JUnit results and diagnostics; its app ZIP is labelled
 `Form-e2e-simulator-arm64.zip`. Download the artifact from the run's Actions page

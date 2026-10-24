@@ -42,7 +42,15 @@ work in that PR's existing concurrency group; edits, reopens and manual dispatch
 do not request in-progress cancellation. Do not rerun cancelled superseded heads;
 the latest exact head and current base must still finish green.
 Every PR from a branch in this repository receives an exact-head simulator
-build, including draft PRs. The Lift public checks workflow runs separately.
+build, including draft PRs. The Lift public checks workflow runs separately;
+its exact job name
+`Public app, API and portable checks` is required for routine Lift merges.
+The launch workflow remains the existing paired Form qualification hold;
+advisory E2E does not replace it or relax PAIRED-DEVELOPMENT.md. Both launch and
+public checks retain PR edits to support the existing Form refresh route.
+Required-check PR-to-green targets are median 10 minutes and p90 20 minutes
+including queue time; required-job duration targets 390 seconds. These are
+measurement budgets, not weaker assertions or a change to timeout limits.
 Manual dispatch remains available for any pushed source revision. The read-only workflow token is
 not persisted by checkout. No private secrets or signing accounts are required.
 
@@ -84,8 +92,18 @@ the resulting `launch.png` before claiming that the initial screen rendered.
 
 ## Synthetic installed-app journeys
 
-`Lift native E2E` (`lift-ios-e2e.yml`) is a separate same-repository PR and manual
-workflow. It builds the exact source SHA once, installs it on one owned iPhone 17
+`Lift native E2E` (`lift-ios-e2e.yml`) is advisory and runs nightly at
+2:23 AM EDT / 1:23 AM EST (06:23 UTC)
+on the default branch, on manual dispatch, and on relevant same-repository PRs
+carrying the `native-e2e` label. PR opens, synchronizations and reopens qualify
+while the label is present; adding that label also qualifies. PR path filters
+cover `apps/form/**`, `services/api/**`, `packages/**`, the E2E workflow and its
+CI-placement test. PR edits and unrelated label additions do not run journeys.
+Qualifying runs share a PR/ref concurrency group and cancel superseded work;
+ignored label events cannot cancel an active qualifying run. Manual dispatch
+can test a pushed source SHA even when PR path filters exclude the change.
+
+It builds the exact source SHA once, installs it on one owned iPhone 17
 simulator, and runs five ordered Maestro journeys against the real local API.
 The fixture uses deliberately public synthetic credentials, real HTTP auth and
 SQLite, and deterministic first-plan preparation with existing catalog IDs.
@@ -96,6 +114,7 @@ TypeScript fixture directly; it does not build private research projections.
 gh workflow run lift-ios-e2e.yml --repo Jones-Systems/lift \
   --ref BRANCH_WITH_E2E_WORKFLOW -f source_sha=FULL_40_CHARACTER_LIFT_SHA
 PYTHONDONTWRITEBYTECODE=1 python3 apps/form/scripts/ios_e2e.test.py
+python3 -B scripts/ci-placement.test.py
 ```
 
 Select a branch containing this workflow; after integration that is `build/lift`.
