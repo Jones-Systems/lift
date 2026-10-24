@@ -476,7 +476,7 @@ def build(args):
         if mode == 'e2e':
             contract = e2e.load_contract(source / 'apps/form/e2e/journeys.json')
             manifest.update(api_url=contract['api_origin'],
-                            acceptance_scope='synthetic local API and seven installed-app journeys; no private corpus or external providers')
+                            acceptance_scope=f"synthetic local API and {len(contract['flows'])} installed-app journeys; no private corpus or external providers")
         manifest['xcode'] = capture(['xcodebuild', '-version'], cwd=source, env=env)
         if manifest['xcode'] != 'Xcode 27.0\nBuild version 27A266a':
             raise RuntimeError('unexpected Xcode toolchain; requalify the image')

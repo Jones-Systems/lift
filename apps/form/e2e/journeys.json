@@ -13,24 +13,16 @@
   },
   "flows": [
     {
-      "name": "01-auth-create",
-      "screenshot": "01-auth-create"
-    },
-    {
-      "name": "02-onboarding-first-plan",
-      "screenshot": "02-onboarding-first-plan"
+      "name": "01-account-first-plan",
+      "screenshot": "01-account-first-plan"
     },
     {
       "name": "03-workout-log",
       "screenshot": "03-workout-log"
     },
     {
-      "name": "04-restore-signout",
-      "screenshot": "04-restore-signout"
-    },
-    {
-      "name": "05-authoritative-401",
-      "screenshot": "05-authoritative-401"
+      "name": "04-session-lifecycle",
+      "screenshot": "04-session-lifecycle"
     },
     {
       "name": "06-settings",

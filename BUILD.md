@@ -86,7 +86,7 @@ the resulting `launch.png` before claiming that the initial screen rendered.
 
 `Lift native E2E` (`lift-ios-e2e.yml`) is a separate same-repository PR and manual
 workflow. It builds the exact source SHA once, installs it on one owned iPhone 17
-simulator, and runs seven ordered Maestro journeys against the real local API.
+simulator, and runs five ordered Maestro journeys against the real local API.
 The fixture uses deliberately public synthetic credentials, real HTTP auth and
 SQLite, and deterministic first-plan preparation with existing catalog IDs.
 It installs API dependencies once in the archived scratch tree and runs the
@@ -149,11 +149,18 @@ launch behavior require the hosted journeys. The target-settings check also
 uses the repository's existing Node prerequisite.
 
 `apps/form/e2e/journeys.json` owns fixture inputs, expected profile values,
-journey names and screenshot basenames. The journeys cover email account
-creation/error, onboarding/first plan, workout set editing/removal/history,
-session restore/sign-out, server revocation/401, settings unit persistence and
-navigation, and session-only manual body measurements. Settings verifies the
-existing name survives relaunch; it does not claim an editable name field.
+journey names and screenshot basenames. The five ordered journeys are:
+
+1. `01-account-first-plan`: email account creation/error through onboarding and a saved first plan.
+2. `03-workout-log`: workout set editing/removal/history.
+3. `04-session-lifecycle`: session restore, sign-out, server revocation/401 and sign-in recovery.
+4. `06-settings`: unit persistence and navigation.
+5. `07-body-session-only`: manual body measurements and session-only clearing.
+
+Settings verifies the existing name survives relaunch; it does not claim an
+editable name field. The combined journeys preserve the account-created,
+restored/sign-out/sign-in and rejected-session diagnostic screenshots before
+their final required screenshots.
 No saved body-measurement, external-provider, purchase, signing or private
 research acceptance is claimed.
 
@@ -167,7 +174,7 @@ The job limit is 80 minutes, with 75 minutes for build/journeys and 20 minutes
 for Maestro. There are no automatic journey retries. Public compute eligibility
 does not provide unlimited artifact storage; evidence retention is one day.
 
-Acceptance requires all seven exact-name JUnit testcases with Maestro status
+Acceptance requires all five exact-name JUnit testcases with Maestro status
 `SUCCESS` and no failures, errors or skips; a complete CRC-checked PNG per journey; a finalized MP4 with
 video payload and `moov`; and the backend's persisted plan/workout/set/profile
 assertions. `manifest.json` records the source, tool pins, synthetic scope and
