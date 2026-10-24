@@ -1,5 +1,5 @@
 appId: com.jonessystems.form.private
-name: 04-restore-signout
+name: 04-session-lifecycle
 ---
 - runFlow: helpers/ensure-home.yaml
 - stopApp
@@ -35,3 +35,17 @@ name: 04-restore-signout
     timeout: 30000
 - runFlow: helpers/sign-in.yaml
 - takeScreenshot: 04-restore-signout
+- runFlow: helpers/ensure-home.yaml
+- runScript: helpers/revoke-sessions.js
+- stopApp
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible:
+      id: screen-sign-in
+    timeout: 30000
+- assertNotVisible:
+    id: screen-today
+- takeScreenshot: 05-authoritative-401-rejected
+- runFlow: helpers/sign-in.yaml
+- takeScreenshot: 04-session-lifecycle

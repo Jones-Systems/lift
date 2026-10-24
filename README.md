@@ -34,8 +34,9 @@ The launch workflow remains an existing paired Form qualification hold under
 
 **Lift native E2E** is the separate advisory installed-app journey suite. It
 runs nightly, manually, or on relevant same-repository PRs carrying the
-`native-e2e` label. Its seven journeys remain unchanged; consolidation into five
-is future work. It builds an E2E-specific app against a disposable loopback backend with synthetic accounts
+`native-e2e` label. Its five journeys retain account creation and first plan,
+workout logging, session lifecycle, settings and session-only measurements.
+It builds an E2E-specific app against a disposable loopback backend with synthetic accounts
 and a deterministic first plan. Its artifact contains checkpoint screenshots,
 video, JUnit results and diagnostics; its app ZIP is labelled
 `Form-e2e-simulator-arm64.zip`. Download the artifact from the run's Actions page

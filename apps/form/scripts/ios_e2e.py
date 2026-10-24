@@ -24,9 +24,8 @@ MAESTRO_VERSION = '2.11.0'
 MAESTRO_SHA256 = '5384593cb4e7a106489e75a821d157dd43f4e438df6bc308b72e82c685e1283a'
 MAESTRO_URL = 'https://github.com/mobile-dev-inc/Maestro/releases/download/cli-2.11.0/maestro.zip'
 SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
-FLOW_NAMES = ['01-auth-create', '02-onboarding-first-plan', '03-workout-log',
-              '04-restore-signout', '05-authoritative-401', '06-settings',
-              '07-body-session-only']
+FLOW_NAMES = ['01-account-first-plan', '03-workout-log', '04-session-lifecycle',
+              '06-settings', '07-body-session-only']
 
 
 def sha256(path):
@@ -569,7 +568,7 @@ def write_evidence_manifest(output, manifest):
     summary.write_text('Native simulator ' + manifest.get('mode', 'launch') + ': **' + manifest['status'] + '**\n\n'
                        + 'Source: `' + manifest['source_sha'] + '`\n\n'
                        + 'Scope: ' + manifest.get('acceptance_scope', 'process survival and launch screenshot') + '\n\n'
-                       + 'Journey results: ' + str(len(manifest.get('journeys_passed', []))) + '/7\n\n'
+                       + 'Journey results: ' + str(len(manifest.get('journeys_passed', []))) + '/' + str(len(FLOW_NAMES)) + '\n\n'
                        + 'Video validation: ' + manifest.get('video_validation', {}).get('state', 'unavailable') + '\n\n'
                        + 'Backend root removed: ' + str(manifest.get('backend_root_removed', 'unavailable')) + '\n\n'
                        + 'Cleanup errors: ' + str(len(manifest.get('cleanup_errors', []))) + '\n')
