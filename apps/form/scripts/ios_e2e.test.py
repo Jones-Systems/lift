@@ -859,6 +859,82 @@ class ShardTests(unittest.TestCase):
             return e2e.aggregate_shards(root, count=count, proof=proof, artifact_id='456',
                                         artifact_digest='d' * 64, consumer_result=kwargs.get('result', 'success'))
 
+    def download_aggregate_artifacts(self, count, artifacts):
+        import fnmatch
+        import shutil
+        workflow = (REPO / '.github/workflows/lift-ios-e2e.yml').read_text()
+        aggregate_job = workflow.split('\n  shard-aggregate:', 1)[1]
+        download = aggregate_job.split('uses: actions/download-artifact@', 1)[1].split('\n      - name:', 1)[0]
+        self.assertTrue(download.startswith('9000827ccba6bdab643e8b6fd33ac0654aef8333\n'))
+        settings = dict(re.findall(r'^          ([a-z-]+): (.+)$', download, re.MULTILINE))
+        script = r'''
+const vm = require('node:vm');
+const {settings, count} = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+const context = {inputs:{shard_count:String(count)}, github:{run_id:'123',run_attempt:'1'},
+  format:(template,...values) => template.replace(/\{(\d+)\}/g, (_,i) => String(values[i]))};
+const resolved = Object.fromEntries(Object.entries(settings).map(([key,value]) =>
+  [key,value.replace(/\$\{\{([\s\S]*?)\}\}/g, (_,expr) => String(vm.runInNewContext(expr, context)))]));
+process.stdout.write(JSON.stringify(resolved));
+'''
+        resolved = subprocess.run(['node', '-e', script], input=json.dumps({'settings': settings, 'count': count}),
+                                  text=True, capture_output=True, check=True, timeout=10)
+        settings = json.loads(resolved.stdout)
+        self.assertEqual(settings['merge-multiple'], 'false')
+        self.assertEqual(settings['digest-mismatch'], 'error')
+        matched = [(name, payload) for name, payload in artifacts if fnmatch.fnmatchcase(name, settings['pattern'])]
+        invocation = self.root / ('download-' + str(len(list(self.root.glob('download-*')))))
+        invocation.mkdir()
+        destination = invocation / settings['path']
+        self.assertTrue(destination.resolve().is_relative_to(invocation.resolve()))
+        destination.mkdir(parents=True)
+        # Pinned download-artifact.ts: one actual match extracts directly, regardless of merge-multiple.
+        for name, payload in matched:
+            target = destination if len(matched) == 1 else destination / name
+            shutil.copytree(payload, target, dirs_exist_ok=True)
+        return invocation / 'partition-evidence'
+
+    def test_aggregate_download_boundary_accepts_each_complete_layout(self):
+        for count in range(1, 5):
+            with self.subTest(count=count):
+                payloads, proof = self.aggregate_fixture(count)
+                artifacts = [(path.name, path) for path in sorted(payloads.iterdir())]
+                downloaded = self.download_aggregate_artifacts(count, artifacts)
+                if count == 1:
+                    print(json.dumps({'n1_payload_manifest_sha256': e2e.sha256(artifacts[0][1] / 'manifest.json'),
+                                      'download_root_entries': sorted(path.name for path in downloaded.iterdir())}))
+                result = self.aggregate(downloaded, proof, count)
+                self.assertEqual(result['partitions'], e2e.shard_partitions(count))
+                self.assertEqual(result['account_setup_replays'], count - 1)
+
+    def test_aggregate_download_boundary_preserves_missing_extra_stale_and_outcome_refusals(self):
+        for count in range(1, 5):
+            payloads, proof = self.aggregate_fixture(count)
+            artifacts = [(path.name, path) for path in sorted(payloads.iterdir())]
+            selections = [[], artifacts[:-1], [('lift-s6-consumer-123-2-0', artifacts[0][1])]]
+            if count > 1:
+                selections.append(artifacts[:1])
+            else:
+                selections.append(artifacts + [('lift-s6-consumer-123-1-1', artifacts[0][1])])
+            for selected in selections:
+                with self.subTest(count=count, selected=[name for name, _ in selected]):
+                    downloaded = self.download_aggregate_artifacts(count, selected)
+                    with self.assertRaises((ValueError, FileNotFoundError)):
+                        self.aggregate(downloaded, proof, count)
+            downloaded = self.download_aggregate_artifacts(count, artifacts)
+            with self.assertRaisesRegex(ValueError, 'every matrix'):
+                self.aggregate(downloaded, proof, count, result='failure')
+            manifest_path = downloaded / artifacts[0][0] / 'manifest.json'
+            original = json.loads(manifest_path.read_text())
+            for key, value in [('source_sha', 'b' * 40), ('run_attempt', '2'), ('partition_index', 9),
+                               ('partition', [e2e.FLOW_NAMES[0]]), ('status', 'failed')]:
+                manifest_path.write_text(json.dumps(dict(original, **{key: value})))
+                with self.subTest(count=count, key=key), self.assertRaises(ValueError):
+                    self.aggregate(downloaded, proof, count)
+            manifest_path.write_text(json.dumps(original))
+            (manifest_path.parent / 'junit.xml').write_text(self.report([e2e.FLOW_NAMES[0]]))
+            with self.assertRaises(ValueError):
+                self.aggregate(downloaded, proof, count)
+
     def test_aggregate_exact_junit_union_identity_outcomes_and_complete_evidence(self):
         for count in range(1, 5):
             root, proof = self.aggregate_fixture(count)

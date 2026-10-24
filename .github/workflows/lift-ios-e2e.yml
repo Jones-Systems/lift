@@ -211,7 +211,7 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           pattern: lift-s6-consumer-${{ github.run_id }}-${{ github.run_attempt }}-*
-          path: partition-evidence
+          path: ${{ inputs.shard_count == '1' && format('partition-evidence/lift-s6-consumer-{0}-{1}-0', github.run_id, github.run_attempt) || 'partition-evidence' }}
           merge-multiple: false
           digest-mismatch: error
       - name: Require every exact partition, identity, outcome and JUnit union
