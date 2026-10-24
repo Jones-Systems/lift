@@ -30,6 +30,34 @@ Node 24, CocoaPods and the locked Expo dependencies. The driver rejects toolchai
 drift. Native modules, fonts, local bundle identity and Form scheme are retained.
 It does not use a private npm registry or fetch private source during the build.
 
+The driver defaults to `--xcode-jobs 1` and late simulator boot. Experiments may
+select `--xcode-jobs N` from 1 through the smaller of 3 and `hw.ncpu`, and may
+select `--early-boot`. Invalid job counts fail before scratch or device creation.
+The manifest binds the selected budget and exact build argv. Xcode jobs control
+build-task scheduling; they are not a whole-host CPU quota and imply no linear
+speedup. Early boot creates a uniquely named owned simulator from scratch before
+source extraction, waits for readiness after packaging, then installs the app.
+Its readiness latency and blocked wait are recorded separately. Both options
+retain the full cold build and existing launch or five-journey acceptance.
+
+The manifest adds monotonic command/stage offsets, elapsed times, exit codes and
+`RUSAGE_CHILDREN` user/system deltas. These CPU deltas can include overlapping
+children when they are reaped; they are not exclusive per-command CPU attribution.
+Host evidence includes logical/physical CPUs, memory, macOS and runner image
+versions. A bounded `xcodebuild -help` probe enables `-showBuildTimingSummary`
+only when advertised; its transcript is capped at 256 KiB and the extracted
+summary at 64 KiB. Compiler `-j`/`-num-threads` log counts are best-effort evidence,
+not acceptance checks or measured concurrent compiler counts.
+
+One owned `top` sampler records real CPU, PhysMem and VM/swap statistics every
+five seconds for at most 720 samples. Its log stays outside scratch, is capped
+at 2 MiB with truncation recorded, and is hashed with the E2E evidence. Handled
+exits stop and reap the sampler and early-boot waiter before removing scratch;
+SIGKILL escalation or an incomplete drain fails cleanup. Cancellation during
+device creation reconciles only the exact unique name before deleting its UDID.
+The added instrumentation does not demonstrate a native speed improvement or
+achievement of the 390-second budget; those require exact-source hosted runs.
+
 Portable driver cleanup/diagnostic checks:
 
 ```sh
