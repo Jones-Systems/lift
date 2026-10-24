@@ -739,5 +739,229 @@ class JourneyContractTests(unittest.TestCase):
             self.assertTrue(fragment in body, 'missing dynamic family: ' + fragment)
 
 
+class ShardTests(unittest.TestCase):
+    setUp = EvidenceTests.setUp
+    report = EvidenceTests.report
+
+    def test_exact_layouts_refuse_duplicates_unknown_empty_order_and_wrong_replay_tax(self):
+        expected = {1: [[0,1,2,3,4]], 2: [[0,4],[0,1,2,3]],
+                    3: [[0,4],[0,2],[0,1,3]], 4: [[0,4],[0,2],[0,1],[0,3]]}
+        for count, layout in expected.items():
+            parts = [[e2e.FLOW_NAMES[i] for i in part] for part in layout]
+            self.assertEqual(e2e.shard_partitions(count), parts)
+            self.assertEqual(e2e.shard_matrix(count), {'include': [
+                {'index': index, 'partition': ','.join(part)} for index, part in enumerate(parts)]})
+            self.assertEqual(sum(part.count(e2e.FLOW_NAMES[0]) for part in parts), count)
+        for names in ([], [e2e.FLOW_NAMES[1]], [e2e.FLOW_NAMES[0], 'unknown'],
+                      [e2e.FLOW_NAMES[0]] * 2, [e2e.FLOW_NAMES[i] for i in (0,3,2)]):
+            with self.assertRaises(ValueError): e2e.validate_partition(names)
+        for count in (0, 5, True, '2'):
+            with self.assertRaises(ValueError): e2e.shard_partitions(count)
+        for parts in ([[e2e.FLOW_NAMES[0]]], [e2e.FLOW_NAMES, e2e.FLOW_NAMES], []):
+            with self.assertRaises(ValueError): e2e.validate_coverage(parts)
+
+    def test_partition_execution_keeps_real_account_setup_helpers_evidence_and_full_only_assertion(self):
+        import io
+        import shutil
+        contract = e2e.load_contract(REPO / 'apps/form/e2e/journeys.json')
+        tree = self.root / 'source'
+        shutil.copytree(REPO / 'apps/form/e2e', tree / 'apps/form/e2e')
+        (tree / 'services/api').mkdir(parents=True)
+        for count, index in ((1,0), (4,0), (4,1), (4,2), (4,3)):
+            names = e2e.shard_partitions(count)[index]
+            scratch = self.root / f'scratch-{count}-{index}'
+            output = self.root / f'output-{count}-{index}'
+            scratch.mkdir(); output.mkdir()
+            events, owner = [], self
+            class FakeChildren:
+                def __init__(self, *args): self.durations = {}
+                def command(self, name, command, timeout=60):
+                    events.append(name)
+                    if name == 'java-version': return 'openjdk version "17.0.1"'
+                    if name == 'maestro-version': return '2.11.0\n'
+                    selected = Path(command[-1])
+                    owner.assertEqual([path.stem for path in sorted(selected.glob('*.yaml'))], names)
+                    for flow in names:
+                        owner.assertEqual((selected / (flow + '.yaml')).read_bytes(),
+                                          (tree / 'apps/form/e2e/maestro' / (flow + '.yaml')).read_bytes())
+                    owner.assertEqual((selected / 'helpers/revoke-sessions.js').read_bytes(),
+                                      (tree / 'apps/form/e2e/maestro/helpers/revoke-sessions.js').read_bytes())
+                    owner.assertEqual(timeout, 1200)
+                    (output / 'junit.xml').write_text(owner.report(names))
+                    for flow in names:
+                        images = output / 'maestro-debug' / flow / 'takeScreenshot'
+                        images.mkdir(parents=True)
+                        (images / (flow + '.png')).write_bytes(png_bytes())
+                def start(self, name, command):
+                    events.append(name)
+                    if name == 'backend':
+                        (scratch / 'backend-data').mkdir()
+                        (scratch / 'backend-ready.json').write_text(json.dumps({
+                            'origin': contract['api_origin'], 'control_url': 'http://127.0.0.1:47622'}))
+                    else: (output / 'recorder.log').write_text('Recording started')
+                def wait_ready(self, name, predicate, timeout): owner.assertTrue(predicate())
+                def cleanup(self, manifest, error):
+                    events.append('cleanup')
+                    shutil.rmtree(scratch / 'backend-data')
+                    (output / 'journeys.mp4').write_bytes(atom(b'ftyp', b'isom') + atom(b'mdat', b'data') + atom(b'moov', b'meta'))
+            class Response(io.BytesIO): status = 200
+            def final_state(request, timeout):
+                events.append('final-state')
+                self.assertEqual(json.loads(request.data), contract['expected'])
+                return Response(b'{"accepted":true}')
+            manifest = {}
+            with patch.object(e2e, 'Children', FakeChildren), patch.object(e2e, 'settle_host'), \
+                 patch.object(e2e, 'install_maestro', return_value=Path('/owned/maestro')), \
+                 patch.object(e2e.urllib.request, 'urlopen', side_effect=final_state):
+                e2e.execute(tree=tree, scratch=scratch, output=output, device='owned-device',
+                            env={}, manifest=manifest, partition=names)
+            self.assertEqual(manifest['journeys_passed'], names)
+            self.assertEqual(manifest['aggregate_assertion'], 'passed' if count == 1 else 'partition-not-applicable')
+            self.assertEqual('final-state' in events, count == 1)
+            self.assertEqual('backend_final_state' in manifest, count == 1)
+            self.assertTrue(manifest['timing_only'])
+            self.assertFalse(manifest['authenticated_acceptance'])
+            self.assertTrue(manifest['backend_root_removed'])
+            self.assertEqual(manifest['video_validation']['state'], 'valid')
+            self.assertEqual(len(manifest['journey_screenshots']), len(names))
+
+    def aggregate_fixture(self, count):
+        root = self.root / ('artifacts-' + str(count))
+        root.mkdir()
+        proof = dict(schema='lift.e2e-shard-app/v1', source_sha='a' * 40, run_id='123', run_attempt='1',
+                     mode='e2e', api_url='http://127.0.0.1:47621')
+        proof.update({name + '_sha256': str(index) * 64 for index, name in enumerate(
+            ('archive', 'executable', 'embedded_js', 'der', 'xml', 'info'))})
+        for index, names in enumerate(e2e.shard_partitions(count)):
+            output = root / ('lift-s6-consumer-123-1-' + str(index))
+            output.mkdir()
+            (output / 'junit.xml').write_text(self.report(names))
+            for flow in names:
+                images = output / 'maestro-debug' / flow / 'takeScreenshot'
+                images.mkdir(parents=True)
+                (images / (flow + '.png')).write_bytes(png_bytes())
+            (output / 'journeys.mp4').write_bytes(atom(b'ftyp', b'isom') + atom(b'mdat', b'data') + atom(b'moov', b'meta'))
+            manifest = dict(schema='form-ios-simulator/v1', source_sha=proof['source_sha'], mode='e2e',
+                            operation='consume', status='passed', timing_only=True, authenticated_acceptance=False,
+                            partition=names, partition_index=index, shard_count=count,
+                            producer_proof=proof, app_artifact_id='456', app_artifact_digest='d' * 64,
+                            scratch_removed=True, backend_root_removed=True, signing_verified=True,
+                            app_integrity_verified=True,
+                            run_id='123', run_attempt='1', journeys_passed=names,
+                            aggregate_assertion='passed' if count == 1 else 'partition-not-applicable')
+            if count == 1: manifest['backend_final_state'] = {'accepted': True}
+            with patch.dict(os.environ, GITHUB_STEP_SUMMARY=''):
+                e2e.write_evidence_manifest(output, manifest)
+        return root, proof
+
+    def aggregate(self, root, proof, count, **kwargs):
+        with patch.dict(os.environ, GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1'):
+            return e2e.aggregate_shards(root, count=count, proof=proof, artifact_id='456',
+                                        artifact_digest='d' * 64, consumer_result=kwargs.get('result', 'success'))
+
+    def test_aggregate_exact_junit_union_identity_outcomes_and_complete_evidence(self):
+        for count in range(1, 5):
+            root, proof = self.aggregate_fixture(count)
+            result = self.aggregate(root, proof, count)
+            self.assertEqual(result['status'], 'passed')
+            self.assertTrue(result['timing_only'])
+            self.assertFalse(result['combined_state_qualification'])
+            self.assertEqual(result['account_setup_replays'], count - 1)
+            with self.assertRaisesRegex(ValueError, 'every matrix'): self.aggregate(root, proof, count, result='failure')
+            path = root / 'lift-s6-consumer-123-1-0/manifest.json'
+            original = json.loads(path.read_text())
+            for key, value in [('source_sha', 'b' * 40), ('run_attempt', '2'), ('partition_index', 9),
+                               ('producer_proof', {}), ('status', 'failed'), ('scratch_removed', False),
+                               ('aggregate_assertion', 'wrong'), ('app_artifact_id', '999'),
+                               ('authenticated_acceptance', True), ('cleanup_errors', ['failure']),
+                               ('journeys_passed', [e2e.FLOW_NAMES[0]])]:
+                path.write_text(json.dumps(dict(original, **{key: value})))
+                with self.subTest(count=count, key=key), self.assertRaises(ValueError): self.aggregate(root, proof, count)
+            path.write_text(json.dumps(original))
+            junit = path.parent / 'junit.xml'
+            junit.write_text(self.report([e2e.FLOW_NAMES[0]]))
+            with self.assertRaises(ValueError): self.aggregate(root, proof, count)
+            junit.write_text(self.report(e2e.shard_partitions(count)[0]))
+            (path.parent / 'journeys.mp4').unlink()
+            with self.assertRaises(ValueError): self.aggregate(root, proof, count)
+
+    def test_aggregate_refuses_omitted_extra_and_stale_artifacts(self):
+        root, proof = self.aggregate_fixture(2)
+        other = root / 'lift-s6-consumer-123-1-1'
+        moved = self.root / 'omitted'
+        other.rename(moved)
+        with self.assertRaisesRegex(ValueError, 'artifact'): self.aggregate(root, proof, 2)
+        moved.rename(other)
+        (root / 'stale-attempt').mkdir()
+        with self.assertRaisesRegex(ValueError, 'artifact'): self.aggregate(root, proof, 2)
+        with self.assertRaises(ValueError):
+            self.aggregate(root, dict(proof, run_attempt='2'), 2)
+
+    def test_aggregate_validates_subset_order_png_and_mp4_beyond_inventory_hashes(self):
+        import copy
+        root, proof = self.aggregate_fixture(2)
+        output = root / 'lift-s6-consumer-123-1-1'
+        manifest_path = output / 'manifest.json'
+        original = json.loads(manifest_path.read_text())
+        names = e2e.shard_partitions(2)[1]
+        jpeg = output / 'maestro-debug' / names[0] / 'takeScreenshot' / (names[0] + '.png')
+        for path, contents in [(output / 'junit.xml', self.report(names[:1]).encode()),
+                               (output / 'junit.xml', self.report(list(reversed(names))).encode()),
+                               (output / 'junit.xml', self.report(names, status='SKIPPED').encode()),
+                               (jpeg, b'invalid PNG'), (output / 'journeys.mp4', b'not an MP4')]:
+            before = path.read_bytes()
+            path.write_bytes(contents)
+            manifest = copy.deepcopy(original)
+            manifest['evidence_sha256'][str(path.relative_to(output))] = e2e.sha256(path)
+            manifest_path.write_text(json.dumps(manifest))
+            with self.subTest(file=path.name, contents=contents[:60]), self.assertRaises(ValueError):
+                self.aggregate(root, proof, 2)
+            path.write_bytes(before)
+        manifest_path.write_text(json.dumps(original))
+        self.assertEqual(self.aggregate(root, proof, 2)['status'], 'passed')
+
+    def test_experiment_workflow_keeps_pins_same_run_ids_guards_and_original_full_command(self):
+        workflow = (REPO / '.github/workflows/lift-ios-e2e.yml').read_text()
+        original = workflow.split('\n  shard-producer:', 1)[0]
+        self.assertIn('run: python3 tooling/apps/form/scripts/ci-ios-simulator.py --mode e2e --source source --output evidence --scratch-parent "$GITHUB_WORKSPACE" --sha "$SOURCE_SHA"', original)
+        self.assertIn("  schedule:\n    - cron: '0 5 * * *'\n      timezone: 'America/New_York'\n", workflow)
+        self.assertEqual(workflow.count('actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333'), 2)
+        consumer = workflow.split('\n  shard-consumer:', 1)[1].split('\n  shard-aggregate:', 1)[0]
+        self.assertIn('artifact-ids: ${{ needs.shard-producer.outputs.artifact-id }}', consumer)
+        self.assertIn('digest-mismatch: error', consumer)
+        self.assertNotIn('run-id:', consumer)
+        self.assertNotIn('github-token:', workflow)
+        self.assertIn('fail-fast: false', consumer)
+        self.assertIn('matrix: ${{ fromJSON(needs.shard-producer.outputs.matrix) }}', consumer)
+        self.assertIn('CONSUMER_RESULT: ${{ needs.shard-consumer.result }}', workflow)
+        self.assertIn('needs: [shard-producer, shard-consumer]', workflow)
+        self.assertIn('if: always() && github.event_name', workflow)
+        self.assertNotRegex(workflow, r'run:.*\$\{\{')
+        self.assertNotIn('<<:', workflow)
+
+    def test_dispatch_routes_default_to_original_and_experiments_only_to_producer(self):
+        workflow = (REPO / '.github/workflows/lift-ios-e2e.yml').read_text()
+        native_guard = re.search(r'^    if: (.+)$', workflow, re.MULTILINE).group(1)
+        producer_guard = re.search(r'^    if: (.+)$', workflow.split('\n  shard-producer:', 1)[1], re.MULTILINE).group(1)
+        script = r'''
+const vm = require('node:vm');
+const {nativeGuard, producerGuard} = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+const project = expression => expression.replaceAll(
+  'github.event.pull_request.labels.*.name', 'github.event.pull_request.labels.map(label => label.name)');
+const result = [];
+for (const count of ['0','1','2','3','4']) {
+  const inputs = {shard_count:count};
+  const github = {event_name:'workflow_dispatch', event:{inputs}};
+  result.push([vm.runInNewContext(project(nativeGuard),{github,inputs}),
+    vm.runInNewContext(project(producerGuard),{github,inputs})]);
+}
+process.stdout.write(JSON.stringify(result));
+'''
+        result = subprocess.run(['node', '-e', script], input=json.dumps(
+            {'nativeGuard': native_guard, 'producerGuard': producer_guard}),
+            text=True, capture_output=True, timeout=10, check=True)
+        self.assertEqual(json.loads(result.stdout), [[True,False]] + [[False,True]] * 4)
+
+
 if __name__ == '__main__':
     unittest.main()

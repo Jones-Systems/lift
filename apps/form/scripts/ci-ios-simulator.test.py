@@ -780,7 +780,7 @@ class PerformanceTests(unittest.TestCase):
             time.sleep(0.01)
         self.assertTrue(path.exists())
 
-    def build_case(self, *, early=False, failure=None, jobs=1, summary=False, mode='launch', cpus=3):
+    def build_case(self, *, early=False, failure=None, jobs=1, summary=False, mode='launch', cpus=3, operation='full'):
         from types import SimpleNamespace
         import tarfile
         import time
@@ -797,7 +797,8 @@ class PerformanceTests(unittest.TestCase):
         (app / 'e2e/journeys.json').write_text((Path(__file__).parents[1] / 'e2e/journeys.json').read_text())
         output = root / 'evidence'
         args = SimpleNamespace(source=str(source), output=str(output), scratch_parent=str(root),
-                               sha='a' * 40, mode=mode, early_boot=early, xcode_jobs=jobs)
+                               sha='a' * 40, mode=mode, early_boot=early, xcode_jobs=jobs,
+                               operation=operation, shard_count=2)
         events, children = [], []
         original_run, original_popen, original_hash = ci.run, ci.subprocess.Popen, ci.sha256
         original_capture = ci.capture
@@ -846,6 +847,9 @@ class PerformanceTests(unittest.TestCase):
                 built.mkdir(parents=True)
                 (built / 'main.jsbundle').write_text('bundle')
                 (built / 'Form').write_text('executable')
+                if operation == 'produce':
+                    (built / 'Info.plist').write_bytes(plistlib.dumps(APP_INFO))
+                    (built / 'Form').write_bytes(macho_fixture(xml=plistlib.dumps(EXPECTED_ENTITLEMENTS), der=b'der'))
             if command[0] == 'ditto': Path(command[-1]).write_text('archive')
             if command[0] == 'xcodebuild' and failure == 'signal':
                 return original_run([sys.executable, '-c',
@@ -1030,6 +1034,197 @@ raise SystemExit(error.code if isinstance(error,SystemExit) else 1)
             else:
                 self.assertIsInstance(error, subprocess.TimeoutExpired)
                 self.assertTrue(manifest['background_children']['bootstatus']['stopped'])
+
+
+class ShardDriverTests(unittest.TestCase):
+    setUp = LifecycleTests.setUp
+
+    def fixture(self):
+        import zipfile
+        root = self.parent / str(len(list(self.parent.iterdir())))
+        root.mkdir()
+        scratch, output, source = (root / name for name in ('scratch', 'output', 'source'))
+        for path in (scratch, output, source): path.mkdir()
+        (source / 'services/api').mkdir(parents=True)
+        app_source = source / 'apps/form/e2e'
+        app_source.mkdir(parents=True)
+        (app_source / 'journeys.json').write_bytes((Path(__file__).parents[1] / 'e2e/journeys.json').read_bytes())
+        data = {'Form': macho_fixture(xml=plistlib.dumps(EXPECTED_ENTITLEMENTS), der=NATIVE_DER), 'main.jsbundle': b'embedded-js',
+                'Info.plist': plistlib.dumps(dict(APP_INFO, **ci.shard_info('a' * 40)))}
+        archive = root / 'app.zip'
+        def package():
+            with zipfile.ZipFile(archive, 'w') as bundle:
+                for name, value in data.items(): bundle.writestr('Form.app/' + name, value)
+        package()
+        proof = dict(schema='lift.e2e-shard-app/v1', source_sha='a' * 40, mode='e2e',
+                     api_url='http://127.0.0.1:47621', run_id='123', run_attempt='1')
+        for key, value in [('archive', archive.read_bytes()), ('executable', data['Form']),
+                           ('embedded_js', data['main.jsbundle']), ('info', data['Info.plist']),
+                           ('xml', plistlib.dumps(EXPECTED_ENTITLEMENTS)), ('der', NATIVE_DER)]:
+            proof[key + '_sha256'] = ci.hashlib.sha256(value).hexdigest()
+        return root, scratch, output, source, data, archive, package, proof
+
+    def test_every_app_integrity_refusal_precedes_install_and_journeys_and_cleans_scratch(self):
+        import zipfile
+        from types import SimpleNamespace
+        faults = ['archive', 'unsafe', 'info-hash', 'identity', 'source', 'mode', 'api',
+                  'missing-section', 'xml-hash', 'xml-identity', 'der', 'codesign', 'executable', 'js']
+        for fault in faults:
+            with self.subTest(fault=fault):
+                root, scratch, output, source, data, archive, package, proof = self.fixture()
+                output.rmdir()
+                if fault == 'identity':
+                    data['Info.plist'] = plistlib.dumps(dict(APP_INFO, CFBundleIdentifier='wrong', **ci.shard_info('a' * 40)))
+                if fault in ('source', 'mode', 'api'):
+                    info = plistlib.loads(data['Info.plist'])
+                    info[{'source': 'LiftSourceSHA', 'mode': 'LiftBuildMode', 'api': 'LiftAPIURL'}[fault]] = 'wrong'
+                    data['Info.plist'] = plistlib.dumps(info)
+                if fault == 'missing-section': data['Form'] = b'no Mach-O'
+                if fault == 'xml-identity':
+                    xml = plistlib.dumps(dict(EXPECTED_ENTITLEMENTS, **{'application-identifier': 'wrong'}))
+                    data['Form'] = macho_fixture(xml=xml, der=NATIVE_DER)
+                    proof['xml_sha256'] = ci.hashlib.sha256(xml).hexdigest()
+                if fault == 'der': data['Form'] = macho_fixture(xml=plistlib.dumps(EXPECTED_ENTITLEMENTS), der=b'changed')
+                if fault == 'executable': data['Form'] += b'changed'
+                if fault == 'js': data['main.jsbundle'] += b'changed'
+                package()
+                if fault == 'archive': proof['archive_sha256'] = 'f' * 64
+                if fault == 'unsafe':
+                    with zipfile.ZipFile(archive, 'a') as bundle: bundle.writestr('../escape', b'bad')
+                if fault != 'archive': proof['archive_sha256'] = ci.sha256(archive)
+                if fault in ('identity', 'source', 'mode', 'api'):
+                    proof['info_sha256'] = ci.hashlib.sha256(data['Info.plist']).hexdigest()
+                if fault in ('info-hash', 'xml-hash'): proof[{'info-hash': 'info_sha256', 'xml-hash': 'xml_sha256'}[fault]] = 'f' * 64
+                env = dict(GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', PRODUCER_PROOF=json.dumps(proof),
+                           SHARD_COUNT='2', PARTITION_INDEX='0', PARTITION=','.join(ci.e2e.shard_partitions(2)[0]),
+                           APP_ARTIFACT_ID='456', APP_ARTIFACT_DIGEST='d' * 64)
+                calls = []
+                def capture(command, **kwargs):
+                    calls.append(command)
+                    if command[:2] == ['git', 'rev-parse']: return 'a' * 40
+                    if command[:2] == ['git', 'status']: return ''
+                    if command == ['uname', '-m']: return 'arm64'
+                    if command[:2] == ['sysctl', '-n']: return '4'
+                    return 'v24.0.0'
+                def run(command, **kwargs):
+                    calls.append(command)
+                    if command[0] == 'ditto':
+                        with zipfile.ZipFile(archive) as bundle: bundle.extractall(command[-1])
+                    elif command[0] == 'codesign' and fault == 'codesign':
+                        raise subprocess.CalledProcessError(1, command)
+                    elif command[0] != 'codesign': self.fail('unexpected command before refusal: ' + str(command))
+                args = SimpleNamespace(source=str(source), output=str(output), sha='a' * 40,
+                                       scratch_parent=str(root), consumer_archive=str(archive))
+                with patch.dict(os.environ, env), patch.object(ci, 'capture', side_effect=capture), \
+                     patch.object(ci, 'run', side_effect=run), patch.object(ci.sys, 'platform', 'darwin'), \
+                     patch.object(ci, 'start_sampler'), patch.object(ci, 'shard_storage'), \
+                     patch.object(ci.e2e, 'execute') as journeys:
+                    with self.assertRaises((RuntimeError, subprocess.CalledProcessError)):
+                        ci.consume(args)
+                journeys.assert_not_called()
+                self.assertFalse(any(call[:3] == ['xcrun', 'simctl', 'install'] for call in calls))
+                manifest = json.loads((output / 'manifest.json').read_text())
+                self.assertEqual(manifest['status'], 'failed')
+                self.assertTrue(manifest['scratch_removed'])
+                self.assertFalse(list(root.glob('form-ios-*')))
+                self.assertFalse((root / 'escape').exists())
+
+    def test_verified_consumer_uses_only_backend_install_and_owns_success_failure_cancel_cleanup(self):
+        import tarfile
+        import zipfile
+        from types import SimpleNamespace
+        for outcome in ('passed', 'journey-failure', 'cancel-boot', 'cleanup-failure'):
+            with self.subTest(outcome=outcome):
+                root, scratch, output, source, data, archive, package, proof = self.fixture()
+                output.rmdir()
+                calls, devices = [], []
+                def capture(command, **kwargs):
+                    calls.append(command)
+                    if command[:2] == ['git', 'rev-parse']: return 'a' * 40
+                    if command[:2] == ['git', 'status']: return ''
+                    if command == ['uname', '-m']: return 'arm64'
+                    if command[:2] == ['sysctl', '-n']: return '4'
+                    if command[:3] == ['xcrun', 'simctl', 'create']: return 'owned-device'
+                    if command[:3] == ['xcrun', 'simctl', 'delete'] and outcome == 'cleanup-failure':
+                        raise subprocess.CalledProcessError(1, command)
+                    return 'v24.0.0'
+                def run(command, *, cwd, **kwargs):
+                    calls.append(command)
+                    if command[0] == 'ditto':
+                        with zipfile.ZipFile(archive) as bundle: bundle.extractall(command[-1])
+                    if command[:2] == ['git', 'archive']:
+                        with tarfile.open(command[4], 'w') as bundle:
+                            bundle.add(source / 'apps', arcname='apps')
+                            bundle.add(source / 'services', arcname='services')
+                    if command[:2] == ['npm', 'ci']:
+                        self.assertEqual(Path(cwd).parts[-2:], ('services', 'api'))
+                    if command[:3] == ['xcrun', 'simctl', 'boot'] and outcome == 'cancel-boot': raise SystemExit(143)
+                def journeys(**kwargs):
+                    self.assertEqual(kwargs['partition'], ci.e2e.shard_partitions(2)[0])
+                    self.assertEqual(kwargs['device'], 'owned-device')
+                    devices.append(kwargs['device'])
+                    if outcome == 'journey-failure': raise RuntimeError('first journey failure')
+                env = dict(GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', PRODUCER_PROOF=json.dumps(proof),
+                           SHARD_COUNT='2', PARTITION_INDEX='0', PARTITION=','.join(ci.e2e.shard_partitions(2)[0]),
+                           APP_ARTIFACT_ID='456', APP_ARTIFACT_DIGEST='d' * 64)
+                args = SimpleNamespace(source=str(source), output=str(output), sha='a' * 40,
+                                       scratch_parent=str(root), consumer_archive=str(archive))
+                with patch.dict(os.environ, env), patch.object(ci, 'capture', side_effect=capture), \
+                     patch.object(ci, 'run', side_effect=run), patch.object(ci.sys, 'platform', 'darwin'), \
+                     patch.object(ci, 'start_sampler'), patch.object(ci, 'shard_storage'), \
+                     patch.object(ci.e2e, 'execute', side_effect=journeys):
+                    if outcome == 'passed': ci.consume(args)
+                    else:
+                        with self.assertRaises((RuntimeError, SystemExit)): ci.consume(args)
+                manifest = json.loads((output / 'manifest.json').read_text())
+                self.assertEqual(manifest['status'], 'passed' if outcome == 'passed' else 'failed')
+                self.assertTrue(manifest['scratch_removed'])
+                self.assertTrue(manifest['app_integrity_verified'])
+                self.assertEqual(calls[-2][:3], ['xcrun', 'simctl', 'shutdown'])
+                self.assertEqual(calls[-1][:3], ['xcrun', 'simctl', 'delete'])
+                self.assertFalse(any(call[0] in ('xcodebuild', 'pod') or 'prebuild' in call for call in calls))
+                self.assertLess(next(i for i,c in enumerate(calls) if c[0] == 'codesign'),
+                                next(i for i,c in enumerate(calls) if c[:3] == ['xcrun','simctl','create']))
+                self.assertEqual(len(devices), int(outcome != 'cancel-boot'))
+                if outcome == 'journey-failure': self.assertEqual(manifest['error'], 'first journey failure')
+
+    def test_build_only_producer_needs_no_backend_device_or_acceptance_and_exports_after_cleanup(self):
+        helper = PerformanceTests()
+        helper.parent = self.parent
+        outputs = self.parent / 'github-output'
+        with patch.dict(os.environ, GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', GITHUB_OUTPUT=str(outputs)), \
+             patch.object(ci, 'shard_storage'):
+            manifest, calls, error = helper.build_case(mode='e2e', operation='produce', early=True)
+        self.assertIsNone(error)
+        self.assertEqual(manifest['status'], 'passed')
+        self.assertFalse(manifest['native_qualification'])
+        self.assertFalse(manifest['authenticated_acceptance'])
+        self.assertTrue(manifest['scratch_removed'])
+        self.assertFalse(manifest['early_boot'])
+        self.assertTrue(manifest['requested_early_boot'])
+        self.assertFalse(any(call[:2] == ['xcrun', 'simctl'] for call in calls))
+        self.assertEqual(sum(call[:2] == ['npm', 'ci'] for call in calls), 1)
+        self.assertEqual(sum(call[0] == 'xcodebuild' and call[-1] == 'build' for call in calls), 1)
+        records = dict(line.split('=', 1) for line in outputs.read_text().splitlines())
+        proof = json.loads(records['proof'])
+        self.assertEqual(proof['source_sha'], 'a' * 40)
+        self.assertNotEqual(proof['api_url'], 'http://127.0.0.1:9')
+        self.assertEqual(json.loads(records['matrix']), ci.e2e.shard_matrix(2))
+        self.assertIn('producer-proof.json', manifest['evidence_sha256'])
+        with patch.object(ci, 'shard_storage'), patch.object(ci, 'write_shard_outputs', side_effect=RuntimeError('proof export failed')):
+            manifest, calls, error = helper.build_case(mode='e2e', operation='produce')
+        self.assertEqual(str(error), 'proof export failed')
+        self.assertEqual(manifest['status'], 'failed')
+        self.assertTrue(manifest['scratch_removed'])
+
+    def test_storage_refusal_precedes_scratch_and_existing_output_is_untouched(self):
+        from types import SimpleNamespace
+        with patch.object(ci.shutil, 'disk_usage', return_value=SimpleNamespace(free=1)):
+            with self.assertRaisesRegex(RuntimeError, 'storage'): ci.shard_storage(self.parent, {})
+        args = SimpleNamespace(source=str(self.parent), output=str(self.parent), sha='a' * 40)
+        before = list(self.parent.iterdir())
+        with self.assertRaises(FileExistsError): ci.consume(args)
+        self.assertEqual(list(self.parent.iterdir()), before)
 
 
 if __name__ == '__main__':

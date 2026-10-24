@@ -22,6 +22,8 @@ import tempfile
 import threading
 import time
 import urllib.request
+import zipfile
+import stat
 
 
 helper_spec = importlib.util.spec_from_file_location('ios_e2e', Path(__file__).with_name('ios_e2e.py'))
@@ -707,9 +709,169 @@ def verify_e2e_simulator(built, *, expected_der, cwd, env, output, manifest):
                     host_signature_flags=hex(flags))
 
 
+def shard_info(sha):
+    return {'LiftSourceSHA': sha, 'LiftBuildMode': 'e2e', 'LiftAPIURL': 'http://127.0.0.1:47621'}
+
+
+def shard_storage(parent, manifest, *, producer=False):
+    # Additional peak includes archive/extraction overlap and the owned dependency trees.
+    peak, reserve = (20 if producer else 8) * 1024 ** 3, 5 * 1024 ** 3
+    free = shutil.disk_usage(parent).free
+    manifest['storage_admission'] = dict(root=str(parent), available_bytes=free,
+                                          estimated_additional_peak_bytes=peak, reserve_bytes=reserve)
+    if free < peak + reserve:
+        raise RuntimeError('insufficient storage for owned shard scratch and reserve')
+
+
+def write_shard_outputs(output, manifest, count):
+    proof = dict(schema='lift.e2e-shard-app/v1', source_sha=manifest['source_sha'], mode='e2e',
+                 api_url=manifest['api_url'], run_id=manifest['run_id'], run_attempt=manifest['run_attempt'])
+    for key in ('archive', 'executable', 'embedded_js', 'der', 'xml', 'info'):
+        proof[key + '_sha256'] = manifest[key + '_sha256']
+    e2e.validate_shard_proof(proof, sha=manifest['source_sha'], run_id=manifest['run_id'],
+                             run_attempt=manifest['run_attempt'])
+    (output / 'producer-proof.json').write_text(json.dumps(proof, indent=2) + '\n')
+    destination = os.environ.get('GITHUB_OUTPUT')
+    if destination:
+        with open(destination, 'a') as stream:
+            stream.write('proof=' + json.dumps(proof, separators=(',', ':')) + '\n')
+            stream.write('matrix=' + json.dumps(e2e.shard_matrix(count), separators=(',', ':')) + '\n')
+
+
+def verify_consumed_app(archive, *, scratch, output, proof, env, manifest):
+    if archive.is_symlink() or not archive.is_file() or sha256(archive) != proof['archive_sha256']:
+        raise RuntimeError('consumer archive SHA256 mismatch')
+    with zipfile.ZipFile(archive) as package:
+        items = package.infolist()
+        if not items or len(items) > 100000 or sum(item.file_size for item in items) > 4 * 1024 ** 3:
+            raise RuntimeError('consumer archive exceeds extraction bounds')
+        seen = set()
+        for item in items:
+            path = Path(item.filename)
+            if (path.is_absolute() or '..' in path.parts or '\\' in item.filename
+                    or not path.parts or path.parts[0] not in ('Form.app', '__MACOSX')
+                    or stat.S_ISLNK(item.external_attr >> 16) or item.filename in seen):
+                raise RuntimeError('unsafe or ambiguous consumer archive entry')
+            seen.add(item.filename)
+    unpacked = scratch / 'consumed-app'
+    unpacked.mkdir()
+    run(['ditto', '-x', '-k', str(archive), str(unpacked)], cwd=scratch, env=env,
+        log=output / 'app-extract.log', timeout=120)
+    built = unpacked / 'Form.app'
+    if any(path.is_symlink() for path in unpacked.rglob('*')):
+        raise RuntimeError('consumer app contains a symlink')
+    info_path = built / 'Info.plist'
+    if sha256(info_path) != proof['info_sha256']:
+        raise RuntimeError('consumer Info.plist SHA256 mismatch')
+    info = plistlib.loads(info_path.read_bytes())
+    if any(info.get(key) != value for key, value in shard_info(proof['source_sha']).items()):
+        raise RuntimeError('consumer Info.plist source, mode or API mismatch')
+    sections, _, _ = simulator_macho_evidence(built / 'Form')
+    for section, key in [('__entitlements', 'xml'), ('__ents_der', 'der')]:
+        if hashlib.sha256(sections[section]).hexdigest() != proof[key + '_sha256']:
+            raise RuntimeError('consumer ' + key + ' section SHA256 mismatch')
+    verify_e2e_simulator(built, expected_der=sections['__ents_der'], cwd=scratch, env=env,
+                         output=output, manifest=manifest)
+    for name, key in [('Form', 'executable'), ('main.jsbundle', 'embedded_js')]:
+        path = built / name
+        if not path.is_file() or not path.stat().st_size or sha256(path) != proof[key + '_sha256']:
+            raise RuntimeError('consumer ' + key + ' SHA256 mismatch')
+    manifest['app_integrity_verified'] = True
+    return built
+
+
+def consume(args):
+    global MEASUREMENTS
+    source, output = Path(args.source).resolve(), Path(args.output).resolve()
+    output.mkdir(parents=True, exist_ok=False)
+    env = os.environ.copy()
+    manifest = dict(schema='form-ios-simulator/v1', source_sha=args.sha, status='failed', mode='e2e',
+                    operation='consume', timing_only=True, authenticated_acceptance=False,
+                    acceptance_scope='TIMING ONLY: fresh partition; no combined-state qualification',
+                    run_id=env.get('GITHUB_RUN_ID'), run_attempt=env.get('GITHUB_RUN_ATTEMPT'),
+                    runner_image=env.get('ImageOS'), runner_image_version=env.get('ImageVersion'),
+                    workflow_sha=env.get('GITHUB_SHA'), runner_version=env.get('ACTIONS_RUNNER_VERSION', 'unavailable'))
+    previous = MEASUREMENTS
+    MEASUREMENTS = {'manifest': manifest, 'origin': time.monotonic()}
+    device = None
+    try:
+        proof = json.loads(env['PRODUCER_PROOF'])
+        e2e.validate_shard_proof(proof, sha=args.sha, run_id=manifest['run_id'], run_attempt=manifest['run_attempt'])
+        count, index = int(env['SHARD_COUNT']), int(env['PARTITION_INDEX'])
+        names = env['PARTITION'].split(',')
+        partitions = e2e.shard_partitions(count)
+        if not 0 <= index < count or e2e.validate_partition(names) != partitions[index]:
+            raise ValueError('consumer partition must match the exact selected layout')
+        artifact_id, digest = env['APP_ARTIFACT_ID'], env['APP_ARTIFACT_DIGEST']
+        if not re.fullmatch('[1-9][0-9]*', artifact_id) or not re.fullmatch('[0-9a-f]{64}', digest):
+            raise ValueError('missing exact same-run app artifact identity')
+        manifest.update(producer_proof=proof, shard_count=count, partition_index=index, partition=names,
+                        app_artifact_id=artifact_id, app_artifact_digest=digest, api_url=proof['api_url'],
+                        aggregate_assertion='pending' if names == e2e.FLOW_NAMES else 'partition-not-applicable')
+        if capture(['git', 'rev-parse', 'HEAD'], cwd=source, env=env) != args.sha:
+            raise ValueError('checkout does not match requested SHA')
+        if capture(['git', 'status', '--porcelain'], cwd=source, env=env):
+            raise ValueError('source checkout must be clean')
+        if sys.platform != 'darwin' or capture(['uname', '-m'], cwd=source, env=env) != 'arm64':
+            raise RuntimeError('requires an arm64 macOS runner')
+        manifest['host'] = {key: int(capture(['sysctl', '-n', key], cwd=source, env=env))
+                            for key in ('hw.ncpu', 'hw.physicalcpu', 'hw.memsize')}
+        manifest['node'] = capture(['node', '--version'], cwd=source, env=env)
+        parent = Path(args.scratch_parent).resolve()
+        shard_storage(parent, manifest)
+        with owned_scratch(parent, manifest) as scratch, owned_children() as children:
+            env.update(TMPDIR=str(scratch), TMP=str(scratch), TEMP=str(scratch),
+                       npm_config_cache=str(scratch / 'npm-cache'), CI='1', EXPO_NO_DOTENV='1')
+            start_sampler(children=children, cwd=scratch, env=env, output=output, manifest=manifest)
+            stage(manifest, 'verify-app')
+            built = verify_consumed_app(Path(args.consumer_archive).resolve(), scratch=scratch, output=output,
+                                         proof=proof, env=env, manifest=manifest)
+            stage(manifest, 'archive-source')
+            archive = scratch / 'source.tar'
+            run(['git', 'archive', '--format=tar', '-o', str(archive), args.sha],
+                cwd=source, env=env, log=output / 'source-archive.log')
+            tree = scratch / 'source'
+            tree.mkdir()
+            with tarfile.open(archive) as package:
+                package.extractall(tree, filter='data')
+            e2e.load_contract(tree / 'apps/form/e2e/journeys.json')
+            stage(manifest, 'api-install')
+            run(['npm', 'ci', '--no-audit', '--no-fund'], cwd=tree / 'services/api',
+                env=env, log=output / 'api-install.log')
+            stage(manifest, 'simulator')
+            name = 'Form-S6-' + args.sha[:12] + '-' + proof['run_id'] + '-' + proof['run_attempt'] + '-' + str(index)
+            device = create_simulator(name=name, cwd=scratch, env=env, manifest=manifest)
+            run(['xcrun', 'simctl', 'boot', device], cwd=scratch, env=env, log=output / 'simulator-boot.log')
+            run(['xcrun', 'simctl', 'bootstatus', device, '-b'], cwd=scratch, env=env,
+                log=output / 'simulator-bootstatus.log', timeout=180)
+            run(['xcrun', 'simctl', 'install', device, str(built)], cwd=scratch, env=env,
+                log=output / 'simulator-install.log')
+            stage(manifest, 'journeys')
+            e2e.execute(tree=tree, scratch=scratch, output=output, device=device, env=env,
+                        manifest=manifest, partition=names)
+            stage(manifest, 'complete')
+            manifest['status'] = 'passed'
+    except BaseException as exc:
+        manifest['error'] = str(exc)
+        raise
+    finally:
+        with e2e.cleanup_signals(CANCELLED):
+            cleanup_simulator(device=device, cwd=source, env=os.environ.copy(), manifest=manifest)
+        manifest['scratch_removed'] = not Path(manifest.get('scratch_root', '/')).exists()
+        manifest['total_seconds'] = time.monotonic() - MEASUREMENTS['origin']
+        MEASUREMENTS = previous
+        cleanup_failed = bool(manifest.get('cleanup_errors')) and manifest['status'] == 'passed'
+        if cleanup_failed:
+            manifest['status'] = 'failed'
+        e2e.write_evidence_manifest(output, manifest)
+        if cleanup_failed:
+            raise RuntimeError('consumer cleanup failed; see manifest')
+
+
 def build(args):
     global MEASUREMENTS
     mode = getattr(args, 'mode', 'launch')
+    build_only = getattr(args, 'operation', 'full') == 'produce'
     source = Path(args.source).resolve()
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -732,6 +894,16 @@ def build(args):
     manifest['early_boot'] = early_boot
     try:
         stage(manifest, 'identity')
+        if build_only:
+            if mode != 'e2e':
+                raise ValueError('shard producer requires E2E mode')
+            e2e.shard_partitions(args.shard_count)
+            manifest.update(operation='produce', timing_only=True, native_qualification=False,
+                            acceptance_scope='BUILD ONLY: verified E2E archive; no device or native qualification',
+                            early_boot=False, requested_early_boot=early_boot,
+                            boot_topology='producer has no device; consumer boots after app verification',
+                            runner_version=os.environ.get('ACTIONS_RUNNER_VERSION', 'unavailable'))
+            early_boot = False
         if not re.fullmatch('[0-9a-f]{40}', args.sha):
             raise ValueError('source SHA must be full lowercase hexadecimal')
         if capture(['git', 'rev-parse', 'HEAD'], cwd=source, env=env) != args.sha:
@@ -762,6 +934,8 @@ def build(args):
         manifest['cocoapods'] = capture(['pod', '--version'], cwd=source, env=env)
         manifest['package_lock_sha256'] = sha256(source / 'apps/form/package-lock.json')
         summary_supported = timing_summary_support(cwd=source, env=env, output=output, manifest=manifest)
+        if build_only:
+            shard_storage(Path(args.scratch_parent).resolve(), manifest, producer=True)
         with owned_scratch(Path(args.scratch_parent).resolve(), manifest) as scratch, owned_children() as children:
             env.update(TMPDIR=str(scratch), TMP=str(scratch), TEMP=str(scratch),
                        npm_config_cache=str(scratch / 'npm-cache'),
@@ -791,7 +965,7 @@ def build(args):
             with tarfile.open(archive) as package:
                 package.extractall(tree, filter='data')
             app = tree / 'apps/form'
-            if mode == 'e2e':
+            if mode == 'e2e' and not build_only:
                 stage(manifest, 'api-install')
                 manifest['api_package_lock_sha256'] = sha256(tree / 'services/api/package-lock.json')
                 run(['npm', 'ci', '--no-audit', '--no-fund'], cwd=tree / 'services/api',
@@ -840,8 +1014,18 @@ def build(args):
                 raise RuntimeError('Release app is missing its embedded JS bundle')
             if mode == 'e2e':
                 stage(manifest, 'signing')
+                if build_only:
+                    info_path = built / 'Info.plist'
+                    info = plistlib.loads(info_path.read_bytes())
+                    info.update(shard_info(args.sha))
+                    info_path.write_bytes(plistlib.dumps(info))
                 verify_e2e_simulator(built, expected_der=expected_der, cwd=app, env=env,
                                    output=output, manifest=manifest)
+                if build_only:
+                    sections, _, _ = simulator_macho_evidence(built / 'Form')
+                    manifest.update(der_sha256=hashlib.sha256(sections['__ents_der']).hexdigest(),
+                                    xml_sha256=hashlib.sha256(sections['__entitlements']).hexdigest(),
+                                    info_sha256=sha256(built / 'Info.plist'))
             manifest['embedded_js_sha256'] = sha256(bundle)
             manifest['executable_sha256'] = sha256(built / 'Form')
             stage(manifest, 'package')
@@ -849,6 +1033,10 @@ def build(args):
             run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(built), str(zipped)],
                 cwd=app, env=env, log=output / 'package.log')
             manifest['archive_sha256'] = sha256(zipped)
+            if build_only:
+                stage(manifest, 'complete')
+                manifest['status'] = 'passed'
+                return
             stage(manifest, 'simulator')
             if early_boot:
                 joined = time.monotonic()
@@ -904,6 +1092,13 @@ def build(args):
         cleanup_failed = bool(manifest.get('cleanup_errors')) and manifest['status'] == 'passed'
         if cleanup_failed:
             manifest['status'] = 'failed'
+        export_error = None
+        if build_only and manifest['status'] == 'passed':
+            try:
+                write_shard_outputs(output, manifest, args.shard_count)
+            except BaseException as exc:
+                export_error = exc
+                manifest.update(status='failed', error=str(exc))
         if mode == 'e2e':
             e2e.write_evidence_manifest(output, manifest)
         else:
@@ -911,6 +1106,8 @@ def build(args):
         print('Build manifest:\n' + json.dumps(manifest, indent=2), flush=True)
         if cleanup_failed:
             raise RuntimeError('simulator cleanup failed; see manifest')
+        if export_error is not None:
+            raise export_error
 
 
 if __name__ == '__main__':
@@ -920,6 +1117,15 @@ if __name__ == '__main__':
     parser.add_argument('--xcode-jobs', type=int, default=1)
     parser.add_argument('--early-boot', action='store_true')
     parser.add_argument('--mode', choices=['launch', 'e2e'], default='launch')
+    parser.add_argument('--operation', choices=['full', 'produce', 'consume'], default='full')
+    parser.add_argument('--shard-count', type=int, default=1)
+    parser.add_argument('--consumer-archive')
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, interrupted)
-    build(parser.parse_args())
+    args = parser.parse_args()
+    if args.operation == 'consume':
+        if args.mode != 'e2e' or not args.consumer_archive or args.early_boot or args.xcode_jobs != 1:
+            parser.error('consumer requires E2E archive and uses no compiler or early-boot controls')
+        consume(args)
+    else:
+        build(args)

@@ -9,8 +9,23 @@ on:
         description: Full lift commit SHA to test (40 lowercase hexadecimal characters)
         required: false
         type: string
+      shard_count:
+        description: TIMING ONLY build-once experiment (0 retains the full in-job suite)
+        type: choice
+        default: '0'
+        options: ['0', '1', '2', '3', '4']
+      xcode_jobs:
+        description: Experimental producer compiler budget (selected driver still pending)
+        type: choice
+        default: '1'
+        options: ['1', '2', '3']
+      early_boot:
+        description: Record requested driver control (build-only producer has no device to prewarm)
+        type: boolean
+        default: false
   schedule:
-    - cron: '23 6 * * *'
+    - cron: '0 5 * * *'
+      timezone: 'America/New_York'
   pull_request:
     types: [opened, synchronize, reopened, labeled]
     paths:
@@ -31,10 +46,10 @@ concurrency:
 jobs:
   native-e2e:
     name: Synthetic installed-app journeys
-    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'native-e2e') && (github.event.action != 'labeled' || github.event.label.name == 'native-e2e'))
+    if: (github.event_name != 'workflow_dispatch' || !github.event.inputs || !github.event.inputs.shard_count || github.event.inputs.shard_count == '0') && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'native-e2e') && (github.event.action != 'labeled' || github.event.label.name == 'native-e2e')))
     runs-on: xcode-27
     timeout-minutes: 80
-    env:
+    env: &native-env
       SOURCE_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
       CI: '1'
@@ -43,24 +58,29 @@ jobs:
       MAESTRO_CLI_NO_ANALYTICS: '1'
       MAESTRO_DISABLE_UPDATE_CHECK: 'true'
     steps:
-      - name: Validate source identity
+      - &validate-source
+        name: Validate source identity
         shell: bash
         run: |
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - &checkout-tooling
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ env.SOURCE_SHA }}
           path: tooling
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - &checkout-source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ env.SOURCE_SHA }}
           path: source
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - &setup-node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
-      - name: Select runner Java 17
+      - &select-java
+        name: Select runner Java 17
         shell: bash
         run: |
           test -n "$JAVA_HOME_17_arm64"
@@ -83,6 +103,131 @@ jobs:
         with:
           name: lift-ios-e2e-${{ env.SOURCE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: evidence/
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
+
+  shard-producer:
+    name: TIMING ONLY E2E app producer
+    if: github.event_name == 'workflow_dispatch' && inputs.shard_count != '0' && inputs.shard_count != ''
+    runs-on: xcode-27
+    timeout-minutes: 60
+    env: *native-env
+    outputs:
+      proof: ${{ steps.produce.outputs.proof }}
+      matrix: ${{ steps.produce.outputs.matrix }}
+      artifact-id: ${{ steps.app.outputs.artifact-id }}
+      artifact-digest: ${{ steps.app.outputs.artifact-digest }}
+    steps:
+      - *validate-source
+      - *checkout-tooling
+      - *checkout-source
+      - *setup-node
+      - name: Build only and export trusted same-run proofs
+        id: produce
+        timeout-minutes: 55
+        env:
+          SHARD_COUNT: ${{ inputs.shard_count }}
+          XCODE_JOBS: ${{ inputs.xcode_jobs }}
+          EARLY_BOOT: ${{ inputs.early_boot }}
+        shell: bash
+        run: |
+          args=()
+          if [[ "$EARLY_BOOT" == 'true' ]]; then args+=(--early-boot); fi
+          python3 tooling/apps/form/scripts/ci-ios-simulator.py --mode e2e --operation produce --source source --output producer-evidence --scratch-parent "$GITHUB_WORKSPACE" --sha "$SOURCE_SHA" --shard-count "$SHARD_COUNT" --xcode-jobs "$XCODE_JOBS" "${args[@]}"
+      - name: Export immutable same-run app artifact ID and digest
+        id: app
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: lift-s6-app-${{ github.run_id }}-${{ github.run_attempt }}
+          path: producer-evidence/Form-e2e-simulator-arm64.zip
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
+      - name: Retain producer diagnostics (build-only is not native acceptance)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: lift-s6-producer-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            producer-evidence/
+            !producer-evidence/Form-e2e-simulator-arm64.zip
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
+
+  shard-consumer:
+    name: TIMING ONLY fresh consumer ${{ matrix.index }}
+    needs: shard-producer
+    runs-on: xcode-27
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.shard-producer.outputs.matrix) }}
+    env: *native-env
+    steps:
+      - *validate-source
+      - *checkout-tooling
+      - *checkout-source
+      - *setup-node
+      - *select-java
+      - name: Download exact app artifact ID from this run only
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ needs.shard-producer.outputs.artifact-id }}
+          path: consumed-app
+          digest-mismatch: error
+      - name: Verify app before install and run real ordered partition
+        timeout-minutes: 35
+        env:
+          PRODUCER_PROOF: ${{ needs.shard-producer.outputs.proof }}
+          APP_ARTIFACT_ID: ${{ needs.shard-producer.outputs.artifact-id }}
+          APP_ARTIFACT_DIGEST: ${{ needs.shard-producer.outputs.artifact-digest }}
+          SHARD_COUNT: ${{ inputs.shard_count }}
+          PARTITION_INDEX: ${{ matrix.index }}
+          PARTITION: ${{ matrix.partition }}
+        run: python3 tooling/apps/form/scripts/ci-ios-simulator.py --mode e2e --operation consume --consumer-archive consumed-app/Form-e2e-simulator-arm64.zip --source source --output consumer-evidence --scratch-parent "$GITHUB_WORKSPACE" --sha "$SOURCE_SHA"
+      - name: Retain unique partition outcome and failure evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: lift-s6-consumer-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.index }}
+          path: consumer-evidence/
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
+
+  shard-aggregate:
+    name: TIMING ONLY partition coverage (no combined-state qualification)
+    needs: [shard-producer, shard-consumer]
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.shard_count != '0' && inputs.shard_count != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env: *native-env
+    steps:
+      - *validate-source
+      - *checkout-tooling
+      - name: Download this attempt's separately named partition evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: lift-s6-consumer-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: partition-evidence
+          merge-multiple: false
+          digest-mismatch: error
+      - name: Require every exact partition, identity, outcome and JUnit union
+        env:
+          PRODUCER_PROOF: ${{ needs.shard-producer.outputs.proof }}
+          APP_ARTIFACT_ID: ${{ needs.shard-producer.outputs.artifact-id }}
+          APP_ARTIFACT_DIGEST: ${{ needs.shard-producer.outputs.artifact-digest }}
+          SHARD_COUNT: ${{ inputs.shard_count }}
+          CONSUMER_RESULT: ${{ needs.shard-consumer.result }}
+        run: python3 tooling/apps/form/scripts/ios_e2e.py --aggregate partition-evidence --output aggregate-evidence
+      - name: Retain timing-only aggregate outcome
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: lift-s6-aggregate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: aggregate-evidence/
           retention-days: 1
           if-no-files-found: error
           compression-level: 0

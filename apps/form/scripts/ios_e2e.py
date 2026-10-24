@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import secrets
 import selectors
+import shutil
 import signal
 import stat
 import struct
@@ -26,6 +27,114 @@ MAESTRO_URL = 'https://github.com/mobile-dev-inc/Maestro/releases/download/cli-2
 SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 FLOW_NAMES = ['01-account-first-plan', '03-workout-log', '04-session-lifecycle',
               '06-settings', '07-body-session-only']
+SHARD_LAYOUTS = {
+    1: [[0, 1, 2, 3, 4]],
+    2: [[0, 4], [0, 1, 2, 3]],
+    3: [[0, 4], [0, 2], [0, 1, 3]],
+    4: [[0, 4], [0, 2], [0, 1], [0, 3]],
+}
+
+
+def validate_partition(names):
+    if (not isinstance(names, list) or not names or names[0] != FLOW_NAMES[0]
+            or any(name not in FLOW_NAMES for name in names)
+            or len(set(names)) != len(names)
+            or names != [name for name in FLOW_NAMES if name in names]):
+        raise ValueError('partition must contain ordered unique journeys with account setup first')
+    return names
+
+
+def shard_partitions(count):
+    if type(count) is not int or count not in SHARD_LAYOUTS:
+        raise ValueError('shard count must be an integer from 1 through 4')
+    partitions = [[FLOW_NAMES[index] for index in part] for part in SHARD_LAYOUTS[count]]
+    validate_coverage(partitions)
+    return partitions
+
+
+def validate_coverage(partitions):
+    if not isinstance(partitions, list) or not 1 <= len(partitions) <= 4:
+        raise ValueError('expected one through four partitions')
+    counts = Counter(name for part in partitions for name in validate_partition(part))
+    if counts != Counter({name: len(partitions) if index == 0 else 1
+                          for index, name in enumerate(FLOW_NAMES)}):
+        raise ValueError('partition coverage must replay only account setup and cover all journeys')
+
+
+def shard_matrix(count):
+    return {'include': [{'index': index, 'partition': ','.join(names)}
+                        for index, names in enumerate(shard_partitions(count))]}
+
+
+def validate_shard_proof(proof, *, sha, run_id, run_attempt):
+    if (proof.get('schema') != 'lift.e2e-shard-app/v1'
+            or proof.get('source_sha') != sha or not re.fullmatch('[0-9a-f]{40}', sha)
+            or proof.get('run_id') != run_id or proof.get('run_attempt') != run_attempt
+            or not re.fullmatch('[1-9][0-9]*', run_id or '')
+            or not re.fullmatch('[1-9][0-9]*', run_attempt or '')
+            or proof.get('mode') != 'e2e' or proof.get('api_url') != 'http://127.0.0.1:47621'):
+        raise ValueError('producer identity must match this exact source, E2E mode and run attempt')
+    for key in ('archive', 'executable', 'embedded_js', 'der', 'xml', 'info'):
+        if not re.fullmatch('[0-9a-f]{64}', proof.get(key + '_sha256', '')):
+            raise ValueError('missing producer hash: ' + key)
+    return proof
+
+
+def aggregate_shards(root, *, count, proof, artifact_id, artifact_digest, consumer_result):
+    if consumer_result != 'success':
+        raise ValueError('every matrix consumer must succeed')
+    validate_shard_proof(proof, sha=proof['source_sha'], run_id=os.environ.get('GITHUB_RUN_ID'),
+                         run_attempt=os.environ.get('GITHUB_RUN_ATTEMPT'))
+    if not re.fullmatch('[1-9][0-9]*', artifact_id) or not re.fullmatch('[0-9a-f]{64}', artifact_digest):
+        raise ValueError('missing exact app transport identity')
+    partitions = shard_partitions(count)
+    prefix = 'lift-s6-consumer-' + proof['run_id'] + '-' + proof['run_attempt'] + '-'
+    expected_dirs = {prefix + str(index) for index in range(count)}
+    if {path.name for path in root.iterdir()} != expected_dirs:
+        raise ValueError('missing, extra or duplicate consumer artifact')
+    union = []
+    for index, names in enumerate(partitions):
+        directory = root / (prefix + str(index))
+        manifest = json.loads((directory / 'manifest.json').read_text())
+        required = dict(schema='form-ios-simulator/v1', source_sha=proof['source_sha'], mode='e2e',
+                        operation='consume', status='passed', timing_only=True, authenticated_acceptance=False,
+                        partition=names, partition_index=index, shard_count=count,
+                        producer_proof=proof, app_artifact_id=artifact_id, app_artifact_digest=artifact_digest,
+                        scratch_removed=True, backend_root_removed=True, signing_verified=True,
+                        app_integrity_verified=True,
+                        run_id=proof['run_id'], run_attempt=proof['run_attempt'])
+        if any(manifest.get(key) != value for key, value in required.items()):
+            raise ValueError('consumer identity, partition, outcome or cleanup mismatch: ' + str(index))
+        if manifest.get('cleanup_errors') or manifest.get('evidence_errors'):
+            raise ValueError('consumer retained cleanup or evidence errors')
+        hashes = manifest.get('evidence_sha256', {})
+        actual_files = {str(path.relative_to(directory)) for path in directory.rglob('*')
+                        if path.is_file() and path != directory / 'manifest.json'}
+        if set(hashes) != actual_files:
+            raise ValueError('consumer evidence inventory mismatch')
+        for name in actual_files:
+            path = directory / name
+            if path.is_symlink() or sha256(path) != hashes[name]:
+                raise ValueError('consumer evidence hash mismatch')
+        passed = validate_junit(directory / 'junit.xml', names)
+        if passed != names or manifest.get('journeys_passed') != names:
+            raise ValueError('consumer JUnit order or manifest mismatch')
+        union.append(passed)
+        for name in names:
+            validate_png(journey_screenshot(directory, {'name': name, 'screenshot': name}))
+        validate_mp4(directory / 'journeys.mp4')
+        assertion = 'passed' if names == FLOW_NAMES else 'partition-not-applicable'
+        if manifest.get('aggregate_assertion') != assertion:
+            raise ValueError('combined-state assertion scope mismatch')
+        if names == FLOW_NAMES and not manifest.get('backend_final_state'):
+            raise ValueError('full partition requires original backend assertion')
+        if names != FLOW_NAMES and ('backend_final_state' in manifest or (directory / 'backend-final-state.json').exists()):
+            raise ValueError('partial partition cannot claim combined-state proof')
+    validate_coverage(union)
+    return {'schema': 'lift.e2e-shard-timing/v1', 'status': 'passed', 'timing_only': True,
+            'authenticated_acceptance': False, 'combined_state_qualification': False,
+            'producer_proof': proof, 'shard_count': count, 'partitions': union,
+            'account_setup_replays': count - 1}
 
 
 def sha256(path):
@@ -469,9 +578,14 @@ def redact_token(output, token):
                 path.write_bytes(data.replace(token.encode(), b'[REDACTED-E2E-CONTROL-TOKEN]'))
 
 
-def execute(*, tree, scratch, output, device, env, manifest):
+def execute(*, tree, scratch, output, device, env, manifest, partition=None):
     contract_path = tree / 'apps/form/e2e/journeys.json'
     contract = load_contract(contract_path)
+    names = FLOW_NAMES if partition is None else validate_partition(partition)
+    flows = contract['flows'] if partition is None else [flow for flow in contract['flows'] if flow['name'] in names]
+    if partition is not None:
+        manifest.update(partition=names, timing_only=True, authenticated_acceptance=False,
+                        aggregate_assertion='pending' if names == FLOW_NAMES else 'partition-not-applicable')
     token = secrets.token_urlsafe(32)
     child_env = dict(env, E2E_CONTROL_TOKEN=token, MAESTRO_CLI_NO_ANALYTICS='1',
                      MAESTRO_DISABLE_UPDATE_CHECK='true', MAESTRO_API_URL='http://127.0.0.1:9',
@@ -516,23 +630,36 @@ def execute(*, tree, scratch, output, device, env, manifest):
                      'E2E_NAME': contract['account']['name'], 'E2E_EXPECTED_NAME': contract['expected']['displayName'],
                      'E2E_EXPECTED_LOAD_UNIT': contract['expected']['loadUnit'],
                      'E2E_CONTROL_URL': control, 'E2E_CONTROL_TOKEN': token}
-        children.command('maestro', maestro_command(binary, device, tree / 'apps/form/e2e/maestro',
+        flow_root = tree / 'apps/form/e2e/maestro'
+        if partition is not None:
+            selected = scratch / 'partition-flows'
+            selected.mkdir()
+            shutil.copytree(flow_root / 'helpers', selected / 'helpers')
+            for name in names:
+                (selected / (name + '.yaml')).write_bytes((flow_root / (name + '.yaml')).read_bytes())
+            flow_root = selected
+        children.command('maestro', maestro_command(binary, device, flow_root,
                                                    output, variables), timeout=1200)
-        manifest['journeys_passed'] = validate_junit(output / 'junit.xml', FLOW_NAMES)
+        manifest['journeys_passed'] = validate_junit(output / 'junit.xml', names)
+        if partition is not None and manifest['journeys_passed'] != names:
+            raise ValueError('partition JUnit order mismatch')
         screenshots = {}
-        for flow in contract['flows']:
+        for flow in flows:
             path = journey_screenshot(output, flow)
             screenshots[str(path.relative_to(output))] = validate_png(path)
         manifest['journey_screenshots'] = screenshots
-        request = urllib.request.Request(control + '/assert-final-state',
-                    data=json.dumps(contract['expected']).encode(), method='POST',
-                    headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
-        with urllib.request.urlopen(request, timeout=15) as response:
-            if response.status != 200:
-                raise RuntimeError('backend final state rejected')
-            result = json.load(response)
-        (output / 'backend-final-state.json').write_text(json.dumps(result, indent=2) + '\n')
-        manifest['backend_final_state'] = result
+        if names == FLOW_NAMES:
+            request = urllib.request.Request(control + '/assert-final-state',
+                        data=json.dumps(contract['expected']).encode(), method='POST',
+                        headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
+            with urllib.request.urlopen(request, timeout=15) as response:
+                if response.status != 200:
+                    raise RuntimeError('backend final state rejected')
+                result = json.load(response)
+            (output / 'backend-final-state.json').write_text(json.dumps(result, indent=2) + '\n')
+            manifest['backend_final_state'] = result
+            if partition is not None:
+                manifest['aggregate_assertion'] = 'passed'
     except BaseException as exc:
         original_error = exc
         raise
@@ -581,3 +708,25 @@ def write_evidence_manifest(output, manifest):
     if destination:
         with open(destination, 'a') as stream:
             stream.write(summary.read_text() + '\nManifest SHA256: `' + sha256(path) + '`\n')
+
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description='Validate same-run S6 timing-only partition evidence')
+    parser.add_argument('--aggregate', type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True)
+    args = parser.parse_args()
+    args.output.mkdir(parents=True, exist_ok=False)
+    result = {'schema': 'lift.e2e-shard-timing/v1', 'status': 'failed', 'timing_only': True,
+              'authenticated_acceptance': False, 'combined_state_qualification': False}
+    try:
+        result = aggregate_shards(args.aggregate, count=int(os.environ['SHARD_COUNT']),
+                                  proof=json.loads(os.environ['PRODUCER_PROOF']),
+                                  artifact_id=os.environ['APP_ARTIFACT_ID'],
+                                  artifact_digest=os.environ['APP_ARTIFACT_DIGEST'],
+                                  consumer_result=os.environ['CONSUMER_RESULT'])
+    except BaseException as exc:
+        result['error'] = str(exc)
+        raise
+    finally:
+        (args.output / 'aggregate.json').write_text(json.dumps(result, indent=2) + '\n')
