@@ -41,6 +41,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
+      - name: Check CI placement contract
+        run: python3 -B scripts/ci-placement.test.py
       - name: Run named public groups with locked dependencies
         run: python3 -B scripts/run-public-checks.py --install --output public-check-evidence
       - name: Retain selected commands and exact source evidence

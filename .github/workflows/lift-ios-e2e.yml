@@ -9,20 +9,29 @@ on:
         description: Full lift commit SHA to test (40 lowercase hexadecimal characters)
         required: false
         type: string
+  schedule:
+    - cron: '23 6 * * *'
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened, labeled]
+    paths:
+      - 'apps/form/**'
+      - 'services/api/**'
+      - 'packages/**'
+      - '.github/workflows/lift-ios-e2e.yml'
+      - 'scripts/ci-placement.test.py'
 
 permissions:
   contents: read
 
 concurrency:
-  group: lift-ios-e2e-${{ github.event_name }}-${{ inputs.source_sha || github.ref }}
-  cancel-in-progress: false
+  # Ignored label events must not cancel a qualifying run in the PR/ref group.
+  group: lift-ios-e2e-${{ (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'native-e2e') && (github.event.action != 'labeled' || github.event.label.name == 'native-e2e'))) && (github.event.pull_request.number || github.ref) || format('ignored-{0}', github.run_id) }}
+  cancel-in-progress: true
 
 jobs:
   native-e2e:
     name: Synthetic installed-app journeys
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'native-e2e') && (github.event.action != 'labeled' || github.event.label.name == 'native-e2e'))
     runs-on: xcode-27
     timeout-minutes: 80
     env:
