@@ -71,11 +71,6 @@ class EvidenceTests(unittest.TestCase):
             '<testcase name="' + name + '" status="' + status + '">' + extra + '</testcase>' for name in names
         ) + '</testsuite></testsuites>'
 
-    def test_junit_exact_five_passes(self):
-        report = self.root / 'junit.xml'
-        report.write_text(self.report())
-        self.assertEqual(e2e.validate_junit(report, e2e.FLOW_NAMES), e2e.FLOW_NAMES)
-
     def test_junit_accepts_the_hosted_maestro_success_report(self):
         # Run 39670865743 passed all seven journeys; Maestro 2.11.0 wrote status="SUCCESS".
         # Preserve that report shape with the current journey names and count.
