@@ -10,7 +10,8 @@ on:
         required: false
         type: string
   schedule:
-    - cron: '23 6 * * *'
+    - cron: '0 4 * * *'
+      timezone: 'America/New_York'
   pull_request:
     types: [opened, synchronize, reopened, labeled]
     paths:
