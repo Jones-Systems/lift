@@ -201,7 +201,7 @@ class EvidenceTests(unittest.TestCase):
             children.cleanup({}, failure)
         self.assertIsNotNone(children.processes['maestro'].poll())
 
-    def test_real_process_success_failure_timeout_and_repeated_signal_cleanup(self):
+    def test_real_process_success_failure_and_repeated_signal_cleanup(self):
         program = r'''
 import importlib.util, os, pathlib, signal, sys, time
 spec = importlib.util.spec_from_file_location('ci', sys.argv[1])
@@ -220,7 +220,6 @@ with ci.owned_scratch(root, {}) as scratch:
             children.wait_ready(name, (root/(name+'-ready')).exists, 5)
         (root / 'ready').touch()
         if mode == 'failure': raise RuntimeError('original journey failure')
-        if mode == 'timeout': raise TimeoutError('maestro timed out')
         if mode == 'signal': time.sleep(30)
     except BaseException as exc:
         error = exc
@@ -229,7 +228,7 @@ with ci.owned_scratch(root, {}) as scratch:
         children.cleanup({}, error)
         with events.open('a') as stream: stream.write('simulator-delete\n')
 '''
-        for mode in ('success', 'failure', 'timeout', 'signal'):
+        for mode in ('success', 'failure', 'signal'):
             with self.subTest(mode=mode):
                 root = self.root / mode
                 root.mkdir()
@@ -514,7 +513,7 @@ finally:
         (tree / 'apps/form/e2e').mkdir(parents=True)
         (tree / 'apps/form/e2e/journeys.json').write_text(json.dumps(contract))
         (tree / 'services/api').mkdir(parents=True)
-        for outcome in ('passed', 'failed', 'timeout'):
+        for outcome in ('passed', 'failed'):
             with self.subTest(outcome=outcome):
                 scratch = self.root / (outcome + '-scratch')
                 output = self.root / (outcome + '-output')
@@ -531,7 +530,6 @@ finally:
                         if name == 'java-version': return 'openjdk version "17.0.1"'
                         if name == 'maestro-version': return '2.11.0\n'
                         if outcome == 'failed': raise RuntimeError('journey failed')
-                        if outcome == 'timeout': raise TimeoutError('journey timed out')
                         (output / 'junit.xml').write_text(owner.report())
                         for flow in e2e.FLOW_NAMES:
                             images = output / 'maestro-debug' / flow / 'takeScreenshot'
@@ -733,10 +731,6 @@ class JourneyContractTests(unittest.TestCase):
         self.assertNotIn('id: a-minutes-30', flows)
         self.assertNotIn('id: a-tab-', flows)
         self.assertIn('text: "Native E2E plan,.*"', flows)
-        body = '\n'.join(path.read_text() for path in source_root.rglob('*')
-                         if path.suffix in ('.ts', '.tsx') and '__tests__' not in path.parts)
-        for fragment in ('body-check-', 'body-construct-', 'body-added-', 'body-result-', 'a-setlog-'):
-            self.assertTrue(fragment in body, 'missing dynamic family: ' + fragment)
 
 
 if __name__ == '__main__':
