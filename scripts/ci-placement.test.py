@@ -1,5 +1,6 @@
 """CI-placement contract: opt-in, trust and cancellation without native builds."""
 
+import fnmatch
 import json
 from pathlib import Path
 import re
@@ -10,6 +11,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 E2E = (ROOT / ".github/workflows/lift-ios-e2e.yml").read_text()
 PUBLIC = (ROOT / ".github/workflows/public-checks.yml").read_text()
+SIMULATOR = (ROOT / ".github/workflows/form-ios-simulator.yml").read_text()
 
 
 class PlacementTests(unittest.TestCase):
@@ -31,6 +33,18 @@ class PlacementTests(unittest.TestCase):
         self.assertIn("lift-pair/v1 head=${{ github.event.pull_request.head.sha || inputs.source_sha || github.sha }}", E2E)
         self.assertIn("name: Public app, API and portable checks", PUBLIC)
         self.assertIn("run: python3 -B scripts/ci-placement.test.py", PUBLIC)
+        # Keep the paired-PR refresh event, but avoid native builds for prose-only
+        # and independent breadth-runner changes. A product or driver edit runs.
+        simulator_events = SIMULATOR.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertIn("types: [opened, synchronize, reopened, edited]", simulator_events)
+        patterns = re.findall(r"      - '([^']+)'", simulator_events)
+        for source in ("apps/form/src/app.tsx", "services/api/src/server.ts", "packages/example/index.ts",
+                       ".gitattributes", ".github/workflows/form-ios-simulator.yml",
+                       "scripts/native-impact.py", "scripts/native-impact.test.py", "scripts/ci-placement.test.py"):
+            self.assertTrue(any(fnmatch.fnmatchcase(source, pattern) for pattern in patterns), source)
+        for source in ("README.md", "BUILD.md", "AGENTS.md", "TEST-PLACEMENT.md",
+                       "scripts/run-public-breadth.py", ".github/workflows/public-breadth.yml"):
+            self.assertFalse(any(fnmatch.fnmatchcase(source, pattern) for pattern in patterns), source)
 
     def test_qualifying_runs_share_group_and_ignored_events_cannot_cancel_them(self):
         guard = re.search(r"^    if: (.+)$", E2E, re.MULTILINE).group(1)

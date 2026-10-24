@@ -59,3 +59,10 @@ The `ci-placement` workflow contract is `scripts/ci-placement.test.py`, run by
 trigger paths, PR opt-in/trust, cancellation isolation and exact-source wiring.
 Keep this small contract alongside the existing public groups; their runner
 and PUBLIC-TESTING.md are maintained separately.
+
+The advisory public breadth workflow owns `public-breadth-contract`, checked by
+`python3 -B scripts/run-public-breadth.test.py`. Its exhaustive placement manifest,
+eligible groups, unavailable-input holds and full execution command are documented
+in TEST-PLACEMENT.md. Add new test modules to their placement and affected group
+in the same change; public eligibility never implies private or real-provider
+qualification.

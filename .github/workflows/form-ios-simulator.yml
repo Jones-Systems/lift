@@ -12,6 +12,15 @@ on:
         type: string
   pull_request:
     types: [opened, synchronize, reopened, edited]
+    paths:
+      - 'apps/form/**'
+      - 'services/api/**'
+      - 'packages/**'
+      - '.gitattributes'
+      - '.github/workflows/form-ios-simulator.yml'
+      - 'scripts/native-impact.py'
+      - 'scripts/native-impact.test.py'
+      - 'scripts/ci-placement.test.py'
 
 permissions:
   contents: read
