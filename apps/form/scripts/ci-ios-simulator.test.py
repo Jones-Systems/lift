@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location('simulator_ci', Path(__file__).with_name('ci-ios-simulator.py'))
 ci = importlib.util.module_from_spec(spec)
@@ -728,6 +728,135 @@ exports.project = path => {
         self.assertEqual(json.loads(project.read_text()), initial)
 
 
+class ShutdownClassificationTests(unittest.TestCase):
+    setUp = LifecycleTests.setUp
+
+    def test_exit_racing_either_escalation_is_clean_when_owned_group_is_absent(self):
+        for branch in ['leader-timeout', 'group-deadline']:
+            with self.subTest(branch=branch):
+                child = ci.OwnedChild.__new__(ci.OwnedChild)
+                child.name, child.manifest = 'sampler', {}
+                child.log = self.parent / (branch + '.log')
+                child.log.write_bytes(b'bounded sampler evidence\n')
+                child.log_limit = 4096
+                child.result = {'returncode': -signal.SIGTERM, 'bytes': child.log.stat().st_size,
+                                'truncated': False}
+                child.process = Mock(pid=424242)
+                child.process.poll.return_value = -signal.SIGTERM
+                child.process.stdout.closed = True
+                child.process.wait.side_effect = ([subprocess.TimeoutExpired('sampler', 0), -signal.SIGTERM]
+                                                 if branch == 'leader-timeout' else [-signal.SIGTERM])
+                child.done = Mock()
+                child.done.is_set.return_value = False
+                child.waiter, child.reader = Mock(), Mock()
+                child.waiter.is_alive.return_value = child.reader.is_alive.return_value = False
+                signals = []
+                def signal_group(pid, sig):
+                    self.assertEqual(pid, 424242)
+                    signals.append(sig)
+                    if sig == signal.SIGKILL or (sig == 0 and
+                            (branch == 'leader-timeout' or signals.count(0) > 1)):
+                        raise ProcessLookupError('group exited before escalation')
+                ticks = iter(range(100, 2000, 10))
+                with patch.object(ci.os, 'killpg', side_effect=signal_group), \
+                     patch.object(ci.time, 'monotonic', side_effect=lambda: next(ticks)), \
+                     patch.object(ci.time, 'sleep', side_effect=AssertionError('oracle must not sleep')):
+                    child.close()
+                self.assertIn(signal.SIGKILL, signals)
+                self.assertTrue(child.result['stopped'])
+                self.assertFalse(child.manifest.get('cleanup_errors'))
+
+
+class ShutdownPostconditionTests(unittest.TestCase):
+    setUp = LifecycleTests.setUp
+
+    def child_fixture(self):
+        child = ci.OwnedChild.__new__(ci.OwnedChild)
+        child.name, child.manifest = 'sampler', {}
+        child.log = self.parent / 'shutdown.log'
+        child.log.write_bytes(b'bounded evidence\n')
+        child.log_limit = 4096
+        child.result = {'returncode': -signal.SIGTERM, 'bytes': child.log.stat().st_size,
+                        'truncated': False}
+        child.process = Mock(pid=424242)
+        child.process.poll.return_value = -signal.SIGTERM
+        child.process.stdout.closed = True
+        child.done = Mock()
+        child.done.is_set.return_value = False
+        child.waiter, child.reader = Mock(), Mock()
+        child.waiter.is_alive.return_value = child.reader.is_alive.return_value = False
+        return child
+
+    def test_both_escalation_branches_record_delivery_and_final_postconditions(self):
+        for branch in ['leader-timeout', 'group-deadline']:
+            for delivered in [False, True]:
+                with self.subTest(branch=branch, delivered=delivered):
+                    child = self.child_fixture()
+                    child.process.wait.side_effect = ([subprocess.TimeoutExpired('sampler', 0), -signal.SIGTERM]
+                                                     if branch == 'leader-timeout' else [-signal.SIGTERM])
+                    probes = []
+                    def signal_group(pid, sig):
+                        self.assertEqual(pid, child.process.pid)
+                        if sig == signal.SIGKILL and not delivered:
+                            raise ProcessLookupError('exited before escalation')
+                        if sig == 0:
+                            probes.append(sig)
+                            if branch == 'leader-timeout' or len(probes) > 1:
+                                raise ProcessLookupError('group absent')
+                    ticks = iter(range(100, 2000, 10))
+                    with patch.object(ci.os, 'killpg', side_effect=signal_group), \
+                         patch.object(ci.time, 'monotonic', side_effect=lambda: next(ticks)), \
+                         patch.object(ci.time, 'sleep', side_effect=AssertionError('must not sleep')):
+                        child.close()
+                    shutdown = child.result['shutdown']
+                    self.assertEqual(shutdown['escalation_reason'], 'leader_wait_timeout' if
+                                     branch == 'leader-timeout' else 'owned_group_present_at_deadline')
+                    self.assertEqual([a['signal'] for a in shutdown['signal_attempts']], ['SIGTERM', 'SIGKILL'])
+                    self.assertEqual(shutdown['signal_attempts'][-1]['outcome'],
+                                     'delivered' if delivered else 'group_absent')
+                    self.assertEqual(shutdown['sigkill_delivered'], delivered)
+                    self.assertEqual(shutdown['leader_returncode'], -signal.SIGTERM)
+                    self.assertEqual(shutdown['final_owned_group']['state'], 'absent')
+                    for key in ['leader_reaped', 'waiter_complete', 'reader_complete', 'log_closed',
+                                'log_hashed', 'log_within_limit']:
+                        self.assertTrue(shutdown[key], key)
+                    self.assertEqual(child.result['sha256'], ci.sha256(child.log))
+                    self.assertGreaterEqual(shutdown['finished_monotonic_seconds'],
+                                            shutdown['started_monotonic_seconds'])
+                    self.assertEqual(shutdown['clean'], not delivered)
+                    self.assertEqual(bool(child.manifest.get('cleanup_errors')), delivered)
+
+    def test_clean_close_requires_group_leader_threads_and_closed_bounded_hashed_log(self):
+        cases = ['clean', 'group-present', 'group-unknown', 'leader-unreaped', 'waiter-pending',
+                 'reader-pending', 'log-open', 'log-error', 'log-missing', 'log-oversized']
+        for case in cases:
+            with self.subTest(case=case):
+                child = self.child_fixture()
+                if case == 'leader-unreaped': child.process.poll.return_value = None
+                if case == 'waiter-pending': child.waiter.is_alive.return_value = True
+                if case == 'reader-pending': child.reader.is_alive.return_value = True
+                if case == 'log-open': child.process.stdout.closed = False
+                if case == 'log-error': child.result['log_error'] = 'injected write failure'
+                if case == 'log-missing': child.log.unlink()
+                if case == 'log-oversized': child.log_limit = 1
+                def signal_group(pid, sig):
+                    self.assertEqual((pid, sig), (424242, 0))
+                    if case == 'group-present': return
+                    if case == 'group-unknown': raise OSError('injected observation unavailable')
+                    raise ProcessLookupError('group absent')
+                with patch.object(ci, 'stop_process', return_value=False), \
+                     patch.object(ci.os, 'killpg', side_effect=signal_group):
+                    child.close()
+                shutdown = child.result['shutdown']
+                self.assertEqual(shutdown['clean'], case == 'clean')
+                self.assertEqual(bool(child.manifest.get('cleanup_errors')), case != 'clean')
+                self.assertEqual(shutdown['final_owned_group']['state'],
+                                 {'group-present': 'present', 'group-unknown': 'unknown'}.get(case, 'absent'))
+                if case != 'clean':
+                    self.assertEqual(shutdown['leader_returncode'], None if case == 'leader-unreaped'
+                                     else -signal.SIGTERM)
+
+
 class PerformanceTests(unittest.TestCase):
     setUp = LifecycleTests.setUp
 
@@ -767,6 +896,9 @@ class PerformanceTests(unittest.TestCase):
                 self.assertEqual(child.log.stat().st_size, 4096)
                 self.assertEqual(child.result['returncode'], -9 if resistant else -15)
                 self.assertEqual(bool(manifest.get('cleanup_errors')), resistant)
+                self.assertEqual(child.result['shutdown']['sigkill_delivered'], resistant)
+                self.assertEqual(child.result['shutdown']['final_owned_group']['state'], 'absent')
+                self.assertEqual(child.result['shutdown']['clean'], not resistant)
                 ci.e2e.write_evidence_manifest(self.parent, dict(manifest, status='failed', source_sha='a' * 40))
                 evidence = json.loads((self.parent / 'manifest.json').read_text())
                 self.assertEqual(evidence['evidence_sha256'][child.log.name], ci.sha256(child.log))
