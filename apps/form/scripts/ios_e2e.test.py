@@ -71,16 +71,17 @@ class EvidenceTests(unittest.TestCase):
             '<testcase name="' + name + '" status="' + status + '">' + extra + '</testcase>' for name in names
         ) + '</testsuite></testsuites>'
 
-    def test_junit_exact_seven_passes(self):
+    def test_junit_exact_five_passes(self):
         report = self.root / 'junit.xml'
         report.write_text(self.report())
         self.assertEqual(e2e.validate_junit(report, e2e.FLOW_NAMES), e2e.FLOW_NAMES)
 
     def test_junit_accepts_the_hosted_maestro_success_report(self):
         # Run 39670865743 passed all seven journeys; Maestro 2.11.0 wrote status="SUCCESS".
+        # Preserve that report shape with the current journey names and count.
         report = self.root / 'junit.xml'
         report.write_text('<?xml version=\'1.0\' encoding=\'UTF-8\'?>\n<testsuites>\n  <testsuite name="Test Suite" '
-                          'device="Form-CI - iOS 27.0" tests="7" failures="0" time="978.288">\n' + ''.join(
+                          f'device="Form-CI - iOS 27.0" tests="{len(e2e.FLOW_NAMES)}" failures="0" time="978.288">\n' + ''.join(
                               '    <testcase id="' + name + '" name="' + name + '" classname="' + name + '" file="/flows/'
                               + name + '.yaml" time="1.0" status="SUCCESS"/>\n' for name in e2e.FLOW_NAMES)
                           + '  </testsuite>\n</testsuites>\n')
@@ -113,7 +114,7 @@ class EvidenceTests(unittest.TestCase):
                    self.report(status='CANCELED'), self.report(status='STOPPED'),
                    self.report().replace(' status="SUCCESS"', ''),
                    self.report().replace('failures="0"', 'failures="1"'),
-                   self.report().replace('tests="7"', 'tests="0"')]
+                   self.report().replace(f'tests="{len(e2e.FLOW_NAMES)}"', 'tests="0"')]
         for text in invalid:
             with self.subTest(report=text[:80]):
                 report.write_text(text)
@@ -627,6 +628,9 @@ class JourneyContractTests(unittest.TestCase):
         config = (flows / 'config.yaml').read_text()
         self.assertIn('continueOnFailure: false', config)
         self.assertEqual(re.findall(r'^    - (\S+)$', config, re.M), e2e.FLOW_NAMES)
+        self.assertEqual(re.findall(r'^  - "([^"]+)\.yaml"$', config, re.M), e2e.FLOW_NAMES)
+        self.assertEqual(sorted(path.stem for path in flows.glob('*.yaml') if path.name != 'config.yaml'),
+                         sorted(e2e.FLOW_NAMES))
         for flow in contract['flows']:
             source = (flows / (flow['name'] + '.yaml')).read_text()
             self.assertIn('\nname: ' + flow['name'] + '\n', source)
