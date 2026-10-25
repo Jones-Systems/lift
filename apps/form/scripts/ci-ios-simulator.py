@@ -967,7 +967,7 @@ if __name__ == '__main__':
     for option in ['source', 'output', 'scratch-parent', 'sha']:
         parser.add_argument('--' + option, required=True)
     parser.add_argument('--xcode-jobs', type=int, default=1)
-    parser.add_argument('--early-boot', action='store_true')
+    parser.add_argument('--early-boot', action='store_true', default=True)
     parser.add_argument('--mode', choices=['launch', 'e2e'], default='launch')
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, interrupted)
