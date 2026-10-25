@@ -49,10 +49,20 @@ only when advertised; its transcript is capped at 256 KiB and the extracted
 summary at 64 KiB. Compiler `-j`/`-num-threads` log counts are best-effort evidence,
 not acceptance checks or measured concurrent compiler counts.
 
+During execution, each stage and command start/finish atomically replaces a
+partial `manifest.json`, including in-flight command start offsets. Temporary
+manifest bytes stay outside the evidence directory on the same filesystem and
+are removed after replacement or failure. The partial status is `in_progress`;
+normal finalization replaces it with the existing final manifest in both modes.
+This preserves diagnostic evidence if hosted cancellation leaves the driver
+running until the runner's job-end orphan cleanup; it does not prove cleanup
+or a completed build.
+
 One owned `top` sampler records real CPU, PhysMem and VM/swap statistics every
 five seconds for at most 720 samples. Its log stays outside scratch, is capped
-at 2 MiB with truncation recorded, and is hashed with the E2E evidence. Handled
-exits stop and reap the sampler and early-boot waiter before removing scratch;
+at 2 MiB with truncation recorded, writes each arriving chunk immediately, and
+is hashed with the E2E evidence. Handled exits stop and reap the sampler and
+early-boot waiter before removing scratch;
 SIGKILL escalation or an incomplete drain fails cleanup. Cancellation during
 device creation reconciles only the exact unique name before deleting its UDID.
 The added instrumentation does not demonstrate a native speed improvement or

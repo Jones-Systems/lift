@@ -3,7 +3,7 @@
 
 import argparse
 from collections import deque
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import hashlib
 import importlib.util
 import json
@@ -33,12 +33,42 @@ REGISTERING_CHILD = False
 PENDING_SIGNAL = None
 
 
+def partial_manifest(command=None, *, finished=False):
+    measurements = MEASUREMENTS
+    if measurements is None:
+        return
+    with measurements.get('lock', nullcontext()):
+        manifest = measurements['manifest']
+        if command is not None:
+            if finished:
+                manifest.setdefault('commands', []).append(command)
+                if 'pending' in measurements:
+                    measurements['pending'].remove(command)
+            elif 'pending' in measurements:
+                measurements['pending'].append(command)
+        if 'output' not in measurements:
+            return
+        snapshot = dict(manifest, status='in_progress',
+                        commands=list(manifest.get('commands', [])) + measurements['pending'])
+        # Keep temporary bytes outside the evidence set, on the same filesystem.
+        output = measurements['output']
+        with tempfile.NamedTemporaryFile(mode='w', prefix='.' + output.name + '-manifest-',
+                                         dir=output.parent, delete=False) as stream:
+            try:
+                stream.write(json.dumps(snapshot) + '\n')
+                stream.flush()
+                os.replace(stream.name, output / 'manifest.json')
+            finally:
+                Path(stream.name).unlink(missing_ok=True)
+
+
 @contextmanager
 def command_timing(command, name):
     start = time.monotonic()
     usage = resource.getrusage(resource.RUSAGE_CHILDREN)
     result = {'name': name, 'command': str(command[0]), 'start_offset_seconds':
               start - MEASUREMENTS['origin'] if MEASUREMENTS else 0, 'returncode': None}
+    partial_manifest(result)
     try:
         yield result
     except BaseException as exc:
@@ -49,14 +79,14 @@ def command_timing(command, name):
         result.update(seconds=time.monotonic() - start,
                       children_user_seconds=after.ru_utime - usage.ru_utime,
                       children_system_seconds=after.ru_stime - usage.ru_stime)
-        if MEASUREMENTS is not None:
-            MEASUREMENTS['manifest'].setdefault('commands', []).append(result)
+        partial_manifest(result, finished=True)
 
 
 def stage(manifest, name):
     manifest['stage'] = name
     manifest.setdefault('stage_timestamps', []).append(
         {'stage': name, 'offset_seconds': time.monotonic() - MEASUREMENTS['origin']})
+    partial_manifest()
 
 
 def stop_process(process, *, timeout=10, evidence=None):
@@ -125,8 +155,8 @@ class OwnedChild:
 
         def drain():
             try:
-                with log.open('wb') as stream:
-                    while block := self.process.stdout.read(65536):
+                with log.open('wb', buffering=0) as stream:
+                    while block := self.process.stdout.read1(65536):
                         remaining = max(0, limit - self.result['bytes'])
                         stream.write(block[:remaining])
                         self.result['bytes'] += min(remaining, len(block))
@@ -775,7 +805,8 @@ def build(args):
     env = os.environ.copy()
     device, sampler, bootstatus = None, None, None
     previous_measurements = MEASUREMENTS
-    MEASUREMENTS = {'manifest': manifest, 'origin': time.monotonic()}
+    MEASUREMENTS = {'manifest': manifest, 'origin': time.monotonic(), 'output': output,
+                    'pending': [], 'lock': threading.RLock()}
     manifest['rusage_scope'] = 'RUSAGE_CHILDREN deltas; overlapping children can contribute when reaped'
     early_boot = getattr(args, 'early_boot', False)
     manifest['early_boot'] = early_boot
