@@ -860,6 +860,153 @@ class ShutdownPostconditionTests(unittest.TestCase):
 class PerformanceTests(unittest.TestCase):
     setUp = LifecycleTests.setUp
 
+    def test_hosted_bash_cancel_retains_upload_point_evidence(self):
+        import ctypes
+        import shlex
+        import shutil
+        import time
+        parent = self.parent / 'hosted-cancel'
+        parent.mkdir()
+        program = r'''import importlib.util,json,os,pathlib,signal,sys
+spec=importlib.util.spec_from_file_location('checks',sys.argv[1])
+checks=importlib.util.module_from_spec(spec);spec.loader.exec_module(checks)
+parent=pathlib.Path(sys.argv[2])
+for sig in (signal.SIGINT,signal.SIGTERM,signal.SIGHUP):
+    signal.signal(sig,checks.ci.interrupted)
+(parent/'driver.json').write_text(json.dumps({'pid':os.getpid(),'ppid':os.getppid(),'argv':sys.argv}))
+original=checks.ci.subprocess.Popen
+def popen(command,**kwargs):
+    process=original(command,**kwargs)
+    kind=('sampler' if 'CPU PhysMem VM swap' in str(command) else
+          'xcodebuild' if 'signal-ready' in str(command) else None)
+    if kind:
+        (parent/(kind+'.json')).write_text(json.dumps({'pid':process.pid,'pgid':os.getpgid(process.pid),
+            'argv':command,'cwd':str(kwargs.get('cwd'))}))
+    return process
+checks.ci.subprocess.Popen=popen
+case=checks.PerformanceTests();case.parent=parent
+case.build_case(failure='signal')
+'''
+        script = parent / 'step.sh'
+        script.write_text(shlex.join([sys.executable, '-B', '-c', program,
+                                     str(Path(__file__).resolve()), str(parent)]) + '\n')
+        receipt = {'wait_limits_seconds': [0.75, 0.25, 0.5], 'signals': [],
+                   'driver_sha256': ci.sha256(Path(ci.__file__)),
+                   'test_sha256': ci.sha256(Path(__file__)),
+                   'workflow_sha256': ci.sha256(Path(__file__).parents[3] /
+                                                '.github/workflows/form-ios-simulator.yml')}
+        # Adopt only our orphans on Linux so even killed grandchildren are reaped.
+        libc, previous_subreaper = None, ctypes.c_int()
+        if sys.platform == 'linux':
+            libc = ctypes.CDLL(None, use_errno=True)
+            self.assertEqual(libc.prctl(37, ctypes.byref(previous_subreaper), 0, 0, 0), 0)
+            self.assertEqual(libc.prctl(36, 1, 0, 0, 0), 0)
+        process, owned = None, {}
+        try:
+            with (parent / 'step.log').open('w') as log:
+                process = subprocess.Popen(['bash', '-e', str(script)], stdout=log,
+                                           stderr=subprocess.STDOUT, start_new_session=True)
+                receipt['bash_pid'] = process.pid
+                self.wait_file(parent / 'signal-ready')
+                for kind in ['driver', 'sampler', 'xcodebuild']:
+                    self.wait_file(parent / (kind + '.json'))
+                    owned[kind] = json.loads((parent / (kind + '.json')).read_text())
+                receipt['processes'] = owned
+                self.assertEqual(owned['driver']['ppid'], process.pid)
+                for sig, delay in zip([signal.SIGINT, signal.SIGTERM, signal.SIGKILL],
+                                      receipt['wait_limits_seconds']):
+                    sent = time.monotonic()
+                    delivered = process.poll() is None
+                    if delivered:
+                        os.kill(process.pid, sig)
+                    try:
+                        process.wait(timeout=delay)
+                    except subprocess.TimeoutExpired:
+                        pass
+                    # Model the runner's pipe grace even if bash has exited.
+                    if sig == signal.SIGKILL:
+                        time.sleep(max(0, delay - (time.monotonic() - sent)))
+                    receipt['signals'].append({'signal': sig.name, 'delivered': delivered,
+                                               'elapsed_seconds': time.monotonic() - sent})
+                output = next(parent.glob('*/evidence'))
+                snapshot = {p.name: p.read_text(errors='replace') for p in output.iterdir()
+                            if p.is_file()}
+                receipt['upload_point'] = snapshot
+                try:
+                    manifest = json.loads(snapshot.get('manifest.json', ''))
+                except ValueError:
+                    manifest = {}
+                try:
+                    os.kill(owned['driver']['pid'], 0)
+                    alive = True
+                except ProcessLookupError:
+                    alive = False
+                stages = manifest.get('stage_timestamps', [])
+                finished = [r for r in manifest.get('commands', []) if r.get('returncode') is not None]
+                inflight = [r for r in manifest.get('commands', [])
+                            if r.get('name') == 'xcodebuild.log' and r.get('returncode') is None]
+                receipt['OA1'] = alive
+                receipt['OA2'] = bool(manifest and manifest.get('status') != 'passed' and
+                    [r.get('stage') for r in stages] ==
+                    ['identity', 'scratch', 'archive', 'install', 'prebuild', 'pods', 'build'] and
+                    all(isinstance(r.get('offset_seconds'), (int, float)) and r['offset_seconds'] >= 0
+                        for r in stages) and finished and
+                    all(isinstance(r.get('seconds'), (int, float)) and r['seconds'] >= 0 for r in finished) and
+                    len(inflight) == 1 and isinstance(inflight[0].get('start_offset_seconds'), (int, float)) and
+                    inflight[0]['start_offset_seconds'] >= 0 and
+                    manifest.get('source_sha') == 'a' * 40 and manifest.get('host') and
+                    manifest.get('xcode') == 'Xcode 27.0\nBuild version 27A266a' and
+                    manifest.get('xcode_jobs') == 1)
+                receipt['OA3'] = 'CPU PhysMem VM swap' in snapshot.get('host-resources.log', '')
+        finally:
+            # Read registrations even when a barrier or assertion failed.
+            for kind in ['driver', 'sampler', 'xcodebuild']:
+                path = parent / (kind + '.json')
+                if kind not in owned and path.exists():
+                    owned[kind] = json.loads(path.read_text())
+            drained = {}
+            for kind, row in owned.items():
+                try:
+                    os.kill(row['pid'], signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            if process is not None:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=3)
+            for kind, row in owned.items():
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    try:
+                        os.waitpid(row['pid'], os.WNOHANG)
+                    except ChildProcessError:
+                        pass
+                    try:
+                        os.kill(row['pid'], 0)
+                    except ProcessLookupError:
+                        drained[kind] = True
+                        break
+                    time.sleep(0.01)
+                drained.setdefault(kind, False)
+            if libc is not None:
+                self.assertEqual(libc.prctl(36, previous_subreaper.value, 0, 0, 0), 0)
+            receipt['drained'] = drained
+            receipt['processes'] = owned
+            destination = os.environ.get('AM7_EVIDENCE_DIR')
+            if destination:
+                retained = Path(destination)
+                retained.mkdir(parents=True, exist_ok=False)
+                (retained / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+                shutil.copyfile(parent / 'step.log', retained / 'step.log')
+            shutil.rmtree(parent)
+            receipt['scratch_removed'] = not parent.exists()
+            print('Hosted cancellation oracle: ' + json.dumps(receipt), flush=True)
+            self.assertTrue(all(drained.values()), drained)
+        self.assertTrue(receipt['OA1'], 'O3: driver did not survive bash cancellation')
+        for assertion in ['OA2', 'OA3']:
+            with self.subTest(assertion=assertion):
+                self.assertTrue(receipt[assertion], assertion + ' missing at upload point')
+
     def test_command_timing_keeps_failure_and_capture_exit_status(self):
         manifest = {}
         import time
