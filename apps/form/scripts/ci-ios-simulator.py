@@ -61,21 +61,35 @@ def stage(manifest, name):
         {'stage': name, 'offset_seconds': time.monotonic() - MEASUREMENTS['origin']})
 
 
-def stop_process(process, *, timeout=10):
+def stop_process(process, *, timeout=10, evidence=None):
+    shutdown = evidence if evidence is not None else {}
+    shutdown.update(signal_attempts=[], escalation_reason=None, sigkill_delivered=False)
+
+    def send(sig, reason):
+        attempt = {'signal': signal.Signals(sig).name, 'reason': reason,
+                   'monotonic_seconds': time.monotonic()}
+        shutdown['signal_attempts'].append(attempt)
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            attempt['outcome'] = 'group_absent'
+            return False
+        except OSError as exc:
+            attempt.update(outcome='error', error=str(exc))
+            raise
+        # Successful signal delivery alone does not establish that the group exited.
+        attempt['outcome'] = 'delivered'
+        return True
+
     deadline = time.monotonic() + timeout
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
+    send(signal.SIGTERM, 'close')
     killed = False
     try:
         process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        killed = True
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        shutdown['escalation_reason'] = 'leader_wait_timeout'
+        killed = send(signal.SIGKILL, shutdown['escalation_reason'])
+        shutdown['sigkill_delivered'] = killed
         process.wait(timeout=2)
     # A reaped leader does not establish that its descendants stopped.
     while not killed:
@@ -84,11 +98,9 @@ def stop_process(process, *, timeout=10):
         except ProcessLookupError:
             break
         if time.monotonic() >= deadline:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            killed = True
+            shutdown['escalation_reason'] = 'owned_group_present_at_deadline'
+            killed = send(signal.SIGKILL, shutdown['escalation_reason'])
+            shutdown['sigkill_delivered'] = killed
             break
         time.sleep(0.02)
     return killed
@@ -99,6 +111,7 @@ class OwnedChild:
 
     def __init__(self, command, *, cwd, env, log, manifest, name, limit=2 * 1024 * 1024):
         self.manifest, self.name, self.log = manifest, name, log
+        self.log_limit = limit
         self.result = manifest.setdefault('background_children', {}).setdefault(name, {})
         self.done = threading.Event()
         self.started = time.monotonic()
@@ -147,19 +160,55 @@ class OwnedChild:
             raise subprocess.CalledProcessError(self.result['returncode'], self.name)
 
     def close(self):
+        shutdown = self.result['shutdown'] = {'started_monotonic_seconds': time.monotonic(),
+                                             'waiter_complete': False, 'reader_complete': False,
+                                             'log_closed': False, 'log_hashed': False,
+                                             'log_within_limit': False}
+        errors = []
         try:
             unexpected_exit = (self.name == 'sampler' and self.done.is_set()
                                and self.result.get('returncode') != 0)
-            killed = stop_process(self.process, timeout=1 if CANCELLED else 5)
+            killed = stop_process(self.process, timeout=1 if CANCELLED else 5, evidence=shutdown)
             self.waiter.join(timeout=2)
             self.reader.join(timeout=2)
-            self.result['stopped'] = not self.waiter.is_alive() and not self.reader.is_alive()
-            if self.log.exists():
+            shutdown.update(waiter_complete=not self.waiter.is_alive(),
+                            reader_complete=not self.reader.is_alive())
+            shutdown['log_closed'] = shutdown['reader_complete'] and self.process.stdout.closed
+            self.result['stopped'] = shutdown['waiter_complete'] and shutdown['reader_complete']
+            if shutdown['log_closed'] and self.log.exists():
+                shutdown['log_bytes'] = self.log.stat().st_size
+                shutdown['log_within_limit'] = shutdown['log_bytes'] <= self.log_limit
                 self.result['sha256'] = sha256(self.log)
-            if killed or not self.result['stopped'] or self.result.get('log_error') or unexpected_exit:
-                raise RuntimeError(self.name + ': ' + ('SIGKILL required' if killed else 'child/log drain failed'))
+                shutdown['log_hashed'] = True
+            if killed:
+                errors.append(self.name + ': SIGKILL required')
+            if (not self.result['stopped'] or self.result.get('log_error') or unexpected_exit
+                    or not shutdown['log_closed'] or not shutdown['log_hashed']
+                    or not shutdown['log_within_limit']):
+                errors.append(self.name + ': child/log drain failed')
         except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
-            self.manifest.setdefault('cleanup_errors', []).append(str(exc))
+            errors.append(str(exc))
+        finally:
+            shutdown['leader_returncode'] = self.process.poll()
+            shutdown['leader_reaped'] = shutdown['leader_returncode'] is not None
+            group = {'observed_monotonic_seconds': time.monotonic()}
+            try:
+                os.killpg(self.process.pid, 0)
+                group['state'] = 'present'
+            except ProcessLookupError:
+                group['state'] = 'absent'
+            except OSError as exc:
+                group.update(state='unknown', error=str(exc))
+            shutdown['final_owned_group'] = group
+            if not shutdown['leader_reaped']:
+                errors.append(self.name + ': leader not reaped')
+            if group['state'] != 'absent':
+                errors.append(self.name + ': owned process group ' + group['state'])
+            shutdown['finished_monotonic_seconds'] = time.monotonic()
+            shutdown['seconds'] = shutdown['finished_monotonic_seconds'] - shutdown['started_monotonic_seconds']
+            shutdown['clean'] = not errors
+            if errors:
+                self.manifest.setdefault('cleanup_errors', []).extend(errors)
 
 
 def start_owned_child(children, command, **kwargs):
