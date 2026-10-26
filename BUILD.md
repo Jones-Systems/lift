@@ -30,6 +30,46 @@ Node 24, CocoaPods and the locked Expo dependencies. The driver rejects toolchai
 drift. Native modules, fonts, local bundle identity and Form scheme are retained.
 It does not use a private npm registry or fetch private source during the build.
 
+The driver uses `-jobs 1` and boots its owned simulator after packaging.
+The manifest records that fixed budget, late-boot selection and exact build argv.
+Xcode jobs control build-task scheduling; they are not a whole-host CPU quota
+and imply no linear speedup. Readiness latency and blocked wait are recorded.
+The full cold build and existing launch or five-journey acceptance are retained.
+
+The manifest adds monotonic command/stage offsets, elapsed times, exit codes and
+`RUSAGE_CHILDREN` user/system deltas. These CPU deltas can include overlapping
+children when they are reaped; they are not exclusive per-command CPU attribution.
+Host evidence includes logical/physical CPUs, memory, macOS and runner image
+versions. A bounded `xcodebuild -help` probe enables `-showBuildTimingSummary`
+only when advertised; its transcript is capped at 256 KiB and the extracted
+summary at 64 KiB. Compiler `-j`/`-num-threads` log counts are best-effort evidence,
+not acceptance checks or measured concurrent compiler counts.
+
+During execution, each stage and command start/finish atomically replaces a
+partial `manifest.json`, including in-flight command start offsets. Temporary
+manifest bytes stay outside the evidence directory on the same filesystem and
+are removed after replacement or failure. The partial status is `in_progress`;
+normal finalization writes the existing final manifest in both modes. A timed-out
+sampler waiter can still overwrite a terminal manifest with stale `in_progress`
+evidence (deferred P2 ER1-CR-001).
+This preserves diagnostic evidence if hosted cancellation leaves the driver
+running until the runner's job-end orphan cleanup; it does not prove cleanup
+or a completed build.
+
+One owned `top` sampler records real CPU, PhysMem and VM/swap statistics every
+five seconds for at most 720 samples. Its log stays outside scratch, is capped
+at 2 MiB with truncation recorded, writes each arriving chunk immediately, and
+is hashed with the E2E evidence. Handled exits attempt to stop and reap the
+sampler before removing scratch;
+SIGKILL escalation or an incomplete drain fails cleanup. Cancellation during
+device creation reconciles only the exact unique name before deleting its UDID.
+The portable cancellation oracle also has a deferred P2 limitation
+(ER1-CR-002): incomplete PID registration JSON can raise before its exceptional
+cleanup. Neither final manifest stability nor unconditional oracle cleanup is
+claimed. The added instrumentation does not demonstrate a native speed
+improvement or achievement of the 390-second budget; those require exact-source
+hosted runs.
+
 Portable driver cleanup/diagnostic checks:
 
 ```sh

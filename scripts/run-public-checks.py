@@ -21,6 +21,7 @@ HELPER = "scripts/run-public-checks.py"
 HARNESS_TEST = "scripts/run-public-checks.test.py"
 SOURCE_HOOK = "scripts/integration/source-hook.mjs"
 SOURCE_RESOLVER = "scripts/integration/source-resolution.mjs"
+SIMULATOR_WORKFLOW = ".github/workflows/form-ios-simulator.yml"
 GROUP_IDS = ("runner-contract", "api-compile", "app-static", "form104-139", "form196", "form203", "form208", "simulator-portable", "native-e2e-backend", "native-e2e-app")
 BASELINE_HEALTH = (
     "tests/wearables/app.test.mjs", "tests/wearables/ingestion.test.mjs",
@@ -68,16 +69,19 @@ def selection(root, requested):
                     for path in (root / API / directory).rglob("*.test.mjs"))
     commands = []
 
-    def add(group, cwd, argv, sources=()):
+    def add(group, cwd, argv, sources=(), root_sources=()):
         for source in sources:
             if not (root / cwd / source).is_file():
                 raise FileNotFoundError(f"Required {group} input is missing: {cwd}/{source}")
+        for source in root_sources:
+            if not (root / source).is_file():
+                raise FileNotFoundError(f"Required {group} input is missing: {source}")
         commands.append({"group": group, "cwd": cwd, "argv": list(argv),
-                         "test_sources": [f"{cwd}/{source}" if cwd != "." else source for source in sources]})
+                         "test_sources": [f"{cwd}/{source}" if cwd != "." else source for source in sources] + list(root_sources)})
 
     for group in groups:
         if group == "runner-contract":
-            add(group, ".", [sys.executable, "-B", HARNESS_TEST], [HELPER, HARNESS_TEST])
+            add(group, ".", [sys.executable, "-B", HARNESS_TEST], [HELPER, HARNESS_TEST], root_sources=[SIMULATOR_WORKFLOW])
         elif group == "api-compile":
             add(group, API, ["node", "node_modules/typescript/bin/tsc", "-p", "tsconfig.json"], ["tsconfig.json"])
         elif group == "app-static":
@@ -92,7 +96,7 @@ def selection(root, requested):
                 [SOURCE_HOOK, SOURCE_RESOLVER, *health])
         elif group == "simulator-portable":
             test = "scripts/ci-ios-simulator.test.py"
-            add(group, APP, [sys.executable, "-B", test], [test, "scripts/ci-ios-simulator.py"])
+            add(group, APP, [sys.executable, "-B", test], [test, "scripts/ci-ios-simulator.py"], root_sources=[SIMULATOR_WORKFLOW])
             test = "scripts/ios_e2e.test.py"
             add(group, APP, [sys.executable, "-B", test], [test, "scripts/ios_e2e.py"])
         else:
@@ -121,6 +125,9 @@ def copy_inputs(root, destination, install):
     (destination / "scripts").mkdir()
     for name in (HELPER, HARNESS_TEST):
         shutil.copy2(root / name, destination / name)
+    workflow = destination / SIMULATOR_WORKFLOW
+    workflow.parent.mkdir(parents=True)
+    shutil.copy2(root / SIMULATOR_WORKFLOW, workflow)
     if not install:
         for directory in (API, APP):
             dependencies = root / directory / "node_modules"

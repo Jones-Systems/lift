@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location('simulator_ci', Path(__file__).with_name('ci-ios-simulator.py'))
 ci = importlib.util.module_from_spec(spec)
@@ -360,6 +360,10 @@ with ci.owned_scratch(parent, {}) as scratch:
                     args.mode = mode
                 calls, inputs = [], {}
                 def capture(command, **kwargs):
+                    if command[:2] == ['sysctl', '-n']: return '3'
+                    if command[:3] in (['xcrun', 'simctl', 'shutdown'], ['xcrun', 'simctl', 'delete']):
+                        calls.append(command)
+                        return ''
                     if command[:2] == ['git', 'rev-parse']: return args.sha
                     if command[:2] == ['git', 'status']: return ''
                     if command == ['uname', '-m']: return 'arm64'
@@ -379,6 +383,10 @@ with ci.owned_scratch(parent, {}) as scratch:
                     self.assertEqual(env['EXPO_PUBLIC_FORM_API_URL'],
                                      'http://127.0.0.1:47621' if mode == 'e2e' else 'http://127.0.0.1:9')
                     calls.append(command)
+                    if command[:2] == ['git', 'archive']:
+                        with tarfile.open(command[4], 'w') as archive:
+                            archive.add(source / 'apps', arcname='apps')
+                            archive.add(source / 'services', arcname='services')
                     if command[0] == '/usr/bin/derq':
                         fake_derq(command)
                     if command[:2] == ['node', '-e']:
@@ -430,6 +438,7 @@ with ci.owned_scratch(parent, {}) as scratch:
                      patch.object(ci.subprocess, 'run', side_effect=native), patch.object(ci.sys, 'platform', 'darwin'), \
                      patch.object(ci.urllib.request, 'urlretrieve'), patch.object(ci, 'sha256', side_effect=digest), \
                      patch.object(ci.time, 'sleep'), patch.object(ci, 'check_launch') as launch, \
+                     patch.object(ci, 'start_sampler'), patch.object(ci, 'timing_summary_support', return_value=False), \
                      patch.object(ci.e2e, 'execute') as journeys, redirect_stdout(io.StringIO()):
                     if verify_failure:
                         with self.assertRaises(subprocess.CalledProcessError) as error:
@@ -717,6 +726,574 @@ exports.project = path => {
                                 cwd=self.parent, capture_output=True, text=True, timeout=10)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(json.loads(project.read_text()), initial)
+
+
+class ShutdownClassificationTests(unittest.TestCase):
+    setUp = LifecycleTests.setUp
+
+    def test_exit_racing_either_escalation_is_clean_when_owned_group_is_absent(self):
+        for branch in ['leader-timeout', 'group-deadline']:
+            with self.subTest(branch=branch):
+                child = ci.OwnedChild.__new__(ci.OwnedChild)
+                child.name, child.manifest = 'sampler', {}
+                child.log = self.parent / (branch + '.log')
+                child.log.write_bytes(b'bounded sampler evidence\n')
+                child.log_limit = 4096
+                child.result = {'returncode': -signal.SIGTERM, 'bytes': child.log.stat().st_size,
+                                'truncated': False}
+                child.process = Mock(pid=424242)
+                child.process.poll.return_value = -signal.SIGTERM
+                child.process.stdout.closed = True
+                child.process.wait.side_effect = ([subprocess.TimeoutExpired('sampler', 0), -signal.SIGTERM]
+                                                 if branch == 'leader-timeout' else [-signal.SIGTERM])
+                child.done = Mock()
+                child.done.is_set.return_value = False
+                child.waiter, child.reader = Mock(), Mock()
+                child.waiter.is_alive.return_value = child.reader.is_alive.return_value = False
+                signals = []
+                def signal_group(pid, sig):
+                    self.assertEqual(pid, 424242)
+                    signals.append(sig)
+                    if sig == signal.SIGKILL or (sig == 0 and
+                            (branch == 'leader-timeout' or signals.count(0) > 1)):
+                        raise ProcessLookupError('group exited before escalation')
+                ticks = iter(range(100, 2000, 10))
+                with patch.object(ci.os, 'killpg', side_effect=signal_group), \
+                     patch.object(ci.time, 'monotonic', side_effect=lambda: next(ticks)), \
+                     patch.object(ci.time, 'sleep', side_effect=AssertionError('oracle must not sleep')):
+                    child.close()
+                self.assertIn(signal.SIGKILL, signals)
+                self.assertTrue(child.result['stopped'])
+                self.assertFalse(child.manifest.get('cleanup_errors'))
+
+
+class ShutdownPostconditionTests(unittest.TestCase):
+    setUp = LifecycleTests.setUp
+
+    def child_fixture(self):
+        child = ci.OwnedChild.__new__(ci.OwnedChild)
+        child.name, child.manifest = 'sampler', {}
+        child.log = self.parent / 'shutdown.log'
+        child.log.write_bytes(b'bounded evidence\n')
+        child.log_limit = 4096
+        child.result = {'returncode': -signal.SIGTERM, 'bytes': child.log.stat().st_size,
+                        'truncated': False}
+        child.process = Mock(pid=424242)
+        child.process.poll.return_value = -signal.SIGTERM
+        child.process.stdout.closed = True
+        child.done = Mock()
+        child.done.is_set.return_value = False
+        child.waiter, child.reader = Mock(), Mock()
+        child.waiter.is_alive.return_value = child.reader.is_alive.return_value = False
+        return child
+
+    def test_both_escalation_branches_record_delivery_and_final_postconditions(self):
+        for branch in ['leader-timeout', 'group-deadline']:
+            for delivered in [False, True]:
+                with self.subTest(branch=branch, delivered=delivered):
+                    child = self.child_fixture()
+                    child.process.wait.side_effect = ([subprocess.TimeoutExpired('sampler', 0), -signal.SIGTERM]
+                                                     if branch == 'leader-timeout' else [-signal.SIGTERM])
+                    probes = []
+                    def signal_group(pid, sig):
+                        self.assertEqual(pid, child.process.pid)
+                        if sig == signal.SIGKILL and not delivered:
+                            raise ProcessLookupError('exited before escalation')
+                        if sig == 0:
+                            probes.append(sig)
+                            if branch == 'leader-timeout' or len(probes) > 1:
+                                raise ProcessLookupError('group absent')
+                    ticks = iter(range(100, 2000, 10))
+                    with patch.object(ci.os, 'killpg', side_effect=signal_group), \
+                         patch.object(ci.time, 'monotonic', side_effect=lambda: next(ticks)), \
+                         patch.object(ci.time, 'sleep', side_effect=AssertionError('must not sleep')):
+                        child.close()
+                    shutdown = child.result['shutdown']
+                    self.assertEqual(shutdown['escalation_reason'], 'leader_wait_timeout' if
+                                     branch == 'leader-timeout' else 'owned_group_present_at_deadline')
+                    self.assertEqual([a['signal'] for a in shutdown['signal_attempts']], ['SIGTERM', 'SIGKILL'])
+                    self.assertEqual(shutdown['signal_attempts'][-1]['outcome'],
+                                     'delivered' if delivered else 'group_absent')
+                    self.assertEqual(shutdown['sigkill_delivered'], delivered)
+                    self.assertEqual(shutdown['leader_returncode'], -signal.SIGTERM)
+                    self.assertEqual(shutdown['final_owned_group']['state'], 'absent')
+                    for key in ['leader_reaped', 'waiter_complete', 'reader_complete', 'log_closed',
+                                'log_hashed', 'log_within_limit']:
+                        self.assertTrue(shutdown[key], key)
+                    self.assertEqual(child.result['sha256'], ci.sha256(child.log))
+                    self.assertGreaterEqual(shutdown['finished_monotonic_seconds'],
+                                            shutdown['started_monotonic_seconds'])
+                    self.assertEqual(shutdown['clean'], not delivered)
+                    self.assertEqual(bool(child.manifest.get('cleanup_errors')), delivered)
+
+    def test_clean_close_requires_group_leader_threads_and_closed_bounded_hashed_log(self):
+        cases = ['clean', 'group-present', 'group-unknown', 'leader-unreaped', 'waiter-pending',
+                 'reader-pending', 'log-open', 'log-error', 'log-missing', 'log-oversized']
+        for case in cases:
+            with self.subTest(case=case):
+                child = self.child_fixture()
+                if case == 'leader-unreaped': child.process.poll.return_value = None
+                if case == 'waiter-pending': child.waiter.is_alive.return_value = True
+                if case == 'reader-pending': child.reader.is_alive.return_value = True
+                if case == 'log-open': child.process.stdout.closed = False
+                if case == 'log-error': child.result['log_error'] = 'injected write failure'
+                if case == 'log-missing': child.log.unlink()
+                if case == 'log-oversized': child.log_limit = 1
+                def signal_group(pid, sig):
+                    self.assertEqual((pid, sig), (424242, 0))
+                    if case == 'group-present': return
+                    if case == 'group-unknown': raise OSError('injected observation unavailable')
+                    raise ProcessLookupError('group absent')
+                with patch.object(ci, 'stop_process', return_value=False), \
+                     patch.object(ci.os, 'killpg', side_effect=signal_group):
+                    child.close()
+                shutdown = child.result['shutdown']
+                self.assertEqual(shutdown['clean'], case == 'clean')
+                self.assertEqual(bool(child.manifest.get('cleanup_errors')), case != 'clean')
+                self.assertEqual(shutdown['final_owned_group']['state'],
+                                 {'group-present': 'present', 'group-unknown': 'unknown'}.get(case, 'absent'))
+                if case != 'clean':
+                    self.assertEqual(shutdown['leader_returncode'], None if case == 'leader-unreaped'
+                                     else -signal.SIGTERM)
+
+
+class PerformanceTests(unittest.TestCase):
+    setUp = LifecycleTests.setUp
+
+    def test_hosted_bash_cancel_retains_upload_point_evidence(self):
+        import ctypes
+        import shlex
+        import shutil
+        import time
+        parent = self.parent / 'hosted-cancel'
+        parent.mkdir()
+        program = r'''import importlib.util,json,os,pathlib,signal,sys
+spec=importlib.util.spec_from_file_location('checks',sys.argv[1])
+checks=importlib.util.module_from_spec(spec);spec.loader.exec_module(checks)
+parent=pathlib.Path(sys.argv[2])
+for sig in (signal.SIGINT,signal.SIGTERM,signal.SIGHUP):
+    signal.signal(sig,checks.ci.interrupted)
+(parent/'driver.json').write_text(json.dumps({'pid':os.getpid(),'ppid':os.getppid(),'argv':sys.argv}))
+original=checks.ci.subprocess.Popen
+def popen(command,**kwargs):
+    process=original(command,**kwargs)
+    kind=('sampler' if 'CPU PhysMem VM swap' in str(command) else
+          'xcodebuild' if 'signal-ready' in str(command) else None)
+    if kind:
+        (parent/(kind+'.json')).write_text(json.dumps({'pid':process.pid,'pgid':os.getpgid(process.pid),
+            'argv':command,'cwd':str(kwargs.get('cwd'))}))
+    return process
+checks.ci.subprocess.Popen=popen
+case=checks.PerformanceTests();case.parent=parent
+case.build_case(failure='signal')
+'''
+        script = parent / 'step.sh'
+        script.write_text(shlex.join([sys.executable, '-B', '-c', program,
+                                     str(Path(__file__).resolve()), str(parent)]) + '\n')
+        receipt = {'wait_limits_seconds': [0.75, 0.25, 0.5], 'signals': [],
+                   'driver_sha256': ci.sha256(Path(ci.__file__)),
+                   'test_sha256': ci.sha256(Path(__file__)),
+                   'workflow_sha256': ci.sha256(Path(__file__).parents[3] /
+                                                '.github/workflows/form-ios-simulator.yml')}
+        # Adopt only our orphans on Linux so even killed grandchildren are reaped.
+        libc, previous_subreaper = None, ctypes.c_int()
+        if sys.platform == 'linux':
+            libc = ctypes.CDLL(None, use_errno=True)
+            self.assertEqual(libc.prctl(37, ctypes.byref(previous_subreaper), 0, 0, 0), 0)
+            self.assertEqual(libc.prctl(36, 1, 0, 0, 0), 0)
+        process, owned = None, {}
+        try:
+            with (parent / 'step.log').open('w') as log:
+                process = subprocess.Popen(['bash', '-e', str(script)], stdout=log,
+                                           stderr=subprocess.STDOUT, start_new_session=True)
+                receipt['bash_pid'] = process.pid
+                self.wait_file(parent / 'signal-ready')
+                for kind in ['driver', 'sampler', 'xcodebuild']:
+                    self.wait_file(parent / (kind + '.json'))
+                    owned[kind] = json.loads((parent / (kind + '.json')).read_text())
+                receipt['processes'] = owned
+                self.assertEqual(owned['driver']['ppid'], process.pid)
+                for sig, delay in zip([signal.SIGINT, signal.SIGTERM, signal.SIGKILL],
+                                      receipt['wait_limits_seconds']):
+                    sent = time.monotonic()
+                    delivered = process.poll() is None
+                    if delivered:
+                        os.kill(process.pid, sig)
+                    try:
+                        process.wait(timeout=delay)
+                    except subprocess.TimeoutExpired:
+                        pass
+                    # Model the runner's pipe grace even if bash has exited.
+                    if sig == signal.SIGKILL:
+                        time.sleep(max(0, delay - (time.monotonic() - sent)))
+                    receipt['signals'].append({'signal': sig.name, 'delivered': delivered,
+                                               'elapsed_seconds': time.monotonic() - sent})
+                output = next(parent.glob('*/evidence'))
+                snapshot = {p.name: p.read_text(errors='replace') for p in output.iterdir()
+                            if p.is_file()}
+                receipt['upload_point'] = snapshot
+                try:
+                    manifest = json.loads(snapshot.get('manifest.json', ''))
+                except ValueError:
+                    manifest = {}
+                try:
+                    os.kill(owned['driver']['pid'], 0)
+                    alive = True
+                except ProcessLookupError:
+                    alive = False
+                stages = manifest.get('stage_timestamps', [])
+                finished = [r for r in manifest.get('commands', []) if r.get('returncode') is not None]
+                inflight = [r for r in manifest.get('commands', [])
+                            if r.get('name') == 'xcodebuild.log' and r.get('returncode') is None]
+                receipt['OA1'] = alive
+                receipt['OA2'] = bool(manifest and manifest.get('status') != 'passed' and
+                    [r.get('stage') for r in stages] ==
+                    ['identity', 'scratch', 'archive', 'install', 'prebuild', 'pods', 'build'] and
+                    all(isinstance(r.get('offset_seconds'), (int, float)) and r['offset_seconds'] >= 0
+                        for r in stages) and finished and
+                    all(isinstance(r.get('seconds'), (int, float)) and r['seconds'] >= 0 for r in finished) and
+                    len(inflight) == 1 and isinstance(inflight[0].get('start_offset_seconds'), (int, float)) and
+                    inflight[0]['start_offset_seconds'] >= 0 and
+                    manifest.get('source_sha') == 'a' * 40 and manifest.get('host') and
+                    manifest.get('xcode') == 'Xcode 27.0\nBuild version 27A266a' and
+                    manifest.get('xcode_jobs') == 1)
+                receipt['OA3'] = 'CPU PhysMem VM swap' in snapshot.get('host-resources.log', '')
+        finally:
+            # Read registrations even when a barrier or assertion failed.
+            for kind in ['driver', 'sampler', 'xcodebuild']:
+                path = parent / (kind + '.json')
+                if kind not in owned and path.exists():
+                    owned[kind] = json.loads(path.read_text())
+            drained = {}
+            for kind, row in owned.items():
+                try:
+                    os.kill(row['pid'], signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            if process is not None:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=3)
+            for kind, row in owned.items():
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    try:
+                        os.waitpid(row['pid'], os.WNOHANG)
+                    except ChildProcessError:
+                        pass
+                    try:
+                        os.kill(row['pid'], 0)
+                    except ProcessLookupError:
+                        drained[kind] = True
+                        break
+                    time.sleep(0.01)
+                drained.setdefault(kind, False)
+            if libc is not None:
+                self.assertEqual(libc.prctl(36, previous_subreaper.value, 0, 0, 0), 0)
+            receipt['drained'] = drained
+            receipt['processes'] = owned
+            destination = os.environ.get('AM7_EVIDENCE_DIR')
+            if destination:
+                retained = Path(destination)
+                retained.mkdir(parents=True, exist_ok=False)
+                (retained / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+                shutil.copyfile(parent / 'step.log', retained / 'step.log')
+            shutil.rmtree(parent)
+            receipt['scratch_removed'] = not parent.exists()
+            print('Hosted cancellation oracle: ' + json.dumps(receipt), flush=True)
+            self.assertTrue(all(drained.values()), drained)
+        self.assertTrue(receipt['OA1'], 'O3: driver did not survive bash cancellation')
+        for assertion in ['OA2', 'OA3']:
+            with self.subTest(assertion=assertion):
+                self.assertTrue(receipt[assertion], assertion + ' missing at upload point')
+
+    def test_command_timing_keeps_failure_and_capture_exit_status(self):
+        manifest = {}
+        import time
+        with patch.object(ci, 'MEASUREMENTS', {'manifest': manifest, 'origin': time.monotonic()}):
+            with self.assertRaises(subprocess.CalledProcessError):
+                ci.run([sys.executable, '-c', 'raise SystemExit(23)'], cwd=self.parent,
+                       env=os.environ.copy(), log=self.parent / 'failed.log')
+            self.assertEqual(ci.capture([sys.executable, '-c', 'print("captured")'],
+                                        cwd=self.parent, env=os.environ.copy()), 'captured')
+        self.assertEqual([r['returncode'] for r in manifest['commands']], [23, 0])
+        for row in manifest['commands']:
+            for key in ['start_offset_seconds', 'seconds', 'children_user_seconds', 'children_system_seconds']:
+                self.assertGreaterEqual(row[key], 0)
+
+    def test_sampler_bounds_hash_and_term_resistant_cleanup(self):
+        for resistant in [False, True]:
+            with self.subTest(resistant=resistant):
+                manifest = {}
+                ready = self.parent / ('ready-' + str(resistant))
+                program = ('import signal,time,pathlib; ' +
+                           ('signal.signal(signal.SIGTERM, signal.SIG_IGN); ' if resistant else '') +
+                           'print("x" * 10000, flush=True); pathlib.Path(' + repr(str(ready)) +
+                           ').touch(); time.sleep(30)')
+                child = ci.OwnedChild([sys.executable, '-c', program], cwd=self.parent,
+                                      env=os.environ.copy(), log=self.parent / ('sampler-' + str(resistant)),
+                                      manifest=manifest, name='sampler', limit=4096)
+                try:
+                    self.wait_file(ready)
+                finally:
+                    with patch.object(ci, 'CANCELLED', True):
+                        child.close()
+                self.assertTrue(child.result['stopped'])
+                self.assertTrue(child.result['truncated'])
+                self.assertEqual(child.log.stat().st_size, 4096)
+                self.assertEqual(child.result['returncode'], -9 if resistant else -15)
+                self.assertEqual(bool(manifest.get('cleanup_errors')), resistant)
+                self.assertEqual(child.result['shutdown']['sigkill_delivered'], resistant)
+                self.assertEqual(child.result['shutdown']['final_owned_group']['state'], 'absent')
+                self.assertEqual(child.result['shutdown']['clean'], not resistant)
+                ci.e2e.write_evidence_manifest(self.parent, dict(manifest, status='failed', source_sha='a' * 40))
+                evidence = json.loads((self.parent / 'manifest.json').read_text())
+                self.assertEqual(evidence['evidence_sha256'][child.log.name], ci.sha256(child.log))
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(child.process.pid, 0)
+
+    def wait_file(self, path):
+        import time
+        deadline = time.monotonic() + 5
+        while not path.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(path.exists())
+
+    def build_case(self, *, failure=None, summary=False, mode='launch'):
+        from types import SimpleNamespace
+        import tarfile
+        import time
+        root = self.parent / str(len(list(self.parent.iterdir())))
+        root.mkdir()
+        source = root / 'source'
+        app = source / 'apps/form'
+        (app / 'ios').mkdir(parents=True)
+        for name in ['package.json', 'package-lock.json', 'ios/Podfile.lock']:
+            (app / name).write_text('{}')
+        (source / 'services/api').mkdir(parents=True)
+        (source / 'services/api/package-lock.json').write_text('{}')
+        (app / 'e2e').mkdir()
+        (app / 'e2e/journeys.json').write_text((Path(__file__).parents[1] / 'e2e/journeys.json').read_text())
+        output = root / 'evidence'
+        args = SimpleNamespace(source=str(source), output=str(output), scratch_parent=str(root),
+                               sha='a' * 40, mode=mode)
+        events, children = [], []
+        original_run, original_popen, original_hash = ci.run, ci.subprocess.Popen, ci.sha256
+        original_capture = ci.capture
+        def popen(command, **kwargs):
+            events.append(list(command))
+            if command[0] == 'top':
+                command = [sys.executable, '-c', 'import signal,time; ' +
+                           ('signal.signal(signal.SIGTERM, signal.SIG_IGN); ' if failure == 'sampler-kill' else '') +
+                           'print("CPU PhysMem VM swap",flush=True); time.sleep(30)']
+            process = original_popen(command, **kwargs)
+            children.append(process)
+            return process
+        def capture(command, *, cwd, **kwargs):
+            self.assertTrue(Path(cwd).is_dir())
+            events.append(list(command))
+            if command[:2] == ['git', 'rev-parse']: return args.sha
+            if command[:2] == ['git', 'status']: return ''
+            if command == ['uname', '-m']: return 'arm64'
+            if command[:2] == ['sysctl', '-n']: return '3'
+            if command == ['xcodebuild', '-version']: return 'Xcode 27.0\nBuild version 27A266a'
+            if command[:3] == ['xcrun', 'simctl', 'create']:
+                if failure == 'create-cancel': raise SystemExit(143)
+                if failure == 'create-signal':
+                    return original_capture([sys.executable, '-c',
+                        'import pathlib,time; pathlib.Path(' + repr(str(self.parent / 'signal-ready')) +
+                        ').touch(); time.sleep(30)'], cwd=cwd, **kwargs)
+                return 'owned-device'
+            if command[:4] == ['xcrun', 'simctl', 'list', 'devices']:
+                name = next(c[3] for c in events if c[:3] == ['xcrun', 'simctl', 'create'])
+                return json.dumps({'devices': {'runtime': [{'name': name, 'udid': 'owned-device'},
+                                                         {'name': name + '-other', 'udid': 'unrelated'}]}})
+            if command[:3] == ['xcrun', 'simctl', 'launch']: return 'app: 123'
+            if 'resolve' in command: return 'FormSpeech FormStoreKit FormHealth FormPhotoCapture FormVoice'
+            return 'version'
+        def run(command, *, cwd, env, log, **kwargs):
+            self.assertTrue(Path(cwd).is_dir())
+            events.append(list(command))
+            if command[:2] == ['git', 'archive']:
+                with tarfile.open(command[4], 'w') as archive:
+                    archive.add(source / 'apps', arcname='apps')
+                    archive.add(source / 'services', arcname='services')
+            if command[0] == 'xcodebuild':
+                built = Path(command[command.index('-derivedDataPath') + 1]) / 'Build/Products/Release-iphonesimulator/Form.app'
+                built.mkdir(parents=True)
+                (built / 'main.jsbundle').write_text('bundle')
+                (built / 'Form').write_text('executable')
+            if command[0] == 'ditto': Path(command[-1]).write_text('archive')
+            if command[0] == 'xcodebuild' and failure == 'signal':
+                return original_run([sys.executable, '-c',
+                    'import pathlib,time; pathlib.Path(' + repr(str(self.parent / 'signal-ready')) +
+                    ').touch(); time.sleep(30)'], cwd=cwd, env=env, log=log)
+            failing = failure in ['install', 'pods', 'build'] and log.stem == failure.replace('build', 'xcodebuild')
+            return original_run([sys.executable, '-c', 'raise SystemExit(23)' if failing else 'print("fixture")'],
+                                cwd=cwd, env=env, log=log, **kwargs)
+        def digest(path):
+            if path.name == 'expo-template.tgz': return '6b19d4235ab57c66fac699de7a2c57fe0ea277bf8a355ed45b2a37258bd93366'
+            return original_hash(path)
+        error = None
+        with patch.object(ci, 'capture', side_effect=capture), patch.object(ci, 'run', side_effect=run), \
+             patch.object(ci.subprocess, 'Popen', side_effect=popen), patch.object(ci.sys, 'platform', 'darwin'), \
+             patch.object(ci.urllib.request, 'urlretrieve'), patch.object(ci, 'sha256', side_effect=digest), \
+             patch.object(ci, 'timing_summary_support', return_value=summary), \
+             patch.object(ci, 'prepare_e2e_entitlements', return_value=b'der'), patch.object(ci, 'verify_e2e_simulator'), \
+             patch.object(ci.e2e, 'execute'), patch.object(ci, 'check_launch'), \
+             patch.object(ci.time, 'sleep'), redirect_stdout(io.StringIO()):
+            try:
+                ci.build(args)
+            except (ValueError, RuntimeError, subprocess.SubprocessError, SystemExit) as exc:
+                error = exc
+        manifest = json.loads((output / 'manifest.json').read_text())
+        self.assertTrue(all(p.poll() is not None for p in children))
+        self.assertFalse(list(root.glob('form-ios-*')))
+        return manifest, events, error
+
+    def test_selected_control_argv_and_late_boot_ordering(self):
+        for summary in [False, True]:
+            manifest, events, error = self.build_case(summary=summary, mode='e2e')
+            self.assertIsNone(error)
+            self.assertEqual(manifest['status'], 'passed')
+            self.assertEqual(manifest['xcode_jobs'], 1)
+            self.assertIs(manifest['early_boot'], False)
+            self.assertIn('hw.ncpu', manifest['host'])
+            build = next(c for c in events if c[:2] == ['xcodebuild', '-workspace'])
+            self.assertEqual(manifest['xcodebuild_argv'], build)
+            derived, workspace = build[build.index('-derivedDataPath') + 1], build[2]
+            self.assertEqual(build, ['xcodebuild', '-workspace', workspace, '-scheme', 'Form',
+                '-configuration', 'Release', '-sdk', 'iphonesimulator', '-destination',
+                'generic/platform=iOS Simulator', '-derivedDataPath', derived, '-jobs', '1',
+                *(['-showBuildTimingSummary'] if summary else []), 'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES',
+                'CODE_SIGNING_ALLOWED=NO', 'CODE_SIGNING_REQUIRED=NO', 'CODE_SIGN_IDENTITY=', 'build'])
+            create = next(i for i,c in enumerate(events) if c[:3] == ['xcrun','simctl','create'])
+            archive = next(i for i,c in enumerate(events) if c[:2] == ['git','archive'])
+            self.assertLess(archive, create)
+            self.assertRegex(events[create][3], r'^Form-CI-a{12}-[^-]+-[^-]+$')
+            package = next(i for i,c in enumerate(events) if c[0] == 'ditto')
+            install = next(i for i,c in enumerate(events) if c[:3] == ['xcrun','simctl','install'])
+            self.assertLess(package, install)
+            boot = next(i for i,c in enumerate(events) if c[:3] == ['xcrun','simctl','boot'])
+            ready = next(i for i,c in enumerate(events) if c[:3] == ['xcrun','simctl','bootstatus'])
+            self.assertLess(package, create)
+            self.assertLess(create, boot)
+            self.assertLess(boot, ready)
+            self.assertLess(ready, install)
+            self.assertTrue(all(c[3] == 'owned-device' for c in events
+                                if c[:2] == ['xcrun', 'simctl'] and c[2] in ['boot', 'bootstatus', 'install', 'launch']))
+            self.assertGreaterEqual(manifest['bootstatus_blocked_wait_seconds'], 0)
+            self.assertIsNotNone(manifest['bootstatus_readiness_seconds'])
+            self.assertTrue(manifest['background_children']['sampler']['stopped'])
+            self.assertIn('host-resources.log', manifest['evidence_sha256'])
+
+    def test_injected_dependency_and_compiler_failures_clean_both_modes(self):
+        for mode in ['launch', 'e2e']:
+            for failure in ['install', 'pods', 'build']:
+                with self.subTest(mode=mode, failure=failure):
+                    manifest, events, error = self.build_case(mode=mode, failure=failure)
+                    self.assertIsInstance(error, subprocess.CalledProcessError)
+                    self.assertEqual(error.returncode, 23)
+                    self.assertEqual(manifest['stage'], failure)
+                    self.assertEqual(next(r for r in manifest['commands'] if r['name'] == failure.replace('build', 'xcodebuild') + '.log')['returncode'], 23)
+                    self.assertTrue(manifest['scratch_removed'])
+                    self.assertFalse(manifest.get('cleanup_errors'))
+                    self.assertTrue(manifest['background_children']['sampler']['stopped'])
+                    self.assertFalse(any(c[:2] == ['xcrun', 'simctl'] for c in events))
+
+    def test_signal_during_child_registration_still_has_cleanup_owner(self):
+        children, manifest = [], {}
+        previous_handlers = {sig: signal.getsignal(sig) for sig in ci.e2e.SIGNALS}
+        self.addCleanup(lambda: [signal.signal(sig, handler) for sig, handler in previous_handlers.items()])
+        original_child = ci.OwnedChild
+        def construct(*args, **kwargs):
+            child = original_child(*args, **kwargs)
+            ci.interrupted(signal.SIGTERM, None)
+            return child
+        with patch.object(ci, 'CANCELLED', False), patch.object(ci, 'OwnedChild', side_effect=construct):
+            with self.assertRaises(SystemExit) as error:
+                with ci.owned_children() as children:
+                    ci.start_owned_child(children, [sys.executable, '-c', 'import time; time.sleep(30)'],
+                                         cwd=self.parent, env=os.environ.copy(), log=self.parent / 'registration.log',
+                                         manifest=manifest, name='sampler')
+            self.assertEqual(error.exception.code, 143)
+        self.assertEqual(len(children), 1)
+        self.assertTrue(children[0].result['stopped'])
+        self.assertFalse(manifest.get('cleanup_errors'))
+
+    def test_bounded_help_detection_summary_and_best_effort_flags(self):
+        original_popen = ci.subprocess.Popen
+        for advertised in [True, False]:
+            manifest = {}
+            def popen(command, **kwargs):
+                self.assertEqual(command, ['xcodebuild', '-help'])
+                return original_popen([sys.executable, '-c',
+                    'print("usage: -showBuildTimingSummary")' if advertised else 'print("other help")'], **kwargs)
+            with patch.object(ci.subprocess, 'Popen', side_effect=popen):
+                supported = ci.timing_summary_support(cwd=self.parent, env=os.environ.copy(),
+                                                      output=self.parent, manifest=manifest)
+            self.assertEqual(supported, advertised)
+            self.assertLessEqual((self.parent / 'xcodebuild-help.log').stat().st_size, 256 * 1024)
+            self.assertTrue(manifest['background_children']['xcodebuild-help']['stopped'])
+        (self.parent / 'xcodebuild.log').write_text('swiftc -j3 -num-threads 2\n' +
+            'Build Timing Summary\n' + 'task 1 second\n' * 10000)
+        ci.build_log_evidence(self.parent, manifest)
+        self.assertEqual(manifest['compiler_flags_observed'], {'-j': {'3': 1}, '-num-threads': {'2': 1}})
+        summary = self.parent / 'build-timing-summary.log'
+        self.assertTrue(summary.read_text().startswith('Build Timing Summary'))
+        self.assertLessEqual(summary.stat().st_size, 65536)
+
+    def test_sampler_kill_fails_otherwise_successful_build(self):
+        manifest, events, error = self.build_case(failure='sampler-kill')
+        self.assertIsInstance(error, RuntimeError)
+        self.assertEqual(manifest['status'], 'failed')
+        self.assertTrue(any('sampler: SIGKILL required' in e for e in manifest['cleanup_errors']))
+
+    def test_sigterm_during_build_and_unknown_create_drains_owned_children(self):
+        for failure in ['signal', 'create-signal']:
+            with self.subTest(failure=failure):
+                parent = self.parent / ('signal-' + failure)
+                parent.mkdir()
+                program = r'''import importlib.util,json,pathlib,signal,sys
+spec=importlib.util.spec_from_file_location('checks',sys.argv[1])
+checks=importlib.util.module_from_spec(spec);spec.loader.exec_module(checks)
+checks.ci.signal.signal(signal.SIGTERM,checks.ci.interrupted)
+case=checks.PerformanceTests();case.parent=pathlib.Path(sys.argv[2])
+manifest,events,error=case.build_case(failure=sys.argv[3])
+(case.parent/'receipt.json').write_text(json.dumps({'manifest':manifest,'events':events,'error':str(error)}))
+raise SystemExit(error.code if isinstance(error,SystemExit) else 1)
+'''
+                with (parent / 'child.log').open('w') as log:
+                    process = subprocess.Popen([sys.executable, '-B', '-c', program, str(Path(__file__).resolve()),
+                                                str(parent), failure], stdout=log, stderr=subprocess.STDOUT)
+                    try:
+                        self.wait_file(parent / 'signal-ready')
+                        process.send_signal(signal.SIGTERM)
+                        self.assertEqual(process.wait(timeout=15), 143)
+                    finally:
+                        if process.poll() is None:
+                            process.kill()
+                        process.wait(timeout=3)
+                receipt = json.loads((parent / 'receipt.json').read_text())
+                manifest = receipt['manifest']
+                self.assertTrue(manifest['scratch_removed'])
+                self.assertFalse(manifest.get('cleanup_errors'))
+                self.assertTrue(manifest['background_children']['sampler']['stopped'])
+                if failure == 'create-signal':
+                    self.assertEqual(receipt['events'][-1], ['xcrun','simctl','delete','owned-device'])
+                    self.assertEqual(manifest['simulator_reconciled_udid'], 'owned-device')
+                else:
+                    failing = next(r for r in manifest['commands'] if r['name'] == 'xcodebuild.log')
+                    self.assertEqual(failing['returncode'], -signal.SIGTERM)
+
+    def test_unknown_create_cancellation_cleanup(self):
+        manifest, events, error = self.build_case(failure='create-cancel')
+        self.assertIsNotNone(error)
+        self.assertTrue(manifest['scratch_removed'])
+        self.assertFalse(manifest.get('cleanup_errors'))
+        self.assertEqual(events[-1], ['xcrun','simctl','delete','owned-device'])
+        self.assertEqual(manifest['simulator_reconciled_udid'], 'owned-device')
+        self.assertTrue(any(c[:4] == ['xcrun','simctl','list','devices'] for c in events))
 
 
 if __name__ == '__main__':
