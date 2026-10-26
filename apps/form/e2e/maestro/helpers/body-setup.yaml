@@ -1,0 +1,99 @@
+appId: com.jonessystems.form.private
+# Body screens keep a sticky footer over the list. Centre each target so a
+# partly covered row is never tapped through to the footer action.
+---
+- extendedWaitUntil:
+    visible:
+      id: body-overview
+    timeout: 30000
+- tapOn:
+    id: body-continue
+- extendedWaitUntil:
+    visible:
+      id: body-purpose
+    timeout: 30000
+- tapOn:
+    id: body-session-only
+- tapOn:
+    id: body-purpose-continue
+- extendedWaitUntil:
+    visible:
+      id: body-protocol
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: body-check-one_person
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: body-check-one_person
+- scrollUntilVisible:
+    element:
+      id: body-check-full_body
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: body-check-full_body
+- scrollUntilVisible:
+    element:
+      id: body-check-camera_level
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: body-check-camera_level
+- scrollUntilVisible:
+    element:
+      id: body-check-even_light
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: body-check-even_light
+- scrollUntilVisible:
+    element:
+      id: body-check-clothing
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: body-check-clothing
+- scrollUntilVisible:
+    element:
+      id: body-check-stance
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: body-check-stance
+- scrollUntilVisible:
+    element:
+      id: body-check-front_facing
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: body-check-front_facing
+- scrollUntilVisible:
+    element:
+      id: body-view
+    direction: UP
+    timeout: 20000
+    centerElement: true
+- tapOn: "Side"
+- scrollUntilVisible:
+    element:
+      id: body-check-side_facing
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- tapOn:
+    id: body-check-side_facing
+- tapOn:
+    id: body-protocol-enter
+- extendedWaitUntil:
+    visible:
+      id: body-measure
+    timeout: 30000

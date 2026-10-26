@@ -149,6 +149,7 @@ export function TextAnswer(props: TextAnswerProps) {
       {label ? <Txt role="meta" tone="secondary">{label}</Txt> : null}
       <View testID={testID} style={[s.answer, outline, !onMic && s.answerNoMic, focused && s.answerFocused, error && s.answerError, label ? s.answerLabelled : null]}>
         <TextInput
+          testID={testID ? `${testID}-input` : undefined}
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
@@ -239,7 +240,8 @@ export function Segmented<T extends string>({ items, selected, onSelect, testID 
       {items.map((item) => {
         const on = item.value === selected;
         return (
-          <Pressable key={item.value} accessibilityRole="radio" accessibilityState={{ checked: on }}
+          <Pressable key={item.value} testID={testID ? `${testID}-${item.value}` : undefined}
+            accessibilityRole="radio" accessibilityState={{ checked: on }}
             onPress={() => { selectionHaptic(); onSelect(item.value); }} style={[s.segment, on && s.segmentSelected]}>
             <Txt role="bodyStrong">{item.label}</Txt>
           </Pressable>

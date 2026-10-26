@@ -176,7 +176,7 @@ export class FormTransport {
       const response = await wait(this.fetcher(this.baseURL.replace(/\/$/, '') + path, {
         method: body === undefined ? 'GET' : 'POST', headers: { Accept: 'application/json',
           Authorization: `Bearer ${token}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
-        ...(body === undefined ? {} : { body }), signal: controller.signal, redirect: 'error',
+        ...(body === undefined ? {} : { body }), signal: controller.signal, redirect: 'error', credentials: 'omit',
       }).then(response => {
         if (controller.signal.aborted) void response.body?.cancel().catch(() => {});
         return response;
@@ -470,7 +470,7 @@ export class FormTransport {
     try {
       const response = await this.fetcher(this.baseURL.replace(/\/$/, '') + '/api/auth/sign-out', {
         method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: '{}', signal: controller.signal, redirect: 'error',
+        body: '{}', signal: controller.signal, redirect: 'error', credentials: 'omit',
       });
       const data = await response.json();
       if (!response.ok || data?.success !== true) throw new Error('Session cleanup unconfirmed');
@@ -582,7 +582,7 @@ export class FormTransport {
         },
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
-        redirect: 'error',
+        redirect: 'error', credentials: 'omit',
       };
       assertDispatch?.();
       dispatched = true;

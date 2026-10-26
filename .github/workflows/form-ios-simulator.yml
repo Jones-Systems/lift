@@ -12,13 +12,22 @@ on:
         type: string
   pull_request:
     types: [opened, synchronize, reopened, edited]
+    paths:
+      - 'apps/form/**'
+      - 'services/api/**'
+      - 'packages/**'
+      - '.gitattributes'
+      - '.github/workflows/form-ios-simulator.yml'
+      - 'scripts/native-impact.py'
+      - 'scripts/native-impact.test.py'
+      - 'scripts/ci-placement.test.py'
 
 permissions:
   contents: read
 
 concurrency:
   group: lift-ios-${{ github.event_name }}-${{ inputs.source_sha || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
 
 jobs:
   simulator:
@@ -47,6 +56,13 @@ jobs:
           ref: ${{ env.SOURCE_SHA }}
           path: source
           persist-credentials: false
+      - name: Record native inputs (shadow only)
+        id: native_identity
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          python3 tooling/scripts/native-impact.test.py
+          python3 tooling/scripts/native-impact.py --source source --tooling tooling
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
@@ -55,6 +71,7 @@ jobs:
           PYTHONDONTWRITEBYTECODE: '1'
         run: python3 tooling/apps/form/scripts/ci-ios-simulator.test.py
       - name: Build and launch exact source
+        id: native_build
         timeout-minutes: 55
         run: python3 tooling/apps/form/scripts/ci-ios-simulator.py --source source --output evidence --scratch-parent "$GITHUB_WORKSPACE" --sha "$SOURCE_SHA"
       - name: Retain app and diagnostic evidence
@@ -66,3 +83,11 @@ jobs:
           retention-days: 1
           if-no-files-found: error
           compression-level: 0
+      - name: native executed ${{ steps.native_identity.outputs.input_digest }}
+        if: ${{ success() && steps.native_build.outcome == 'success' && steps.native_identity.outputs.input_digest != '' }}
+        env:
+          NATIVE_INPUT_DIGEST: ${{ steps.native_identity.outputs.input_digest }}
+        shell: bash
+        run: |
+          [[ "$NATIVE_INPUT_DIGEST" =~ ^[0-9a-f]{64}$ ]] || exit 2
+          printf 'native executed %s (run %s, attempt %s); shadow only, reuse unknown\n' "$NATIVE_INPUT_DIGEST" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_STEP_SUMMARY"
