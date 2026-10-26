@@ -19,15 +19,16 @@ prove that a new test was selected.
 | Existing hosted | 35 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
 | `api-breadth` | 111 | Compile API TypeScript with `tsc`; run emitted TS tests and original MJS/CJS tests using the existing source hook. Never run the private projection build. |
 | `app-breadth` | 81 | Compile the transport compatibility output, then run explicit CJS files serially. Phone sign-in embeds the standalone transport suite exactly once. |
-| `app-renderer` | 1 | Existing Jest renderer command selects `runtime-auth.test.tsx`; onboarding remains in the existing hosted group. |
+| `app-renderer` | 2 | Existing Jest renderer command selects `runtime-auth.test.tsx` and `training-scheduling.test.tsx`; onboarding remains in the existing hosted group. |
 | `website` | 29 | Explicit recursive Node test paths include nested voice modules. Require the real portable session-controller source before execution. |
 | `adapter-unit` | 4 | Same four files and serial Node options as adapter `npm test`, with explicit TAP reporting. |
 | `breadth-contract` | 1 | This runner's selection, result and lifecycle contract runs inside the breadth job. |
 | Blocked | 32 | Exact files, reasons, missing inputs and intended private/manual qualification routes remain in the manifest. |
 
 The pre-breadth state has 292 files. The new breadth contract and the
-private-inventory case split bring discovery to 294 files.
-There are 226 additional public product test files, plus the new contract.
+private-inventory case split brought discovery to 294 files. Scheduling renderer
+registration adds one file, bringing current discovery to 295.
+There are 227 additional public product test files, plus the new contract.
 These are source selection counts, not executed case counts or proof of passing
 tests. The 32 blocked files remain intact: 29 need private research/projection
 inputs, one needs the internal website route inventory, one needs
