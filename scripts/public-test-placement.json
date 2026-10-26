@@ -261,9 +261,10 @@
     {
       "id": "app-renderer",
       "placement": "breadth",
-      "reason": "The remaining React Native renderer suite runs with the existing Jest command.",
+      "reason": "The React Native renderer suites run with the existing Jest command.",
       "files": [
-        "apps/form/tests/renderer/runtime-auth.test.tsx"
+        "apps/form/tests/renderer/runtime-auth.test.tsx",
+        "apps/form/tests/renderer/training-scheduling.test.tsx"
       ]
     },
     {

@@ -44,7 +44,7 @@ class BreadthTests(unittest.TestCase):
         contract = breadth.selection(ROOT)
         manifest = json.loads((ROOT / breadth.MANIFEST).read_text())
         discovered, hosted = contract["discovered_test_files"], contract["existing_hosted_test_files"]
-        self.assertEqual(len(discovered), 294)
+        self.assertEqual(len(discovered), 295)
         self.assertEqual(len(hosted), 35)
         self.assertEqual(sum(len(g["files"]) for g in contract["blocked_groups"]), 32)
         self.assertFalse(contract["all_coverage_available"])
