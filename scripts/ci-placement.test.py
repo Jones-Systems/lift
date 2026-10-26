@@ -39,9 +39,14 @@ class PlacementTests(unittest.TestCase):
         self.assertIn("types: [opened, synchronize, reopened, edited]", simulator_events)
         patterns = re.findall(r"      - '([^']+)'", simulator_events)
         for source in ("apps/form/src/app.tsx", "services/api/src/server.ts", "packages/example/index.ts",
+                       "apps/form-website/tests/member-ecosystem-connections.test.mjs",
+                       "apps/form-website/tests/member-ecosystem-inventory.test.mjs",
+                       "apps/form-website/src/member-page.mjs",
+                       "apps/example/src/app.tsx", "services/example/src/server.ts",
                        ".gitattributes", ".github/workflows/form-ios-simulator.yml",
                        "scripts/native-impact.py", "scripts/native-impact.test.py", "scripts/ci-placement.test.py"):
-            self.assertTrue(any(fnmatch.fnmatchcase(source, pattern) for pattern in patterns), source)
+            with self.subTest(source=source):
+                self.assertTrue(any(fnmatch.fnmatchcase(source, pattern) for pattern in patterns), source)
         for source in ("README.md", "BUILD.md", "AGENTS.md", "TEST-PLACEMENT.md",
                        "scripts/run-public-breadth.py", ".github/workflows/public-breadth.yml"):
             self.assertFalse(any(fnmatch.fnmatchcase(source, pattern) for pattern in patterns), source)
