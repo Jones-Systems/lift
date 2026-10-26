@@ -31,7 +31,7 @@ class BreadthTests(unittest.TestCase):
             (root / directory).mkdir(parents=True)
         for name in (breadth.HELPER, breadth.CONTRACT_TEST, breadth.MANIFEST, "scripts/run-public-checks.py",
                      "scripts/run-public-checks.test.py", "scripts/native-impact.test.py", "scripts/ci-placement.test.py",
-                     ".github/workflows/public-breadth.yml"):
+                     ".github/workflows/public-breadth.yml", ".github/workflows/form-ios-simulator.yml"):
             (root / name).write_bytes((ROOT / name).read_bytes())
         return root
 
@@ -109,9 +109,16 @@ class BreadthTests(unittest.TestCase):
 
     def test_concurrent_workspace_ownership_and_storage_refusal(self):
         root = self.fixture()
+        (root / ".github/workflows/unrelated.yml").write_text("excluded sentinel")
         with breadth.owned_workspace(root, False) as outer:
-            with breadth.owned_workspace(root, False) as inner:
+            with breadth.owned_workspace(outer, False) as inner:
                 self.assertNotEqual(outer, inner)
+                for workspace in (outer, inner):
+                    workflows = [".github/workflows/form-ios-simulator.yml", ".github/workflows/public-breadth.yml"]
+                    self.assertEqual(sorted(p.relative_to(workspace).as_posix() for p in (workspace / ".github").rglob("*") if p.is_file()),
+                                     workflows)
+                    for workflow in workflows:
+                        self.assertEqual((workspace / workflow).read_bytes(), (ROOT / workflow).read_bytes())
             self.assertFalse(inner.exists())
             self.assertTrue(outer.exists())
         self.assertFalse(outer.exists())

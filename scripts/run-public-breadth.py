@@ -172,7 +172,7 @@ def owned_workspace(root, install):
         for name in (HELPER, CONTRACT_TEST, MANIFEST, "scripts/native-impact.test.py", "scripts/ci-placement.test.py"):
             shutil.copy2(root / name, workspace / name)
         workflow = ".github/workflows/public-breadth.yml"
-        (workspace / ".github/workflows").mkdir(parents=True)
+        (workspace / ".github/workflows").mkdir(parents=True, exist_ok=True)
         shutil.copy2(root / workflow, workspace / workflow)
         if not install and (root / ADAPTER / "node_modules").is_dir():
             (workspace / ADAPTER / "node_modules").symlink_to(root / ADAPTER / "node_modules", target_is_directory=True)

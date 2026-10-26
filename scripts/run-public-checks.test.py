@@ -28,6 +28,20 @@ class PublicChecksTests(unittest.TestCase):
             (self.root / directory).mkdir(parents=True)
         for name in (checks.HELPER, checks.HARNESS_TEST):
             (self.root / name).write_text((ROOT / name).read_text())
+        workflow = ".github/workflows/form-ios-simulator.yml"
+        (self.root / workflow).parent.mkdir(parents=True)
+        (self.root / workflow).write_bytes((ROOT / workflow).read_bytes())
+
+    def test_copied_workspace_preserves_simulator_workflow_input(self):
+        workflow = ".github/workflows/form-ios-simulator.yml"
+        (self.root / ".github/workflows/unrelated.yml").write_text("excluded sentinel")
+        with patch.object(checks.subprocess, "Popen", side_effect=AssertionError("Copy seam must not spawn a child")):
+            with checks.owned_workspace(self.root, install=True) as workspace:
+                self.assertEqual((workspace / workflow).read_bytes(), (ROOT / workflow).read_bytes())
+                self.assertEqual(checks.digest(workspace / workflow), checks.digest(ROOT / workflow))
+                self.assertEqual([p.relative_to(workspace).as_posix() for p in (workspace / ".github").rglob("*") if p.is_file()],
+                                 [workflow])
+        self.assertFalse(workspace.exists())
 
     def contract(self, body, second=False):
         command = {"group": "fixture", "cwd": ".", "argv": [sys.executable, "-c", body], "test_sources": []}
@@ -131,10 +145,43 @@ class PublicChecksTests(unittest.TestCase):
             for source in command["test_sources"]:
                 path = self.root / source
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text("")
+                if not path.exists():
+                    path.write_text("")
         (self.root / "apps/form/scripts/ios_e2e.test.py").unlink()
         with self.assertRaises(FileNotFoundError):
             checks.selection(self.root, ["simulator-portable"])
+
+    def test_simulator_workflow_is_canonical_required_input_for_both_consumers(self):
+        workflow = ".github/workflows/form-ios-simulator.yml"
+        for group in ("runner-contract", "simulator-portable"):
+            contract = checks.selection(ROOT, [group])
+            self.assertIn(workflow, contract["commands"][0]["test_sources"])
+            for command in contract["commands"]:
+                for source in command["test_sources"]:
+                    self.assertNotIn("..", Path(source).parts)
+                    target = self.root / source
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes((ROOT / source).read_bytes())
+            self.assertEqual(checks.selection(self.root, [group]), contract)
+        (self.root / workflow).unlink()
+        for group in ("runner-contract", "simulator-portable"):
+            with self.subTest(group=group), self.assertRaisesRegex(FileNotFoundError, workflow):
+                checks.selection(self.root, [group])
+
+    def test_receipt_binds_exact_simulator_workflow_bytes(self):
+        workflow = ".github/workflows/form-ios-simulator.yml"
+        expected = checks.digest(ROOT / workflow)
+        body = ("import hashlib; from pathlib import Path; "
+                f"assert hashlib.sha256(Path({workflow!r}).read_bytes()).hexdigest() == {expected!r}")
+        contract = self.contract(body)
+        contract["commands"][0]["test_sources"] = [workflow]
+        output = self.parent / "workflow-evidence"
+        with patch.object(checks.subprocess, "check_output", return_value="a" * 40):
+            status = checks.execute(self.root, output, contract)
+        receipt = json.loads((output / "receipt.json").read_text())
+        self.assertEqual(status, 0)
+        self.assertEqual(receipt["input_sha256"], {workflow: expected})
+        self.assertTrue(receipt["scratch_removed"])
 
     def test_success_cleans_child_outputs_and_preserves_log_and_receipt(self):
         status, receipt = self.execute("from pathlib import Path; Path('child-output').mkdir(); print('public proof')")
@@ -184,6 +231,12 @@ class PublicChecksTests(unittest.TestCase):
                 self.assertTrue((second / checks.API / "node_modules").is_symlink())
             self.assertFalse(second.exists())
             self.assertEqual((first / "owned").read_text(), "first")
+            with checks.owned_workspace(first, install=True) as nested:
+                workflow = ".github/workflows/form-ios-simulator.yml"
+                self.assertEqual((nested / workflow).read_bytes(), (ROOT / workflow).read_bytes())
+                self.assertEqual(checks.digest(nested / workflow), checks.digest(ROOT / workflow))
+                self.assertFalse((nested / "owned").exists())
+            self.assertFalse(nested.exists())
         self.assertFalse(first.exists())
         self.assertEqual((self.root / checks.API / "dist/foreign").read_text(), "preserve unrelated build")
         self.assertEqual((self.root / checks.APP / "node_modules/sentinel").read_text(), "preserve installed dependencies")

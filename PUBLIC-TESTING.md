@@ -59,8 +59,12 @@ their owning group when extending that contract.
 
 The helper owns a unique `TemporaryDirectory` under the repository workspace.
 It copies `apps`, `services` and `packages`, excluding dependency trees,
-`dist`, `.scratch`, `.expo`, Python caches and Git internals. Fresh installs,
-compiler output, test scratch and package-cache files stay inside that owned
+`dist`, `.scratch`, `.expo`, Python caches and Git internals.
+The copy also includes exactly `.github/workflows/form-ios-simulator.yml` for
+the simulator oracle's provenance assertion. Both `runner-contract` and the
+first `simulator-portable` command declare that canonical root-relative input
+before manifest hashing; the receipt binds its exact bytes in `input_sha256`.
+Fresh installs, compiler output, test scratch and package-cache files stay inside that owned
 tree. Success, failure and handled cancellation remove it after stopping its
 child process group. Other invocations and existing build/dependency trees
 remain untouched. The disposable GitHub runner is the fallback for an
