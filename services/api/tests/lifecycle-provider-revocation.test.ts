@@ -384,15 +384,20 @@ test('three unknown claims exhaust the bound without automatic or fourth dispatc
 });
 
 for (const fault of ['missing', 'rotated', 'foreign-client', 'foreign-subject', 'rejected', 'cancelled'] as const)
-  test(`resolver ${fault} cannot send and leaves exact guarded no-effect evidence`, async t => {
+  test(`resolver ${fault === 'rotated' ? 'supplied-token drift' : fault} cannot send and leaves exact guarded no-effect evidence`, async t => {
     const f = fixture(t); await f.confirm(); const i = f.intent();
     const controller = new AbortController();
     f.behavior.resolve = () => {
       if (fault === 'cancelled') { controller.abort(); return done({ status: 'unavailable' }); }
       if (fault === 'missing') return done({ status: 'unavailable' });
       if (fault === 'rejected') return { settled: Promise.reject(new Error('synthetic resolver failed')), cancel: async () => {} };
-      if (fault === 'rotated') f.db.prepare('UPDATE account SET refreshToken=? WHERE id=?').run('synthetic-rotated', f.material.rowId);
+      if (fault === 'rotated') {
+        const before = f.db.prepare('SELECT * FROM account WHERE id=?').get(f.material.rowId);
+        assert.throws(() => f.db.prepare('UPDATE account SET refreshToken=? WHERE id=?').run('synthetic-rotated', f.material.rowId), /account_disabled/);
+        assert.deepEqual(f.db.prepare('SELECT * FROM account WHERE id=?').get(f.material.rowId), before);
+      }
       return done({ status: 'qualified', value: { material: { ...f.material,
+        ...(fault === 'rotated' ? { token: 'synthetic-rotated' } : {}),
         ...(fault === 'foreign-client' ? { clientBindingId: 'other-client' } : {}),
         ...(fault === 'foreign-subject' ? { immutableSubject: 'other-subject' } : {}) }, clientSecret: 'synthetic-secret' } });
     };
