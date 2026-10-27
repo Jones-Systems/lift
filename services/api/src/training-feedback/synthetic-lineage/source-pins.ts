@@ -5,7 +5,7 @@ import { digest, implementation } from './schema.js';
 
 // Metadata checkpoint: these implementation files are byte-identical to the first published source commit below.
 // The set digest hashes actual source bytes with length framing in the listed order; this metadata and test/fixture builders are excluded.
-export const implementationSourceRevision = 'c73e102af0a1bbcebd102ed1ef5f4b56ec491686';
+export const implementationSourceRevision = 'b46e00192894505c8190cd720caff6a21cc11f86';
 export const sourceFiles = [
   {
     "path": "attempt-shape.ts",
@@ -37,11 +37,11 @@ export const sourceFiles = [
   },
   {
     "path": "strict-json.ts",
-    "sha256": "8e3b404f1c7ecd198e087c4661be9e05f64ed3adb8f5e6bc06f30c98c223c743"
+    "sha256": "ecaba9d8abe47c6a20678f5e7e76ac5e15fede2fb791b2a1b72342cdf67eab18"
   }
 ] as const;
 function checkedDigest(value: string): Digest { digest(value); return value as Digest; }
-export const implementationManifestDigest = checkedDigest('f01854df69e18f54fa4d9e774850cd42adf6419e6511b95343c34102c1f68a4d');
+export const implementationManifestDigest = checkedDigest('dabd15e7dd4c197f51dfa22398646fbe648ece630fc827816b560f22548a91f5');
 function pin(path: typeof sourceFiles[number]['path']): SyntheticImplementationPinV1 {
   const file = sourceFiles.find(file => file.path === path)!;
   const value = detach({ repository: 'Jones-Systems/lift', revision: implementationSourceRevision,
