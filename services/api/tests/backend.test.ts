@@ -15,6 +15,7 @@ import type { VerifiedAppleTransaction } from '../src/purchases/types.js';
 import { validateWav } from '../src/transcription.js';
 import { browserOriginsConfiguration, socialProviderConfiguration } from '../src/configuration.js';
 import { bodyOperations } from '../src/body/index.js';
+import { planFields, profilePatch } from '../src/schemas.js';
 
 const scratchParent = resolve('.scratch');
 const secret = 'synthetic-only-form-auth-secret-longer-than-32-chars';
@@ -146,6 +147,40 @@ const planBody = {
     { id: 'row-first', exerciseId: 'supported-row', setTarget: 2, repMin: 8, repMax: 12, targetKg: 8 },
   ],
 };
+
+test('backend-schema-bounds: oversized goals reject without per-element issues', () => {
+  const goals = Array.from({ length: 30 }, (_, index) => `Goal ${index + 1}`);
+  assert.deepEqual(profilePatch.parse({ expectedRevision: 0, goals }), { expectedRevision: 0, goals });
+
+  const oversized = profilePatch.safeParse({ expectedRevision: 0, goals: Array(31).fill(null) });
+  assert.equal(oversized.success, false);
+  if (!oversized.success) {
+    assert.deepEqual(oversized.error.issues.map(({ code, path }) => ({ code, path })), [
+      { code: 'too_big', path: ['goals'] },
+    ]);
+  }
+
+  const invalidAtLimit = profilePatch.safeParse({ expectedRevision: 0, goals: [...goals.slice(0, 29), null] });
+  assert.equal(invalidAtLimit.success, false);
+  if (!invalidAtLimit.success) {
+    assert.deepEqual(invalidAtLimit.error.issues.map(({ code, path }) => ({ code, path })), [
+      { code: 'invalid_type', path: ['goals', 29] },
+    ]);
+  }
+
+  const unknownField = profilePatch.safeParse({ expectedRevision: 0, goals, accountId: 'unexpected-account' });
+  assert.equal(unknownField.success, false);
+  if (!unknownField.success) assert.equal(unknownField.error.issues[0]!.code, 'unrecognized_keys');
+
+  assert.deepEqual(planFields.parse(planBody), planBody);
+  const duplicateItems = planFields.safeParse({ ...planBody, items: [planBody.items[0], planBody.items[0]] });
+  assert.equal(duplicateItems.success, false);
+  if (!duplicateItems.success) {
+    assert.deepEqual(duplicateItems.error.issues.map(({ code, path, message }) => ({ code, path, message })), [
+      { code: 'custom', path: ['items'], message: 'Duplicate item ID' },
+    ]);
+  }
+});
 
 test('backend-http-database: real accounts, revisions, snapshots, isolation, receipts and restart', async t => {
   await fixture(async f => {
