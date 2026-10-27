@@ -11,6 +11,7 @@ import { bugIntakeOwnedTables } from '../bug-intake/migration.js';
 import { progressComparisonOwnedTables } from '../progress-comparison/migration.js';
 import { manualRetentionOwnedTables } from '../body/manual-retention-migration.js';
 import { feedbackOwnedTables } from '../training-feedback/migration.js';
+import type { LifecycleEvidenceStore, LocalEvidenceProjection } from './evidence-store.js';
 
 export const lifecyclePolicy = 'form-account-lifecycle-v1';
 export const secretSchema = z.string().regex(/^[A-Za-z0-9_-]{43,128}$/);
@@ -23,10 +24,13 @@ export const exportRequest = z.object({ grant: secretSchema }).strict();
 type RequestRow = { id: string; account_id: string; command_key: string; intent_hash: string; phase: string;
  requested_at_ms: number; disabled_at_ms: number | null; local_purged_at_ms: number | null; status_token_hash: string; status_token_expires_at_ms: number };
 const categories = ['form_training_history', 'phone_challenges', 'purchase_proofs', 'auth_identity', 'backups', 'providers', 'activity', 'community'];
+const localCoreTables = ['command_receipts', 'transcription_attempts', 'set_revisions', 'performed_sets', 'session_occurrences',
+  'workout_sessions', 'plan_item_ids', 'plan_revisions', 'plans', 'document_revisions', 'documents', 'entitlement_grants'];
 
 export class AccountLifecycle {
   constructor(private readonly db: Sqlite, readonly adapters: readonly LifecycleAdapter[], ledger: SuppressionLedger,
-    private readonly clock: () => number = Date.now) {
+    private readonly clock: () => number = Date.now, private readonly evidenceStore?: LifecycleEvidenceStore) {
+    evidenceStore?.assertDatabase(db);
     if (!hasLifecycleSchema(db)) throw new DomainError(503, 'lifecycle_migration_required');
     if (new Set(adapters.map(x => x.category)).size !== adapters.length) throw new Error('Duplicate lifecycle category');
     bindSuppressionAuthority(db, ledger);
@@ -156,8 +160,9 @@ export class AccountLifecycle {
       const row = this.db.prepare('SELECT * FROM account_deletion_requests WHERE id=?').get(requestId) as RequestRow | undefined;
       if (!row) throw new DomainError(404, 'not_found');
       const evidence = authority;
-      const core = ['command_receipts', 'transcription_attempts', 'set_revisions', 'performed_sets', 'session_occurrences',
-        'workout_sessions', 'plan_item_ids', 'plan_revisions', 'plans', 'document_revisions', 'documents', 'entitlement_grants'];
+      const attempt = this.evidenceStore?.begin(authority, this.evidenceCategories(), this.clock());
+      const results: { category: string; status: import('./types.js').LifecycleResult['status'] }[] = [];
+      const core = localCoreTables;
       for (const table of core) this.db.prepare(`DELETE FROM ${table} WHERE account_id=?`).run(row.account_id);
       this.db.prepare('DELETE FROM apple_purchase_grants WHERE account_id=?').run(row.account_id);
       // Phone-step completion covers only immutable attribution; unbound history remains unresolved.
@@ -178,6 +183,7 @@ export class AccountLifecycle {
       for (const adapter of this.adapters) {
         if (!authority.qualifiedCategories.includes(adapter.category)) {
           qualified = false;
+          results.push({ category: adapter.category, status: 'pending' });
           this.db.prepare("UPDATE account_deletion_steps SET status='pending',evidence_ref=NULL,updated_at_ms=? WHERE request_id=? AND category=?")
             .run(this.clock(), requestId, adapter.category);
           continue;
@@ -188,6 +194,7 @@ export class AccountLifecycle {
         const complete = result.status === 'complete' && verified.status === 'complete';
         qualified &&= complete;
         const residual = result.status === 'complete' ? verified.status : result.status;
+        results.push({ category: adapter.category, status: complete ? 'complete' : residual });
         this.db.prepare('UPDATE account_deletion_steps SET status=?,evidence_ref=?,updated_at_ms=? WHERE request_id=? AND category=?')
           .run(complete ? 'complete' : residual === 'unavailable' ? 'pending' : residual, operationId, this.clock(), requestId, adapter.category);
       }
@@ -201,8 +208,40 @@ export class AccountLifecycle {
         .run(this.clock(), requestId);
       this.db.prepare("UPDATE account_deletion_requests SET phase='pending_external',local_purged_at_ms=? WHERE id=?")
         .run(qualified ? this.clock() : null, requestId);
-      return this.view(this.db.prepare('SELECT * FROM account_deletion_requests WHERE id=?').get(requestId) as RequestRow);
+      if (attempt && this.evidenceStore) {
+        results.push({ category: 'form_training_history', status: 'complete' }, { category: 'phone_challenges', status: 'complete' });
+        const projection = this.evidenceStore.finish(attempt, results, this.clock(), category => this.evidenceReadback(authority.accountId, authority.authUserId, authority.epoch, category));
+        this.db.prepare('UPDATE account_deletion_requests SET local_purged_at_ms=? WHERE id=?')
+          .run(projection.localPurged ? projection.firstObservedAtMs : null, requestId);
+        for (const category of projection.completedCategories) this.db.prepare(`UPDATE account_deletion_steps SET updated_at_ms=
+          (SELECT min(observed_at_ms) FROM account_deletion_evidence WHERE request_id=? AND category=? AND database_generation=? AND result='qualifying')
+          WHERE request_id=? AND category=?`).run(requestId, category, projection.calculation.binding.databaseGeneration, requestId, category);
+      }
+      const response = this.view(this.db.prepare('SELECT * FROM account_deletion_requests WHERE id=?').get(requestId) as RequestRow);
+      if (attempt) this.evidenceStore!.finalCheck(attempt);
+      return response;
     });
+  }
+  private evidenceCategories(): readonly string[] { return ['form_training_history', 'phone_challenges', ...this.adapters.map(adapter => adapter.category)]; }
+  private evidenceReadback(accountId: string, authUserId: string, epoch: number, category: string): boolean {
+    if (category === 'form_training_history') return !localCoreTables.some(table =>
+      this.db.prepare(`SELECT 1 FROM ${table} WHERE account_id=? LIMIT 1`).get(accountId)) &&
+      !this.db.prepare('SELECT 1 FROM apple_purchase_grants WHERE account_id=? LIMIT 1').get(accountId) &&
+      !this.db.prepare("SELECT 1 FROM account WHERE userId=? AND providerId='credential' LIMIT 1").get(authUserId) &&
+      !this.db.prepare('SELECT 1 FROM session WHERE userId=? LIMIT 1').get(authUserId);
+    if (category === 'phone_challenges') return !this.db.prepare('SELECT 1 FROM phone_challenges WHERE auth_user_id=? LIMIT 1').get(authUserId);
+    const adapter = this.adapters.find(value => value.category === category);
+    return adapter?.verifySuppressed(accountId, epoch).status === 'complete';
+  }
+  evidenceProjection(requestId: string): LocalEvidenceProjection | null {
+    if (!this.evidenceStore) return null;
+    const read = () => this.evidenceStore!.project(requestId, this.evidenceCategories(), category => {
+      const identity = this.db.prepare(`SELECT f.id accountId,f.auth_user_id authUserId,l.epoch FROM account_deletion_requests r
+        JOIN form_accounts f ON f.id=r.account_id JOIN account_lifecycle l ON l.account_id=f.id WHERE r.id=?`).get(requestId) as
+        { accountId: string; authUserId: string; epoch: number } | undefined;
+      return !!identity && this.evidenceReadback(identity.accountId, identity.authUserId, identity.epoch, category);
+    });
+    return this.db.inTransaction ? read() : this.db.transaction(read).immediate();
   }
   status(requestId: string, secret: string) {
     try {
@@ -220,8 +259,15 @@ export class AccountLifecycle {
   }
   private view(row: RequestRow, phase?: string) {
     const steps = this.db.prepare('SELECT category,status,retain_until_ms FROM account_deletion_steps WHERE request_id=? ORDER BY category').all(row.id) as { category: string; status: string; retain_until_ms: number | null }[];
+    let projection: LocalEvidenceProjection | null = null;
+    if (this.evidenceStore && row.disabled_at_ms !== null) {
+      try { projection = this.evidenceProjection(row.id); } catch { /* Unproved current evidence never exposes historical success. */ }
+      for (const step of steps) if (this.evidenceCategories().includes(step.category) && step.status === 'complete' &&
+        !projection?.completedCategories.includes(step.category)) step.status = 'pending';
+    }
     return { requestId: row.id, phase: phase ?? row.phase, initiated: true, disabled: !!row.disabled_at_ms || phase === 'disabled_pending_reconciliation',
-      localPurged: row.local_purged_at_ms !== null, complete: false, requestedAt: new Date(row.requested_at_ms).toISOString(),
+      localPurged: this.evidenceStore ? projection?.localPurged === true : row.local_purged_at_ms !== null,
+      complete: false, requestedAt: new Date(row.requested_at_ms).toISOString(),
       backupExpiryAt: null, billingCancellation: 'not_performed', reauthentication: 'password_only_qualified_source', steps };
   }
 }

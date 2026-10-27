@@ -1,4 +1,4 @@
-export type LifecycleCoverageCohort = 'runtime16' | 'source17' | 'source18' | 'source20' | 'source21' | 'source23' |
+export type LifecycleCoverageCohort = 'runtime16' | 'source17' | 'source18' | 'source20' | 'source21' | 'source23' | 'source24' |
   'optional-family' | 'optional-wearables' | 'optional-wearable-auth' | 'optional-purchase-reconciliation';
 export type LifecycleTableCoverage = Readonly<{
   table: string;
@@ -42,6 +42,12 @@ const body = { owner: 'Body manual measurements/retention', attribution: 'accoun
 
 // Qualification inventory only: no SQL, adapter registration, startup gate or deletion authority is derived from these rows.
 export const lifecycleTableCoverage: readonly LifecycleTableCoverage[] = Object.freeze([
+  ...rows(['account_deletion_evidence_operations', 'account_deletion_evidence'], { cohort: 'source24', owner: 'Account lifecycle evidence',
+    attribution: 'request_id/operation_id with immutable account/auth-user/epoch/suppression binding checked inside the guarded frame',
+    limits: 'Source-only full1–24; independent generation and current suppression witness required; never exported as account data.',
+    disposition: 'retained', mechanism: 'Append-only operation/fact tables, exact replay comparison and no-update/no-delete triggers.',
+    residual: 'Historical scoped proof only; no TTL executor, live runtime24 admission, provider/backup disposition or business retention policy.',
+    evidence: 'lifecycle/evidence-store.ts; lifecycle/evidence-migration.ts; lifecycle/evidence-source.ts; lifecycle-evidence.test.ts' }),
   ...rows(['form_migrations'], { cohort: 'runtime16', owner: 'Storage/migration runner', attribution: 'Database-wide version/checksum receipts',
     limits: 'No account partition.', disposition: 'operational', mechanism: 'migrate retains and verifies exact selected migration history.',
     residual: 'Not account data to purge; schema history is not evidence of lifecycle completion.', evidence: 'storage.ts#migrate' }),

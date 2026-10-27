@@ -15,6 +15,7 @@ import { manualMeasurementMigrationSql } from '../src/body/manual-measurement-mi
 import { manualRetentionMigrationSql } from '../src/body/manual-retention-migration.js';
 import { install } from './integration/account-modules/fixture.js';
 import { suppressionLedgerSchema } from '../src/lifecycle/ledger.js';
+import { selectSourceLifecycleEvidenceMigrations } from '../src/lifecycle/source-migrations.js';
 
 const inventory = (db: Sqlite): string[] => (db.prepare(
   "SELECT name FROM sqlite_master WHERE type='table' AND name NOT GLOB 'sqlite_*' ORDER BY name").all() as { name: string }[]).map(row => row.name);
@@ -91,6 +92,18 @@ test('optional unnumbered schemas are inventoried from actual fragments, includi
   }
   assert.equal((db.prepare('SELECT max(version) AS version FROM form_migrations').get() as { version: number }).version, 16,
     'inventorying optional fragments must not fabricate numbered migration receipts or qualify runtime admission');
+});
+
+test('source24 evidence tables qualify only in the exact full source cohort and retain proof', t => {
+  const db: Sqlite = new Database(':memory:'); t.after(() => db.close());
+  install(db, selectSourceLifecycleEvidenceMigrations());
+  qualify(db, ['runtime16', 'source17', 'source18', 'source20', 'source21', 'source23', 'source24']);
+  assert.throws(() => qualify(db, ['runtime16', 'source17', 'source18', 'source20', 'source21', 'source23']), /unclassified schema tables/);
+  for (const table of ['account_deletion_evidence_operations', 'account_deletion_evidence']) {
+    assert.equal(lifecycleTableCoverage.find(row => row.table === table)?.disposition, 'retained');
+    const triggers = db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name=? ORDER BY name").all(table);
+    assert.deepEqual(triggers, [{ name: `${table}_no_delete` }, { name: `${table}_no_update` }]);
+  }
 });
 
 test('unknown account-bearing and operational tables fail qualification without any runtime startup gate', t => {
