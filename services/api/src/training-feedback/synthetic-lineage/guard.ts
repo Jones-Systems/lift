@@ -1,4 +1,5 @@
 import type { AttemptV1, DependencyKind, EvidenceClosureV1, SourceRef } from '../../planning/synthetic-lineage/types.js';
+import type { SourceReference } from '../index.js';
 import type { DecodedEmbeddedEvidenceV1, EmbeddedClosureInputV1, EmbeddedPayloadsV1, EmbeddedReadonly,
   ProducerCheckedClosureV1 } from '../../planning/synthetic-lineage/subcodec-types.js';
 import { detach, canonical, result, requireThat, type Json } from './strict-json.js';
@@ -11,11 +12,17 @@ import { fixtureRecipe, fixtureAfter } from './fixture-recipe.js';
 
 type Closure = EmbeddedReadonly<EvidenceClosureV1>;
 type Need = Readonly<{ kind: DependencyKind; id: string; value: unknown }>;
+type ValidatedSourceReference = EmbeddedReadonly<SourceReference> | EmbeddedReadonly<SourceRef>;
+type SelectedInputId = NonNullable<Closure['registry']>['selectedInputIds'][number] |
+  EmbeddedPayloadsV1['synthetic.feedback-comparison-lineage.pinned-v1']['inputId'];
+type OwnerAccountText = Closure['dependencies'][number]['key']['ownerId'] | Closure['association']['accountId'];
+// Equality compares validated text without converting either nominal identity domain.
+const ownerAccountEqual = (owner: OwnerAccountText, account: OwnerAccountText): boolean => owner === account;
 function matching<T>(values: readonly T[], match: (value: T) => boolean): T {
   const found = values.filter(match); requireThat(found.length === 1, 'unresolved_reference'); return found[0]!;
 }
 const equal = (a: unknown, b: unknown) => requireThat(same(a, b));
-const references = (refs: readonly EmbeddedReadonly<SourceRef>[], allowed: readonly EmbeddedReadonly<SourceRef>[]) => {
+const references = (refs: readonly ValidatedSourceReference[], allowed: readonly EmbeddedReadonly<SourceRef>[]) => {
   unique(refs.map(ref => canonical(detach(ref))));
   refs.forEach(ref => matching(allowed, candidate => same(candidate, ref)));
 };
@@ -285,7 +292,8 @@ export function validateClosure(input: EmbeddedClosureInputV1) {
     requireThat(e.registry !== null && lineages.length > 0 && witnesses.length > 0);
     unique(e.registry.selectedInputIds); unique(e.registry.lineageEvidenceIds); unique(lineages.map(l => l.inputId));
     requireThat(e.registry.selectedInputIds.length === lineages.length && e.registry.lineageEvidenceIds.length === lineages.length);
-    lineages.forEach(l => { requireThat(e.registry!.selectedInputIds.includes(l.inputId)); checkLineage(l, e, witnesses); });
+    const selectedInputIds: readonly SelectedInputId[] = e.registry.selectedInputIds;
+    lineages.forEach(l => { requireThat(selectedInputIds.includes(l.inputId)); checkLineage(l, e, witnesses); });
     e.registry.lineageEvidenceIds.forEach((id, index) => {
       const entry = matching(decoded, d => d.blob.id === id);
       requireThat(entry.blob.schema === 'synthetic.feedback-comparison-lineage.pinned-v1'); equal(entry.value, lineages[index]);
@@ -303,7 +311,7 @@ export function validateClosure(input: EmbeddedClosureInputV1) {
     requireThat(dispositionRows.length === a.sourceRefs.length);
     const needs = [...dependencyRequirements(attempt)];
     for (const row of dispositionRows) {
-      requireThat(row.disposition === 'keep' && row.qualified && row.dependencyKey.ownerId === a.accountId);
+      requireThat(row.disposition === 'keep' && row.qualified && ownerAccountEqual(row.dependencyKey.ownerId, a.accountId));
       matching(a.sourceRefs, ref => same(ref, row.sourceRef));
       needs.push({ kind: 'input-disposition', id: row.dependencyKey.id, value: row });
     }
@@ -311,7 +319,7 @@ export function validateClosure(input: EmbeddedClosureInputV1) {
     unique(e.dependencies.map(token => canonical(detach(token.key))));
     requireThat(needs.length === e.dependencies.length, 'unresolved_reference');
     for (const need of needs) {
-      const token = matching(e.dependencies, t => t.key.kind === need.kind && t.key.ownerId === a.accountId && t.key.id === need.id);
+      const token = matching(e.dependencies, t => t.key.kind === need.kind && ownerAccountEqual(t.key.ownerId, a.accountId) && t.key.id === need.id);
       requireThat(token.state === 'current' && token.contentDigest === dependencyDigest(need.value), 'digest_mismatch');
     }
     unique(e.decisions.map(d => d.decisionId));
@@ -328,8 +336,9 @@ export function validateClosure(input: EmbeddedClosureInputV1) {
     requireThat(r.evidenceDigest === hash('evidence', e), 'digest_mismatch');
     requireThat(review.reviewedMeaningDigest === hash('review', { reviewId: review.reviewId, recommendation: r, reviewingActor: review.reviewingActor, consent: review.consent }), 'digest_mismatch');
     requireThat(attempt.intentDigest === hash('intent', intent), 'digest_mismatch');
+    const validated: EmbeddedClosureInputV1 = checked;
     // This brand asserts local consistency only. No realm/frame membership, policy authority, live currentness or effect is issued.
-    return checked as ProducerCheckedClosureV1;
+    return validated as ProducerCheckedClosureV1;
   });
 }
 import { createHash } from 'node:crypto';
