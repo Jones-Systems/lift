@@ -50,6 +50,20 @@ class PublicChecksTests(unittest.TestCase):
         contract = checks.selection(ROOT, ["lifecycle-runtime"])
         self.assertEqual(contract["groups"], ["api-compile", "lifecycle-runtime"])
         command = contract["commands"][1]
+        evidence_sources = ("tests/lifecycle-completion.test.ts",
+                            "tests/lifecycle-coverage.test.ts",
+                            "tests/lifecycle-evidence-codec.test.ts",
+                            "tests/lifecycle-evidence.test.ts")
+        self.assertEqual(len(checks.API_TESTS["lifecycle-runtime"]), 26)
+        self.assertEqual(len(set(checks.API_TESTS["lifecycle-runtime"])), 26)
+        discovery = json.loads((ROOT / "services/api/scripts/integration/test-modules.json").read_text())
+        for source in evidence_sources:
+            with self.subTest(source=source):
+                emitted = "dist/" + source.removesuffix(".ts") + ".js"
+                self.assertEqual(command["argv"].count(emitted), 1)
+                self.assertEqual(command["test_sources"].count("services/api/" + source), 1)
+                owners = [group for group, files in discovery["groups"].items() for path in files if path == source]
+                self.assertEqual(owners, ["core"])
         for source in ("tests/lifecycle-purge-executor.test.ts",
                        "tests/bug-intake/lifecycle-chain.test.ts",
                        "tests/usage-limits/lifecycle.test.ts",
@@ -64,6 +78,13 @@ class PublicChecksTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("")
         self.assertEqual(checks.selection(self.root, ["lifecycle-runtime"]), contract)
+        for source in evidence_sources:
+            with self.subTest(missing=source):
+                path = self.root / "services/api" / source
+                path.unlink()
+                with self.assertRaises(FileNotFoundError):
+                    checks.selection(self.root, ["lifecycle-runtime"])
+                path.write_text("")
         (self.root / "services/api/tests/runtime-modules/restore-drill.test.ts").unlink()
         with self.assertRaises(FileNotFoundError):
             checks.selection(self.root, ["lifecycle-runtime"])

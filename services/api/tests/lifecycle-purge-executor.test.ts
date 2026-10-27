@@ -117,6 +117,8 @@ test('qualified subframes delegate readiness, reject category switching and reta
   assert.equal(calls, 1); assert.equal(heldCalls, 0);
   assert.equal(result.complete, false); assert.equal(result.localPurged, false); assert.equal(result.phase, 'pending_external');
   assert.equal(result.backupExpiryAt, null); assert.equal(result.billingCancellation, 'not_performed');
+  assert.equal(f.lifecycle.evidenceProjection(requestId), null);
+  assert.equal(f.db.prepare("SELECT 1 FROM sqlite_master WHERE name='account_deletion_evidence'").get(), undefined);
   const states = Object.fromEntries(result.steps.map(step => [step.category, step.status]));
   assert.deepEqual(states, { activity: 'retained', auth_identity: 'retained', backups: 'pending', community: 'pending',
     direct_provider_auth: 'pending', form_training_history: 'complete', phone_challenges: 'complete', providers: 'pending', purchase_proofs: 'retained' });
