@@ -219,7 +219,7 @@ test('schema rejects orphan objects, altered table/index/trigger and rolls back 
 
 test('capture follows grant/session/epoch/request ownership and leaves foreign user material unchanged', async t => {
   const f = fixture(t); f.initiate(); const grant = await f.grant();
-  const input = { grant: grant.grant, policyVersion: lifecyclePolicy, confirmation: 'delete_whole_account' as const };
+  const input = { grant: grant.grant, policyVersion: lifecyclePolicy, confirmation: 'delete_whole_account' } as const;
   for (const actor of [{ ...A, authUserId: B.authUserId }, { ...A, sessionId: B.sessionId }, { ...A, epoch: 1 }, B])
     assert.throws(() => f.source.lifecycle.confirm(actor, requestId, input));
   const exportGrant = await f.grant('account_export');
