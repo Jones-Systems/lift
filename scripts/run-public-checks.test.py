@@ -56,9 +56,11 @@ class PublicChecksTests(unittest.TestCase):
                             "tests/lifecycle-evidence.test.ts",
                             "tests/lifecycle-provider-revocation-apple.test.ts",
                             "tests/lifecycle-provider-revocation.test.ts",
+                            "tests/lifecycle-reauthentication-source.test.ts",
+                            "tests/lifecycle-reauthentication.test.ts",
                             "tests/purchases/status-codec.test.ts")
-        self.assertEqual(len(checks.API_TESTS["lifecycle-runtime"]), 29)
-        self.assertEqual(len(set(checks.API_TESTS["lifecycle-runtime"])), 29)
+        self.assertEqual(len(checks.API_TESTS["lifecycle-runtime"]), 31)
+        self.assertEqual(len(set(checks.API_TESTS["lifecycle-runtime"])), 31)
         discovery = json.loads((ROOT / "services/api/scripts/integration/test-modules.json").read_text())
         for source in evidence_sources:
             with self.subTest(source=source):
@@ -67,6 +69,10 @@ class PublicChecksTests(unittest.TestCase):
                 self.assertEqual(command["test_sources"].count("services/api/" + source), 1)
                 owners = [group for group, files in discovery["groups"].items() for path in files if path == source]
                 self.assertEqual(owners, ["purchases"] if source == "tests/purchases/status-codec.test.ts" else ["core"])
+        helper = "tests/lifecycle-reauthentication-fixture.ts"
+        self.assertEqual(command["test_sources"].count("services/api/" + helper), 1)
+        self.assertNotIn("dist/" + helper.removesuffix(".ts") + ".js", command["argv"])
+        self.assertFalse(any(helper in files for files in discovery["groups"].values()))
         for source in ("tests/lifecycle-purge-executor.test.ts",
                        "tests/bug-intake/lifecycle-chain.test.ts",
                        "tests/usage-limits/lifecycle.test.ts",
@@ -92,7 +98,7 @@ class PublicChecksTests(unittest.TestCase):
             self.assertEqual(checks.execute(self.root, output, contract), 0)
         receipt = json.loads((output / "receipt.json").read_text())
         self.assertEqual(receipt["input_sha256"][codec], checks.digest(ROOT / codec))
-        for source in evidence_sources:
+        for source in (*evidence_sources, helper):
             with self.subTest(missing=source):
                 path = self.root / "services/api" / source
                 path.unlink()
@@ -261,6 +267,138 @@ class PublicChecksTests(unittest.TestCase):
         self.assertFalse(Path(receipt["scratch_root"]).exists())
         self.assertIn("public proof", (self.parent / "evidence" / receipt["results"][0]["log"]).read_text())
         self.assertFalse((self.root / "child-output").exists())
+
+    def test_private_home_under_exposed_ambient_home_follows_workspace_lifecycle(self):
+        exposed = self.parent / "exposed-source-parent"
+        exposed.mkdir(mode=0o775)
+        exposed.chmod(0o775)
+        self.root.rename(exposed / "source")
+        self.root = exposed / "source"
+        source_before = {str(p.relative_to(self.root)): p.read_bytes()
+                         for p in self.root.rglob("*") if p.is_file()}
+        for outcome in (0, 23, signal.SIGINT, signal.SIGTERM):
+            with self.subTest(outcome=outcome):
+                ambient = self.parent / f"ambient-home-{outcome}"
+                ambient.mkdir(mode=0o755)
+                ambient.chmod(0o755)
+                before = ambient.stat()
+                report = self.parent / f"home-{outcome}.json"
+                parent_report = self.parent / f"parent-home-{outcome}"
+                output = self.parent / f"home-evidence-{outcome}"
+                body = f"""
+import json, os, time
+from pathlib import Path
+home = Path.home()
+fixture = home / 'source26-fixture' / 'independent'
+fixture.mkdir(parents=True, mode=0o700)
+fixture.parent.chmod(0o700)
+record = fixture / 'continuity.json'
+record.write_text('{{}}')
+record.chmod(0o600)
+Path({str(report)!r}).write_text(json.dumps({{
+    'home': str(home), 'workspace': str(Path.cwd()), 'pid': os.getpid(),
+    'modes': [p.stat().st_mode & 0o7777 for p in (home, fixture.parent, fixture)],
+    'uids': [p.stat().st_uid for p in (home, fixture.parent, fixture)],
+    'canonical': all(p.resolve() == p for p in (home, fixture.parent, fixture)),
+    'cache': os.environ['npm_config_cache'], 'record_mode': record.stat().st_mode & 0o7777,
+    'workspace_uid': Path.cwd().stat().st_uid, 'workspace_mode': Path.cwd().stat().st_mode & 0o7777,
+    'workspace_canonical': Path.cwd().resolve() == Path.cwd(),
+    'ancestors': [{{'path': str(p), 'mode': p.lstat().st_mode & 0o7777,
+                   'symlink': p.is_symlink()}} for p in (Path.cwd(), *Path.cwd().parents)]
+}}))
+{('time.sleep(60)' if outcome in (signal.SIGINT, signal.SIGTERM) else f'raise SystemExit({outcome})')}
+"""
+                program = f"""
+import importlib.util, os
+from pathlib import Path
+from unittest.mock import patch
+s = importlib.util.spec_from_file_location('checks', {str(ROOT / checks.HELPER)!r})
+m = importlib.util.module_from_spec(s)
+s.loader.exec_module(m)
+with patch.object(m.subprocess, 'check_output', return_value={'a' * 40!r}):
+    status = m.execute(Path({str(self.root)!r}), Path({str(output)!r}), {self.contract(body)!r})
+Path({str(parent_report)!r}).write_text(os.environ['HOME'])
+raise SystemExit(status)
+"""
+                child = subprocess.Popen([sys.executable, "-B", "-c", program],
+                                         env={**os.environ, "HOME": str(ambient)}, umask=0o022,
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                try:
+                    deadline = time.monotonic() + 10
+                    while not report.exists() and child.poll() is None and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                    self.assertTrue(report.exists(), "HOME fixture did not start")
+                    observed = json.loads(report.read_text())
+                    if outcome in (signal.SIGINT, signal.SIGTERM):
+                        child.send_signal(outcome)
+                    stdout, _ = child.communicate(timeout=15)
+                    expected = 128 + outcome if outcome in (signal.SIGINT, signal.SIGTERM) else outcome
+                    self.assertEqual(child.returncode, expected, stdout.decode())
+                    receipt = json.loads((output / "receipt.json").read_text())
+                    self.assertEqual(receipt["status"], "cancelled" if expected > 128 else "failed" if expected else "passed")
+                    home = Path(observed["home"])
+                    workspace = Path(receipt["scratch_root"])
+                    self.assertNotEqual(home, ambient)
+                    self.assertEqual(workspace.parent, ambient)
+                    self.assertFalse(workspace.is_relative_to(exposed))
+                    self.assertEqual(observed["workspace_uid"], os.getuid())
+                    self.assertEqual(observed["workspace_mode"], 0o700)
+                    self.assertTrue(observed["workspace_canonical"])
+                    self.assertTrue(all(not row["mode"] & 0o022 and not row["symlink"]
+                                        for row in observed["ancestors"]))
+                    self.assertEqual(exposed.stat().st_mode & 0o7777, 0o775)
+                    self.assertEqual(source_before, {str(p.relative_to(self.root)): p.read_bytes()
+                                                    for p in self.root.rglob("*") if p.is_file()})
+                    self.assertTrue(home.is_relative_to(workspace))
+                    self.assertNotEqual(home, workspace)
+                    self.assertEqual(observed["workspace"], str(workspace))
+                    self.assertEqual(observed["modes"], [0o700] * 3)
+                    self.assertEqual(observed["uids"], [os.getuid()] * 3)
+                    self.assertTrue(observed["canonical"])
+                    self.assertEqual(observed["record_mode"], 0o600)
+                    self.assertTrue(Path(observed["cache"]).is_relative_to(workspace))
+                    self.assertEqual(parent_report.read_text(), str(ambient))
+                    after = ambient.stat()
+                    self.assertEqual((after.st_dev, after.st_ino, after.st_uid, after.st_mode),
+                                     (before.st_dev, before.st_ino, before.st_uid, before.st_mode))
+                    self.assertEqual(list(ambient.iterdir()), [])
+                    self.assertTrue(receipt["scratch_removed"])
+                    self.assertFalse(home.exists())
+                    self.assertFalse(workspace.exists())
+                    with self.assertRaises(ProcessLookupError):
+                        os.killpg(observed["pid"], 0)
+                finally:
+                    if child.poll() is None:
+                        child.kill()
+                    child.communicate(timeout=5)
+
+    def test_unsafe_or_symlink_workspace_parent_rejected_before_child_launch(self):
+        writable = self.parent / "writable-parent"
+        writable.mkdir(mode=0o775)
+        writable.chmod(0o775)
+        nested = writable / "nested-home"
+        nested.mkdir(mode=0o755)
+        safe = self.parent / "safe-home"
+        safe.mkdir(mode=0o755)
+        link = self.parent / "linked-home"
+        link.symlink_to(safe, target_is_directory=True)
+        safe_child = safe / "child-home"
+        safe_child.mkdir(mode=0o755)
+        for index, ambient in enumerate((writable, nested, link, link / "child-home", Path("relative-home"))):
+            with self.subTest(parent=str(ambient)):
+                paths = (writable, nested, safe, safe_child)
+                before = [(p.stat().st_ino, p.stat().st_mode, sorted(p.iterdir())) for p in paths]
+                marker = self.parent / f"unsafe-child-{index}"
+                body = f"from pathlib import Path; Path({str(marker)!r}).touch()"
+                output = self.parent / f"unsafe-evidence-{index}"
+                with patch.dict(os.environ, {"HOME": str(ambient)}), patch.object(checks.subprocess, "check_output", return_value="a" * 40):
+                    status = checks.execute(self.root, output, self.contract(body))
+                receipt = json.loads((output / "receipt.json").read_text())
+                self.assertEqual(status, 1)
+                self.assertIn("Unsafe public workspace parent", receipt["error"])
+                self.assertEqual(receipt["results"], [])
+                self.assertFalse(marker.exists())
+                self.assertEqual(before, [(p.stat().st_ino, p.stat().st_mode, sorted(p.iterdir())) for p in paths])
 
     def test_failure_keeps_exit_code_and_evidence_and_does_not_run_later_commands(self):
         status, receipt = self.execute("from pathlib import Path; Path('partial').write_text('owned'); print('failure proof'); raise SystemExit(23)", second=True)

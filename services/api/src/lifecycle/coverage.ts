@@ -1,4 +1,4 @@
-export type LifecycleCoverageCohort = 'runtime16' | 'source17' | 'source18' | 'source20' | 'source21' | 'source23' | 'source24' | 'source25' |
+export type LifecycleCoverageCohort = 'runtime16' | 'source17' | 'source18' | 'source20' | 'source21' | 'source23' | 'source24' | 'source25' | 'source26' |
   'optional-family' | 'optional-wearables' | 'optional-wearable-auth' | 'optional-purchase-reconciliation';
 export type LifecycleTableCoverage = Readonly<{
   table: string;
@@ -42,6 +42,12 @@ const body = { owner: 'Body manual measurements/retention', attribution: 'accoun
 
 // Qualification inventory only: no SQL, adapter registration, startup gate or deletion authority is derived from these rows.
 export const lifecycleTableCoverage: readonly LifecycleTableCoverage[] = Object.freeze([
+  ...rows(['account_action_challenge_budgets', 'account_action_challenges', 'account_action_proof_consumptions'], {
+    cohort: 'source26', owner: 'Dedicated source action reauthentication', attribution: 'Immutable account/auth user, session/epoch, purpose, subject/provenance and generation; retained proof joins exact grant/request.',
+    limits: 'Restricted security metadata: no code, MAC, key, token, subject digest or private linkage is an export field.',
+    disposition: 'retained', mechanism: 'Monotonic account budgets, immutable challenge bindings and unique one-use proof/request guards; no-delete triggers retain replay history.',
+    residual: 'Source-only synthetic custody; no production restore, provider arrival, retention expiry or deletion completion authority.',
+    evidence: 'lifecycle/reauthentication-migration.ts; lifecycle/reauthentication.ts; lifecycle/reauthentication-proof.ts; lifecycle-reauthentication-source.test.ts' }),
   ...rows(['account_provider_revocation_intents', 'account_provider_revocation_attempts'], { cohort: 'source25', owner: 'Account provider revocation',
     attribution: 'Original deletion request, immutable Form/auth/provider subject, exact source row and content-versioned token reference',
     limits: 'Explicit full1–25 only; restricted authority/evidence excluded from exports and local purge; no token copy.',

@@ -1,3 +1,4 @@
+import { assertSourceActionAuthority, recheckSourceActionProofUse, consumeSourceActionProof, type SourceActionAuthority } from './reauthentication-proof.js';
 import { bindLocalPurgeExecutor, withLocalPurgeAuthority, type LocalPurgeAuthority } from './purge-executor.js';
 import { createCanonicalAccountWriter } from '../integration/account-modules/canonical-writer.js';
 import { randomBytes } from 'node:crypto';
@@ -50,9 +51,9 @@ export class AccountLifecycle {
   }
   assertActive(context: AccountContext): void { assertActive(this.db, context); }
   private grant(context: AccountContext, token: string, purpose: 'account_delete' | 'account_export'): void {
-    const row = this.db.prepare('SELECT epoch,purpose,expires_at_ms,consumed_at_ms FROM account_action_grants WHERE token_hash=? AND account_id=? AND session_id=?')
-      .get(hash(token), context.accountId, context.sessionId) as { epoch: number; purpose: string; expires_at_ms: number; consumed_at_ms: number | null } | undefined;
-    if (!row || row.epoch !== context.epoch || row.purpose !== purpose || row.expires_at_ms <= this.clock() || row.consumed_at_ms !== null)
+    const row = this.db.prepare('SELECT epoch,purpose,method,expires_at_ms,consumed_at_ms FROM account_action_grants WHERE token_hash=? AND account_id=? AND session_id=?')
+      .get(hash(token), context.accountId, context.sessionId) as { epoch: number; purpose: string; method: string; expires_at_ms: number; consumed_at_ms: number | null } | undefined;
+    if (!row || row.method !== 'password' || row.epoch !== context.epoch || row.purpose !== purpose || row.expires_at_ms <= this.clock() || row.consumed_at_ms !== null)
       throw new DomainError(403, 'action_grant_invalid');
   }
   async issueGrant(context: AccountContext, input: z.infer<typeof actionGrantRequest>, verifyPassword: () => Promise<boolean>) {
@@ -95,21 +96,31 @@ export class AccountLifecycle {
     });
   }
   confirm(context: AccountContext, requestId: string, input: z.infer<typeof deletionConfirmation>) {
+    return this.confirmWithProof(context, requestId, input);
+  }
+  confirmSourceAction(authority: SourceActionAuthority, context: AccountContext, requestId: string, token: string) {
+    if (this.db.inTransaction) throw new DomainError(503, 'action_reauthentication_held');
+    assertSourceActionAuthority(authority, this.db);
+    return this.confirmWithProof(context, requestId, { grant: token, policyVersion: lifecyclePolicy, confirmation: 'delete_whole_account' }, authority);
+  }
+  private confirmWithProof(context: AccountContext, requestId: string, input: z.infer<typeof deletionConfirmation>, authority?: SourceActionAuthority) {
     try {
       return this.db.transaction(() => {
         assertActive(this.db, context);
         const row = this.db.prepare('SELECT * FROM account_deletion_requests WHERE id=? AND account_id=?').get(requestId, context.accountId) as RequestRow | undefined;
         if (!row) throw new DomainError(404, 'not_found');
         if (row.phase !== 'awaiting_reauthentication') throw new DomainError(409, 'deletion_confirmation_unavailable');
-        this.grant(context, input.grant, 'account_delete');
-        const now = this.clock();
+        const verified = authority ? consumeSourceActionProof(authority, this.db, context, input.grant, 'account_delete', requestId) : null;
+        if (!authority) this.grant(context, input.grant, 'account_delete');
+        const now = verified?.usedAtMs ?? this.clock();
         const providerCapture = this.providerConfirmation?.capture({ context, requestId, now });
+        if (authority) recheckSourceActionProofUse(authority, this.db, context, input.grant, requestId);
         // The independent ledger commits first. Main rollback must never undo that suppression.
         const evidence = suppressionAuthority(this.db).recordDisable({ accountId: context.accountId, authUserId: context.authUserId,
           epoch: context.epoch + 1, requestId, disabledAtMs: now });
         this.applyDisable(evidence);
-        this.db.prepare("UPDATE account_deletion_requests SET phase='disabled_pending_purge',verified_at_ms=?,verification_method='password',disabled_at_ms=? WHERE id=?")
-          .run(now, evidence.disabledAtMs, requestId);
+        this.db.prepare("UPDATE account_deletion_requests SET phase='disabled_pending_purge',verified_at_ms=?,verification_method=?,disabled_at_ms=? WHERE id=?")
+          .run(verified?.verifiedAtMs ?? now, verified?.method ?? 'password', evidence.disabledAtMs, requestId);
         try { this.providerConfirmation?.persist(providerCapture, requestId); }
         catch { throw new Error('provider_intent_persistence_unknown'); }
         for (const adapter of this.adapters) {
@@ -156,6 +167,10 @@ export class AccountLifecycle {
       this.grant(context, token, 'account_export');
       this.db.prepare('UPDATE account_action_grants SET consumed_at_ms=? WHERE token_hash=? AND consumed_at_ms IS NULL').run(this.clock(), hash(token));
     });
+  }
+  consumeSourceActionExportGrant(authority: SourceActionAuthority, context: AccountContext, token: string) {
+    if (this.db.inTransaction) throw new DomainError(503, 'action_reauthentication_held');
+    return withActiveWrite(this.db, context, () => consumeSourceActionProof(authority, this.db, context, token, 'account_export'));
   }
   // No public purge route. Root must separately authorize any non-synthetic execution.
   purgeLocal(capability: LocalPurgeAuthority) {

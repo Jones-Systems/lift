@@ -1,3 +1,4 @@
+import { selectSourceActionReauthenticationMigrations } from '../src/lifecycle/reauthentication-source-migrations.js';
 import { selectSourceProviderRevocationMigrations } from '../src/lifecycle/providers/source-migrations.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -176,4 +177,20 @@ test('source25 restricted provider authority/evidence has exact ownership withou
   assert.equal(inventory(memory(t)).includes('account_provider_revocation_intents'), false);
   const old: Sqlite = new Database(':memory:'); t.after(() => old.close()); install(old, selectSourceLifecycleEvidenceMigrations());
   assert.equal(inventory(old).includes('account_provider_revocation_attempts'), false);
+});
+
+
+test('exact source26 inventories three retained security tables without export or completion authority', t => {
+  const db: Sqlite = new Database(':memory:'); t.after(() => db.close());
+  install(db, selectSourceActionReauthenticationMigrations());
+  const cohorts: LifecycleCoverageCohort[] = ['runtime16', 'source17', 'source18', 'source20', 'source21', 'source23', 'source24', 'source25', 'source26'];
+  qualify(db, cohorts);
+  assert.throws(() => qualify(db, cohorts.filter(c => c !== 'source26')), /unclassified schema tables/);
+  const retained = lifecycleTableCoverage.filter(row => row.cohort === 'source26');
+  assert.deepEqual(retained.map(row => row.table).sort(), ['account_action_challenge_budgets', 'account_action_challenges', 'account_action_proof_consumptions']);
+  for (const row of retained) {
+    assert.equal(row.disposition, 'retained');
+    assert.match(row.limits, /security metadata/); assert.match(row.residual, /no production restore/);
+    assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND tbl_name=? AND sql LIKE '%BEFORE DELETE%'").get(row.table));
+  }
 });

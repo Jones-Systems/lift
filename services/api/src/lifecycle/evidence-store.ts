@@ -1,3 +1,6 @@
+import { assertSourceActionReauthenticationHistory } from './reauthentication-source-migrations.js';
+import { assertActionReauthenticationSchema } from './reauthentication-migration.js';
+import { assertSourceActionContinuityRecord, resolveSourceActionDeletionProof } from './reauthentication-proof.js';
 import { sourceLifecycleLocalAbsenceReadback, type SourceLifecycleLocalAbsenceReader } from './local-absence.js';
 import type { LifecycleAdapter } from './types.js';
 import { lstatSync, realpathSync } from 'node:fs';
@@ -28,14 +31,15 @@ export function assertLifecycleEvidenceSchema(db: Sqlite, installed: boolean): v
   if (related.length !== lifecycleEvidenceSchemaObjects.length || lifecycleEvidenceSchemaObjects.some(object =>
     !related.some(row => row.name === object.name && row.type === object.type && row.sql !== null && normalize(row.sql) === normalize(object.sql)))) held();
 }
-export type SourceLifecycleHistorySelection = 'selected-lifecycle-evidence-24' | 'selected-provider-revocation-25';
+export type SourceLifecycleHistorySelection = 'selected-lifecycle-evidence-24' | 'selected-provider-revocation-25' | 'selected-action-reauthentication-26';
 function schemaDigest(db: Sqlite, selected: SourceLifecycleHistorySelection): string {
-  if (selected !== 'selected-lifecycle-evidence-24' && selected !== 'selected-provider-revocation-25') held();
-  const validate = selected === 'selected-provider-revocation-25' ? assertSourceProviderRevocationHistory : assertSourceLifecycleEvidenceHistory;
+  if (selected !== 'selected-lifecycle-evidence-24' && selected !== 'selected-provider-revocation-25' && selected !== 'selected-action-reauthentication-26') held();
+  const validate = selected === 'selected-action-reauthentication-26' ? assertSourceActionReauthenticationHistory : selected === 'selected-provider-revocation-25' ? assertSourceProviderRevocationHistory : assertSourceLifecycleEvidenceHistory;
   validate(db.prepare('SELECT version,checksum FROM form_migrations ORDER BY version').all() as
     { version: number; checksum: string }[], true);
   assertLifecycleEvidenceSchema(db, true);
-  if (selected === 'selected-provider-revocation-25') assertProviderRevocationSchema(db, true);
+  if (selected !== 'selected-lifecycle-evidence-24') assertProviderRevocationSchema(db, true);
+  assertActionReauthenticationSchema(db, selected === 'selected-action-reauthentication-26');
   return evidenceDigest(db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name").all());
 }
 
@@ -79,7 +83,7 @@ export function bindSourceLifecycleCurrentness(db: Sqlite, reader: SourceLifecyc
   purpose: 'lifecycle-evidence-v1' | 'provider-revocation-v1' = 'lifecycle-evidence-v1'): SourceLifecycleCurrentness {
   const bound = readers.get(reader);
   if (!bound || bound.db !== db || !['lifecycle-evidence-v1', 'provider-revocation-v1'].includes(purpose) ||
-    (selected !== 'selected-provider-revocation-25' && purpose !== 'lifecycle-evidence-v1')) held();
+    (selected !== 'selected-provider-revocation-25' && selected !== 'selected-action-reauthentication-26' && purpose !== 'lifecycle-evidence-v1')) held();
   const schema = schemaDigest(db, selected), checkpoint = bound.authority.checkpoint();
   const port = Object.freeze(Object.create(null)) as SourceLifecycleCurrentness;
   currentnessPorts.set(port, { db, reader: bound, schema, selected, purpose,
@@ -87,21 +91,19 @@ export function bindSourceLifecycleCurrentness(db: Sqlite, reader: SourceLifecyc
       revision: checkpoint.revision, committedSequence: checkpoint.committedSequence, committedHeadDigest: checkpoint.committedHeadDigest }) });
   return port;
 }
-export function readSourceLifecycleCurrentness(port: SourceLifecycleCurrentness, requestId: string,
-  prior?: CompletionBinding['checkpoint']): SourceLifecycleCurrentnessSnapshot {
+export type SourceLifecycleStoreSnapshot = Readonly<{ generation: SourceLifecycleEvidenceGeneration; schemaDigest: string;
+  checkpoint: CompletionBinding['checkpoint']; authority: CurrentSuppressionAuthority }>;
+export function readSourceLifecycleStoreCurrentness(port: SourceLifecycleCurrentness,
+  prior?: CompletionBinding['checkpoint']): SourceLifecycleStoreSnapshot {
   const state = currentnessPorts.get(port);
   if (!state) held();
   try {
     const { db, reader } = state;
+    const actualGeneration = generation(reader.read(db));
     if (!db.open || suppressionAuthority(db) !== reader.authority || reader.file !== fileIdentity(db) ||
-      evidenceCanonical(generation(reader.read(db))) !== evidenceCanonical(reader.generation) || schemaDigest(db, state.selected) !== state.schema) held();
-    const row = db.prepare(`SELECT r.account_id,r.policy_version,r.intent_hash,r.verified_at_ms,r.verification_method,l.state,l.epoch,l.suppression_seq,f.auth_user_id
-      FROM account_deletion_requests r JOIN form_accounts f ON f.id=r.account_id
-      JOIN account_lifecycle l ON l.account_id=r.account_id WHERE r.id=?`).get(requestId) as
-      { account_id: string; auth_user_id: string; state: string; epoch: number; suppression_seq: number; policy_version: string;
-        intent_hash: string; verified_at_ms: number | null; verification_method: string | null } | undefined;
-    if (!row || row.verified_at_ms === null || !Number.isSafeInteger(row.verified_at_ms) || row.verification_method !== 'password') held();
-    const checkpoint = reader.authority.checkpoint(), suppression = reader.authority.lookup(row.account_id);
+      evidenceCanonical(actualGeneration) !== evidenceCanonical(reader.generation) || schemaDigest(db, state.selected) !== state.schema) held();
+    if (state.selected === 'selected-action-reauthentication-26') assertSourceActionContinuityRecord(db, actualGeneration);
+    const checkpoint = reader.authority.checkpoint();
     const checkpoints = [state.lastCheckpoint, ...(prior ? [prior] : [])];
     for (const c of checkpoints) if (c.authorityId !== checkpoint.authorityId || c.ledgerSchemaDigest !== checkpoint.ledgerSchemaDigest ||
       !Number.isSafeInteger(c.revision) || c.revision < 0 || !Number.isSafeInteger(c.committedSequence) || c.committedSequence < 0 ||
@@ -113,6 +115,27 @@ export function readSourceLifecycleCurrentness(port: SourceLifecycleCurrentness,
       for (const c of checkpoints) if (c.committedSequence === sequence && c.committedHeadDigest !== head) held();
     });
     if (head !== checkpoint.committedHeadDigest || sequence !== checkpoint.committedSequence) held();
+    if (checkpoint.pending) held();
+    const current = Object.freeze({ authorityId: checkpoint.authorityId, ledgerSchemaDigest: checkpoint.ledgerSchemaDigest,
+      revision: checkpoint.revision, committedSequence: checkpoint.committedSequence, committedHeadDigest: checkpoint.committedHeadDigest });
+    state.lastCheckpoint = current;
+    return Object.freeze({ generation: actualGeneration, schemaDigest: state.schema, checkpoint: current, authority: reader.authority });
+  } catch { return held(); }
+}
+export function readSourceLifecycleCurrentness(port: SourceLifecycleCurrentness, requestId: string,
+  prior?: CompletionBinding['checkpoint']): SourceLifecycleCurrentnessSnapshot {
+  const state = currentnessPorts.get(port);
+  if (!state) held();
+  try {
+    const { db, reader } = state;
+    const current = readSourceLifecycleStoreCurrentness(port, prior);
+    const row = db.prepare(`SELECT r.account_id,r.policy_version,r.intent_hash,r.verified_at_ms,r.verification_method,l.state,l.epoch,l.suppression_seq,f.auth_user_id
+      FROM account_deletion_requests r JOIN form_accounts f ON f.id=r.account_id
+      JOIN account_lifecycle l ON l.account_id=r.account_id WHERE r.id=?`).get(requestId) as
+      { account_id: string; auth_user_id: string; state: string; epoch: number; suppression_seq: number; policy_version: string;
+        intent_hash: string; verified_at_ms: number | null; verification_method: string | null } | undefined;
+    if (!row || row.verified_at_ms === null || !Number.isSafeInteger(row.verified_at_ms) || (row.verification_method !== 'password' && state.selected !== 'selected-action-reauthentication-26')) held();
+    const checkpoint = reader.authority.checkpoint(), suppression = reader.authority.lookup(row.account_id);
     if (!suppression || checkpoint.pending || row.state !== 'disabled' || suppression.requestId !== requestId ||
       suppression.authUserId !== row.auth_user_id || suppression.epoch !== row.epoch || suppression.sequence !== row.suppression_seq ||
       checkpoint.committedSequence < suppression.sequence) held();
@@ -122,7 +145,8 @@ export function readSourceLifecycleCurrentness(port: SourceLifecycleCurrentness,
         ledgerSchemaDigest: checkpoint.ledgerSchemaDigest, revision: checkpoint.revision,
         committedSequence: checkpoint.committedSequence, committedHeadDigest: checkpoint.committedHeadDigest }) });
     state.lastCheckpoint = binding.checkpoint;
-    const proofDigest = evidenceDigest([row.intent_hash, row.verified_at_ms, row.verification_method]);
+    const proofDigest = row.verification_method === 'password' ? evidenceDigest([row.intent_hash, row.verified_at_ms, row.verification_method])
+      : resolveSourceActionDeletionProof(db, requestId, evidenceDigest(current.generation), current.schemaDigest);
     return Object.freeze({ binding, suppression: Object.freeze({ ...suppression }), policyVersion: row.policy_version, proofDigest,
       stamp: evidenceDigest([binding, canonicalDisable(suppression), reader.generation, row.policy_version, proofDigest]) });
   } catch { return held(); }
@@ -142,7 +166,7 @@ export class LifecycleEvidenceStore {
   private readonly absence: ReturnType<typeof sourceLifecycleLocalAbsenceReadback>;
   constructor(private readonly db: Sqlite, reader: SourceLifecycleEvidenceWitnessReader,
     adapters: readonly LifecycleAdapter[] = [], localAbsence: readonly SourceLifecycleLocalAbsenceReader[] = [],
-    selected: SourceLifecycleHistorySelection = 'selected-lifecycle-evidence-24') {
+    private readonly selected: SourceLifecycleHistorySelection = 'selected-lifecycle-evidence-24') {
     this.absence = sourceLifecycleLocalAbsenceReadback(db, adapters, localAbsence);
     const bound = readers.get(reader);
     if (!bound || bound.db !== db) held();
@@ -162,11 +186,12 @@ export class LifecycleEvidenceStore {
   private operation(frame: LocalPurgeFrame, categories: readonly string[], now: number): EvidenceOperation {
     const request = this.db.prepare('SELECT policy_version,verified_at_ms,verification_method,intent_hash FROM account_deletion_requests WHERE id=? AND account_id=?')
       .get(frame.requestId, frame.accountId) as { policy_version: string; verified_at_ms: number | null; verification_method: string | null; intent_hash: string } | undefined;
-    if (!request || !Number.isSafeInteger(request.verified_at_ms) || request.verified_at_ms === null || request.verification_method !== 'password') held();
+    if (!request || !Number.isSafeInteger(request.verified_at_ms) || request.verified_at_ms === null || (request.verification_method !== 'password' && this.selected !== 'selected-action-reauthentication-26')) held();
     return evidenceOperationSchema.parse({ requestId: frame.requestId, operationId: frame.operationId, accountId: frame.accountId,
       authUserId: frame.authUserId, epoch: frame.epoch, sequence: frame.sequence, purpose: 'local_purge',
       scopeDigest: evidenceDigest(['local-purge-v1', [...categories].sort()]),
-      proofDigest: evidenceDigest([request.intent_hash, request.verified_at_ms, request.verification_method]),
+      proofDigest: request.verification_method === 'password' ? evidenceDigest([request.intent_hash, request.verified_at_ms, request.verification_method])
+        : this.snapshot(frame.requestId).proofDigest,
       policyVersion: request.policy_version, createdAtMs: now });
   }
   private readOperation(requestId: string, operationId: string): EvidenceOperation | null {

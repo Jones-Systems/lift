@@ -22,6 +22,8 @@
       "tests/lifecycle-provider-revocation-apple.test.ts",
       "tests/lifecycle-provider-revocation.test.ts",
       "tests/lifecycle-purge-executor.test.ts",
+      "tests/lifecycle-reauthentication-source.test.ts",
+      "tests/lifecycle-reauthentication.test.ts",
       "tests/lifecycle-wire-v2.test.ts",
       "tests/lifecycle.test.ts",
       "tests/runtime-path.test.ts",
