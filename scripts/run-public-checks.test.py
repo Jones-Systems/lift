@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 class PublicChecksTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="public-contract-", dir=Path(__file__).parent)
+        self.temporary = tempfile.TemporaryDirectory(prefix=".form-public-contract-", dir=Path.home())
         self.addCleanup(self.temporary.cleanup)
         self.parent = Path(self.temporary.name)
         self.root = self.parent / "source"
@@ -88,6 +88,66 @@ class PublicChecksTests(unittest.TestCase):
         (self.root / "services/api/tests/runtime-modules/restore-drill.test.ts").unlink()
         with self.assertRaises(FileNotFoundError):
             checks.selection(self.root, ["lifecycle-runtime"])
+
+    def test_lifecycle_wire_v2_selects_real_emission_and_both_app_suites_after_compile(self):
+        contract = checks.selection(ROOT, ["lifecycle-wire-v2"])
+        self.assertEqual(contract["groups"], ["api-compile", "lifecycle-wire-v2"])
+        self.assertEqual([(command["cwd"], command["argv"]) for command in contract["commands"]], [
+            ("services/api", ["node", "node_modules/typescript/bin/tsc", "-p", "tsconfig.json"]),
+            ("services/api", ["node", "--test", "--test-concurrency=1", "dist/tests/lifecycle-wire-v2.test.js"]),
+            ("apps/form", ["node", "--test", "--test-concurrency=1",
+                           "src/account-lifecycle/__tests__/contracts-v2.test.cjs",
+                           "src/account-lifecycle/__tests__/lifecycle.test.cjs"]),
+        ])
+        self.assertEqual(contract, checks.selection(ROOT, ["lifecycle-wire-v2", "api-compile"]))
+        default = checks.selection(ROOT, [])
+        self.assertEqual(default["groups"], list(checks.GROUP_IDS))
+        for command in contract["commands"][1:]:
+            self.assertEqual(default["commands"].count(command), 1)
+        required = [source for command in contract["commands"] for source in command["test_sources"]]
+        self.assertEqual(required, ["services/api/tsconfig.json", "services/api/tests/lifecycle-wire-v2.test.ts",
+                                    "apps/form/src/account-lifecycle/__tests__/contracts-v2.test.cjs",
+                                    "apps/form/src/account-lifecycle/__tests__/lifecycle.test.cjs"])
+        for source in required:
+            target = self.root / source
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((ROOT / source).read_bytes())
+        for source in required:
+            with self.subTest(missing=source):
+                target = self.root / source
+                contents = target.read_bytes()
+                target.unlink()
+                try:
+                    with self.assertRaisesRegex(FileNotFoundError, source):
+                        checks.selection(self.root, ["lifecycle-wire-v2"])
+                finally:
+                    target.write_bytes(contents)
+
+    def test_lifecycle_wire_v2_copied_selection_retains_sources_and_excludes_prior_emissions(self):
+        contract = checks.selection(ROOT, ["lifecycle-wire-v2"])
+        sources = {source for command in contract["commands"] for source in command["test_sources"]}
+        sources.update(("services/api/src/lifecycle/wire-v2.ts",
+                        "apps/form/src/account-lifecycle/contracts-v2.ts"))
+        for source in sources:
+            target = self.root / source
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((ROOT / source).read_bytes())
+        stale = self.root / "services/api/dist/src/lifecycle/wire-v2.js"
+        stale.parent.mkdir(parents=True)
+        stale.write_text("stale output must not be copied")
+        dependencies = self.root / "apps/form/node_modules"
+        dependencies.mkdir()
+        (dependencies / "sentinel").write_text("read-only reuse")
+        with checks.owned_workspace(self.root, False) as workspace:
+            self.assertEqual(checks.selection(workspace, ["lifecycle-wire-v2"]), contract)
+            for source in sources:
+                self.assertEqual((workspace / source).read_bytes(), (ROOT / source).read_bytes())
+            self.assertFalse((workspace / "services/api/dist").exists())
+            self.assertTrue((workspace / "apps/form/node_modules").is_symlink())
+            self.assertEqual((workspace / "apps/form/node_modules").resolve(), dependencies)
+        self.assertFalse(workspace.exists())
+        self.assertEqual(stale.read_text(), "stale output must not be copied")
+        self.assertEqual((dependencies / "sentinel").read_text(), "read-only reuse")
 
     def test_health_discovery_includes_new_branch_tests_and_refuses_missing_baseline(self):
         for source in checks.BASELINE_HEALTH:
