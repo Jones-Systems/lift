@@ -191,12 +191,13 @@ export class AccountLifecycle {
         const guarded = writer.guardLifecycleAdapter(adapter);
         const result = guarded.purge(requestId, row.account_id);
         const verified = guarded.verifySuppressed(row.account_id, evidence.epoch);
-        const complete = result.status === 'complete' && verified.status === 'complete';
-        qualified &&= complete;
         const residual = result.status === 'complete' ? verified.status : result.status;
-        results.push({ category: adapter.category, status: complete ? 'complete' : residual });
+        const status = residual === 'complete' && this.evidenceStore && !this.evidenceStore.hasLocalAbsence(adapter.category)
+          ? 'unavailable' : residual;
+        qualified &&= status === 'complete';
+        results.push({ category: adapter.category, status });
         this.db.prepare('UPDATE account_deletion_steps SET status=?,evidence_ref=?,updated_at_ms=? WHERE request_id=? AND category=?')
-          .run(complete ? 'complete' : residual === 'unavailable' ? 'pending' : residual, operationId, this.clock(), requestId, adapter.category);
+          .run(status === 'unavailable' ? 'pending' : status, operationId, this.clock(), requestId, adapter.category);
       }
       for (const table of core) if (this.db.prepare(`SELECT 1 FROM ${table} WHERE account_id=? LIMIT 1`).get(row.account_id))
         throw new DomainError(503, 'local_purge_readback_failed');
@@ -218,29 +219,38 @@ export class AccountLifecycle {
           WHERE request_id=? AND category=?`).run(requestId, category, projection.calculation.binding.databaseGeneration, requestId, category);
       }
       const response = this.view(this.db.prepare('SELECT * FROM account_deletion_requests WHERE id=?').get(requestId) as RequestRow);
-      if (attempt) this.evidenceStore!.finalCheck(attempt);
+      if (attempt) this.evidenceStore!.finalCheck(attempt, category => this.evidenceLocalAbsent(authority.accountId, authority.authUserId, category));
       return response;
     });
   }
   private evidenceCategories(): readonly string[] { return ['form_training_history', 'phone_challenges', ...this.adapters.map(adapter => adapter.category)]; }
   private evidenceReadback(accountId: string, authUserId: string, epoch: number, category: string): boolean {
+    if (!['form_training_history', 'phone_challenges'].includes(category) &&
+      this.adapters.find(value => value.category === category)?.verifySuppressed(accountId, epoch).status !== 'complete') return false;
+    return this.evidenceLocalAbsent(accountId, authUserId, category);
+  }
+  private evidenceLocalAbsent(accountId: string, authUserId: string, category: string): boolean {
     if (category === 'form_training_history') return !localCoreTables.some(table =>
       this.db.prepare(`SELECT 1 FROM ${table} WHERE account_id=? LIMIT 1`).get(accountId)) &&
       !this.db.prepare('SELECT 1 FROM apple_purchase_grants WHERE account_id=? LIMIT 1').get(accountId) &&
       !this.db.prepare("SELECT 1 FROM account WHERE userId=? AND providerId='credential' LIMIT 1").get(authUserId) &&
       !this.db.prepare('SELECT 1 FROM session WHERE userId=? LIMIT 1').get(authUserId);
     if (category === 'phone_challenges') return !this.db.prepare('SELECT 1 FROM phone_challenges WHERE auth_user_id=? LIMIT 1').get(authUserId);
-    const adapter = this.adapters.find(value => value.category === category);
-    return adapter?.verifySuppressed(accountId, epoch).status === 'complete';
+    return this.evidenceStore?.localAbsent(accountId, category) === true;
   }
   evidenceProjection(requestId: string): LocalEvidenceProjection | null {
     if (!this.evidenceStore) return null;
-    const read = () => this.evidenceStore!.project(requestId, this.evidenceCategories(), category => {
+    const read = () => {
       const identity = this.db.prepare(`SELECT f.id accountId,f.auth_user_id authUserId,l.epoch FROM account_deletion_requests r
         JOIN form_accounts f ON f.id=r.account_id JOIN account_lifecycle l ON l.account_id=f.id WHERE r.id=?`).get(requestId) as
         { accountId: string; authUserId: string; epoch: number } | undefined;
-      return !!identity && this.evidenceReadback(identity.accountId, identity.authUserId, identity.epoch, category);
-    });
+      const suppressed = new Set(['form_training_history', 'phone_challenges']);
+      if (identity) for (const adapter of this.adapters)
+        if (adapter.verifySuppressed(identity.accountId, identity.epoch).status === 'complete') suppressed.add(adapter.category);
+      // Complete all adapter callbacks before the final SQL-only absence pass.
+      return this.evidenceStore!.project(requestId, this.evidenceCategories(), category => !!identity && suppressed.has(category) &&
+        this.evidenceLocalAbsent(identity.accountId, identity.authUserId, category));
+    };
     return this.db.inTransaction ? read() : this.db.transaction(read).immediate();
   }
   status(requestId: string, secret: string) {

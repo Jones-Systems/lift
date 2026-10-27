@@ -4,6 +4,8 @@ import { CurrentSuppressionAuthority } from '../runtime-modules/currentness.js';
 import { AccountLifecycle } from './service.js';
 import { LifecycleEvidenceStore, type SourceLifecycleEvidenceWitnessReader } from './evidence-store.js';
 import { selectSourceLifecycleEvidenceMigrations } from './source-migrations.js';
+import type { SourceLifecycleLocalAbsenceReader } from './local-absence.js';
+export { bindSourceLifecycleLocalAbsenceReader, type SourceLifecycleLocalAbsenceReader } from './local-absence.js';
 import type { LifecycleAdapter } from './types.js';
 
 export { bindSourceLifecycleEvidenceWitnessReader, type SourceLifecycleEvidenceGeneration,
@@ -18,10 +20,10 @@ export async function openSourceLifecycleEvidenceStorage(path: string, selected:
   return openStorage(path, selectSourceLifecycleEvidenceMigrations(), 'selected-migration-22', 'selected-migration-23', 'selected-lifecycle-evidence-24');
 }
 export function createSourceLifecycleEvidence(input: Readonly<{ configuration: SourceLifecycleEvidenceConfiguration; db: Sqlite;
-  authority: CurrentSuppressionAuthority; witness: SourceLifecycleEvidenceWitnessReader; adapters: readonly LifecycleAdapter[]; clock?: () => number }>) {
+  authority: CurrentSuppressionAuthority; witness: SourceLifecycleEvidenceWitnessReader; adapters: readonly LifecycleAdapter[]; localAbsence?: readonly SourceLifecycleLocalAbsenceReader[]; clock?: () => number }>) {
   configuration(input.configuration);
   if (!(input.authority instanceof CurrentSuppressionAuthority)) throw new DomainError(503, 'lifecycle_evidence_held');
-  const evidence = new LifecycleEvidenceStore(input.db, input.witness);
+  const evidence = new LifecycleEvidenceStore(input.db, input.witness, input.adapters, input.localAbsence);
   evidence.assertAuthority(input.authority);
   const adapters = Object.freeze(input.adapters.map(adapter => Object.freeze({ ...adapter })));
   const lifecycle = new AccountLifecycle(input.db, adapters, input.authority, input.clock, evidence);

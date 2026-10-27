@@ -16,7 +16,7 @@ import { suppressionLedgerSchema } from '../src/lifecycle/ledger.js';
 import { sourceLifecycleEvidenceMigration, lifecycleEvidenceSchemaObjects } from '../src/lifecycle/evidence-migration.js';
 import { assertSourceLifecycleEvidenceHistory, assertSourceLifecycleEvidenceSelection, selectSourceLifecycleEvidenceMigrations } from '../src/lifecycle/source-migrations.js';
 import { assertLifecycleEvidenceSchema, LifecycleEvidenceStore } from '../src/lifecycle/evidence-store.js';
-import { bindSourceLifecycleEvidenceWitnessReader, createSourceLifecycleEvidence, openSourceLifecycleEvidenceStorage,
+import { bindSourceLifecycleLocalAbsenceReader, bindSourceLifecycleEvidenceWitnessReader, createSourceLifecycleEvidence, openSourceLifecycleEvidenceStorage,
   type SourceLifecycleEvidenceWitnessReader, type SourceLifecycleEvidenceGeneration } from '../src/lifecycle/evidence-source.js';
 import { evidenceCanonical, decodeDurableEvidence } from '../src/lifecycle/evidence-codec.js';
 import { CurrentSuppressionAuthority, genesisHead, ledgerSchemaDigest, witnessSchema, type Witness } from '../src/runtime-modules/currentness.js';
@@ -116,8 +116,12 @@ function fixture(t: TestContext, decorate: (values: readonly LifecycleAdapter[],
       assert.equal(exact, store);
       return JSON.parse(readFileSync(generationPath, 'utf8')) as SourceLifecycleEvidenceGeneration;
     });
+    const values = decorate(adapters(store, auth.current), store);
+    const localAbsence = ([['activity', 'activity-owned-v1'], ['progressComparison', 'progress-comparison-owned-v1'],
+      ['trainingFeedback', 'training-feedback-owned-v1']] as const).map(([category, owner]) =>
+      bindSourceLifecycleLocalAbsenceReader(store, values.find(adapter => adapter.category === category)!, owner));
     return createSourceLifecycleEvidence({ configuration, db: store, authority: auth.current, witness,
-      adapters: decorate(adapters(store, auth.current), store), clock: () => now });
+      adapters: values, localAbsence, clock: () => now });
   };
   const source = compose(db);
   const initiate = () => source.lifecycle.initiate(A, 'evidence-delete', {
@@ -437,4 +441,89 @@ test('elapsed planned retention, retained proofs and missing external witnesses 
   const status = f.source.lifecycle.status(requestId, statusSecret); assert.equal(status.complete, false); assert.equal(status.backupExpiryAt, null);
   const facts = f.facts(); f.db.prepare('UPDATE form_migrations SET checksum=? WHERE version=24').run('f'.repeat(64));
   assert.throws(() => f.source.completion(requestId)); assert.throws(() => f.purge()); assert.deepEqual(f.facts(), facts);
+});
+
+test('P1 current Activity row reappearance dequalifies source completion without changing generation or authority', async t => {
+  const f = fixture(t); await f.confirm(); f.purge();
+  assert.equal(f.source.completion(requestId)!.completedCategories.includes('activity'), true);
+  const facts = f.facts(), checkpoint = f.auth.current.checkpoint();
+  f.db.prepare('INSERT INTO activity_state(account_id,generation) VALUES(?,0)').run(B.accountId);
+  const other = f.db.prepare('SELECT * FROM activity_state WHERE account_id=?').all(B.accountId);
+  f.db.prepare('INSERT INTO activity_state(account_id,generation) VALUES(?,0)').run(A.accountId);
+  assert.equal(f.source.completion(requestId)!.completedCategories.includes('activity'), false);
+  assert.equal(f.source.lifecycle.status(requestId, statusSecret).steps.find(step => step.category === 'activity')?.status, 'pending');
+  assert.deepEqual(f.facts(), facts); assert.deepEqual(f.auth.current.checkpoint(), checkpoint);
+  assert.deepEqual(f.db.prepare('SELECT * FROM activity_state WHERE account_id=?').all(B.accountId), other);
+});
+
+test('P1 later adapter Activity repopulation rolls back the guarded purge and evidence', async t => {
+  const f = fixture(t, (values, db) => values.map(value => value.category !== 'trainingFeedback' ? value : { ...value,
+    purge: (request: string, account: string) => {
+      const result = value.purge(request, account);
+      db.prepare('INSERT INTO activity_state(account_id,generation) VALUES(?,0)').run(account);
+      return result;
+    } }));
+  await f.confirm();
+  const tables = ['documents', 'activity_state', 'account_deletion_requests', 'account_deletion_steps', 'account_deletion_evidence_operations', 'account_deletion_evidence'];
+  const before = tables.map(table => f.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
+  const checkpoint = f.auth.current.checkpoint();
+  assert.throws(() => f.purge());
+  assert.deepEqual(tables.map(table => f.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()), before);
+  assert.deepEqual(f.auth.current.checkpoint(), checkpoint);
+});
+
+test('P1 explicit absence readers bind exact DB and adapter identity; missing readers withhold qualification', async t => {
+  const f = fixture(t); await f.confirm();
+  const values = adapters(f.db, f.auth.current);
+  const activity = values.find(value => value.category === 'activity')!;
+  const reader = bindSourceLifecycleLocalAbsenceReader(f.db, activity, 'activity-owned-v1');
+  const witness = bindSourceLifecycleEvidenceWitnessReader(f.db, f.auth.current,
+    () => ({ databaseGeneration: 'generation-one', mainStoreId: 'synthetic-source-main', witnessRevision: 1 }));
+  const compose = (adapters: readonly LifecycleAdapter[], localAbsence: readonly typeof reader[]) =>
+    createSourceLifecycleEvidence({ configuration, db: f.db, authority: f.auth.current, witness, adapters, localAbsence });
+  assert.throws(() => compose(values, [{} as typeof reader]), code('lifecycle_local_absence_held'));
+  assert.throws(() => compose(values.map(value => ({ ...value })), [reader]), code('lifecycle_local_absence_held'));
+  assert.throws(() => compose(values, [reader, reader]), code('lifecycle_local_absence_held'));
+  const other = file(f, 'foreign-reader.sqlite');
+  assert.throws(() => compose(values, [bindSourceLifecycleLocalAbsenceReader(other, activity, 'activity-owned-v1')]), code('lifecycle_local_absence_held'));
+  assert.throws(() => bindSourceLifecycleLocalAbsenceReader(f.db, activity, 'training-feedback-owned-v1'), code('lifecycle_local_absence_held'));
+  const source = compose(values, []);
+  source.lifecycle.purgeLocal(issueLocalPurgeAuthority(source.lifecycle, { requestId, operationId: 'no-readers' }));
+  assert.equal(source.completion(requestId)!.completedCategories.includes('activity'), false);
+  assert.equal(source.lifecycle.status(requestId, statusSecret).steps.find(step => step.category === 'activity')?.status, 'pending');
+  const row = f.db.prepare("SELECT payload FROM account_deletion_evidence WHERE category='activity'").get() as { payload: string };
+  assert.equal(decodeDurableEvidence(row.payload).fact.status, 'unavailable');
+});
+
+for (const owner of ['trainingFeedback', 'progressComparison'] as const)
+  test(`P1 ${owner} requires real scoped owned-row absence separately from suppression`, async t => {
+    const f = fixture(t); await f.confirm(); f.purge();
+    assert.equal(f.source.completion(requestId)!.completedCategories.includes(owner), true);
+    const table = owner === 'trainingFeedback' ? 'feedback_state' : 'progress_comparison_identities';
+    const insert = (account: string) => owner === 'trainingFeedback'
+      ? f.db.prepare('INSERT INTO feedback_state VALUES(?,0,0)').run(account)
+      : f.db.prepare("INSERT INTO progress_comparison_identities VALUES(?,'identity','activity','source','item',1,1,'withdrawn',NULL,'synthetic')").run(account);
+    insert(B.accountId);
+    const other = f.db.prepare(`SELECT * FROM ${table} WHERE account_id=?`).all(B.accountId), facts = f.facts();
+    assert.equal(f.source.completion(requestId)!.completedCategories.includes(owner), true);
+    insert(A.accountId);
+    assert.equal(f.source.completion(requestId)!.completedCategories.includes(owner), false);
+    assert.deepEqual(f.db.prepare(`SELECT * FROM ${table} WHERE account_id=?`).all(B.accountId), other);
+    assert.deepEqual(f.facts(), facts);
+  });
+
+test('P1 adapter side effect during the response readback cannot bypass the final in-transaction absence check', async t => {
+  let reads = 0;
+  const f = fixture(t, (values, db) => values.map(value => value.category !== 'activity' ? value : { ...value,
+    verifySuppressed: (account: string, epoch: number) => {
+      const result = value.verifySuppressed(account, epoch);
+      if (++reads === 4) db.prepare('INSERT INTO activity_state(account_id,generation) VALUES(?,0)').run(account);
+      return result;
+    } }));
+  await f.confirm(); reads = 0;
+  const before = f.db.prepare('SELECT * FROM documents ORDER BY account_id').all();
+  assert.throws(() => f.purge());
+  assert.deepEqual(f.facts(), []);
+  assert.deepEqual(f.db.prepare('SELECT * FROM documents ORDER BY account_id').all(), before);
+  assert.equal(f.db.prepare('SELECT 1 FROM activity_state WHERE account_id=?').get(A.accountId), undefined);
 });

@@ -1,3 +1,5 @@
+import { sourceLifecycleLocalAbsenceReadback, type SourceLifecycleLocalAbsenceReader } from './local-absence.js';
+import type { LifecycleAdapter } from './types.js';
 import { lstatSync, realpathSync } from 'node:fs';
 import type { Sqlite } from '../storage.js';
 import { DomainError } from '../errors.js';
@@ -63,7 +65,7 @@ export function bindSourceLifecycleEvidenceWitnessReader(db: Sqlite, authority: 
 type Snapshot = Readonly<{ binding: CompletionBinding; suppression: DisableRecord; policyVersion: string; proofDigest: string; stamp: string }>;
 type PurgeEvidenceAttempt = Readonly<{ frame: LocalPurgeFrame; operation: EvidenceOperation; snapshot: Snapshot; categories: readonly string[] }>;
 const attempts = new WeakSet<PurgeEvidenceAttempt>();
-const completedAttempts = new WeakSet<PurgeEvidenceAttempt>();
+const completedAttempts = new WeakMap<PurgeEvidenceAttempt, readonly string[]>();
 export type LocalEvidenceProjection = Readonly<{ calculation: CompletionCalculation; localPurged: boolean;
   completedCategories: readonly string[]; firstObservedAtMs: number | null;
   residuals: Readonly<{ retentionPolicy: 'unavailable'; providers: 'unavailable'; backups: 'unavailable';
@@ -73,7 +75,10 @@ export class LifecycleEvidenceStore {
   private readonly reader: ReaderBinding;
   private readonly schema: string;
   private lastCheckpoint: CompletionBinding['checkpoint'];
-  constructor(private readonly db: Sqlite, reader: SourceLifecycleEvidenceWitnessReader) {
+  private readonly absence: ReturnType<typeof sourceLifecycleLocalAbsenceReadback>;
+  constructor(private readonly db: Sqlite, reader: SourceLifecycleEvidenceWitnessReader,
+    adapters: readonly LifecycleAdapter[] = [], localAbsence: readonly SourceLifecycleLocalAbsenceReader[] = []) {
+    this.absence = sourceLifecycleLocalAbsenceReadback(db, adapters, localAbsence);
     const bound = readers.get(reader);
     if (!bound || bound.db !== db) held();
     this.reader = bound; this.schema = schemaDigest(db);
@@ -81,6 +86,8 @@ export class LifecycleEvidenceStore {
     this.lastCheckpoint = Object.freeze({ authorityId: checkpoint.authorityId, ledgerSchemaDigest: checkpoint.ledgerSchemaDigest,
       revision: checkpoint.revision, committedSequence: checkpoint.committedSequence, committedHeadDigest: checkpoint.committedHeadDigest });
   }
+  hasLocalAbsence(category: string): boolean { return this.absence.qualified(category); }
+  localAbsent(accountId: string, category: string): boolean { return this.absence.absent(accountId, category); }
   assertDatabase(db: Sqlite): void { if (db !== this.db) held(); }
   assertAuthority(authority: CurrentSuppressionAuthority): void { if (authority !== this.reader.authority) held(); }
   private snapshot(requestId: string): Snapshot {
@@ -152,6 +159,8 @@ export class LifecycleEvidenceStore {
     this.assertFrame(attempt.frame);
     if (this.snapshot(attempt.frame.requestId).stamp !== attempt.snapshot.stamp ||
       evidenceCanonical(results.map(result => result.category).sort()) !== evidenceCanonical(attempt.categories)) held();
+    const successful = results.filter(result => result.status === 'complete').map(result => result.category);
+    for (const category of successful) if (readback(category) !== true) held();
     const op = attempt.operation, b = attempt.snapshot.binding;
     if (!this.readOperation(op.requestId, op.operationId)) this.db.prepare(`INSERT INTO account_deletion_evidence_operations
       VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(op.requestId, op.operationId, op.accountId, op.authUserId, op.epoch, op.sequence,
@@ -178,12 +187,14 @@ export class LifecycleEvidenceStore {
     }
     const projection = this.project(op.requestId, attempt.categories, readback);
     if (this.snapshot(op.requestId).stamp !== attempt.snapshot.stamp) held();
-    completedAttempts.add(attempt);
+    completedAttempts.set(attempt, successful);
     return projection;
   }
-  finalCheck(attempt: PurgeEvidenceAttempt): void {
-    if (!completedAttempts.delete(attempt)) held();
+  finalCheck(attempt: PurgeEvidenceAttempt, readback: (category: string) => boolean): void {
+    const successful = completedAttempts.get(attempt);
+    if (!successful || !completedAttempts.delete(attempt)) held();
     this.assertFrame(attempt.frame);
+    for (const category of successful) if (readback(category) !== true) held();
     const foreignKeys = this.db.pragma('foreign_key_check');
     if (!Array.isArray(foreignKeys) || foreignKeys.length !== 0) held();
     if (this.snapshot(attempt.frame.requestId).stamp !== attempt.snapshot.stamp) held();
