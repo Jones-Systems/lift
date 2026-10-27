@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { syntheticTrainingBindings } from './bindings.js';
-import { syntheticSuccessFixture } from './fixtures.js';
-import { canonical, detach } from './strict-json.js';
-import { row, type Row } from './schema.js';
-import { hash } from './meaning.js';
-import { sourceFiles, implementationManifestDigest, implementationPins } from './source-pins.js';
+import { syntheticTrainingBindings } from '../../src/training-feedback/synthetic-lineage/bindings.js';
+import { syntheticSuccessFixture } from '../../src/training-feedback/synthetic-lineage/fixtures.js';
+import { canonical, detach } from '../../src/training-feedback/synthetic-lineage/strict-json.js';
+import { row, type Row } from '../../src/training-feedback/synthetic-lineage/schema.js';
+import { hash } from '../../src/training-feedback/synthetic-lineage/meaning.js';
+import { sourceFiles, implementationManifestDigest, implementationPins } from '../../src/training-feedback/synthetic-lineage/source-pins.js';
 
 function draft(): Row { return row(structuredClone(detach(syntheticSuccessFixture(), 2 * 1024 * 1024, true))); }
 function at(value: Row, ...keys: string[]): Row { for (const key of keys) value = row(value[key]!); return value; }
@@ -103,7 +103,7 @@ test('immutable meaning digests bind review, attempt, generation and source doma
 test('implementation identities pin actual unchanged source bytes, not document hashes', () => {
   const set = createHash('sha256').update('form.training.synthetic.implementation-set/v1\0');
   for (const file of sourceFiles) {
-    const source = readFileSync(new URL(file.path, import.meta.url));
+    const source = readFileSync(new URL((import.meta.url.includes('/dist/tests/') ? '../../../' : '../../') + 'src/training-feedback/synthetic-lineage/' + file.path, import.meta.url));
     assert.equal(createHash('sha256').update(source).digest('hex'), file.sha256);
     const name = Buffer.from(file.path); set.update(`${name.length}\0`).update(name).update(`\0${source.length}\0`).update(source);
   }

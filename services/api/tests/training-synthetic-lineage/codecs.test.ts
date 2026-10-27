@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { EmbeddedSchema } from '../../planning/synthetic-lineage/types.js';
-import { syntheticTrainingBindings } from './bindings.js';
-import { syntheticSuccessFixture } from './fixtures.js';
-import { canonical, detach, parseBytes } from './strict-json.js';
-import { row, type Row } from './schema.js';
+import type { EmbeddedSchema } from '../../src/planning/synthetic-lineage/types.js';
+import { syntheticTrainingBindings } from '../../src/training-feedback/synthetic-lineage/bindings.js';
+import { syntheticSuccessFixture } from '../../src/training-feedback/synthetic-lineage/fixtures.js';
+import { canonical, detach, parseBytes } from '../../src/training-feedback/synthetic-lineage/strict-json.js';
+import { row, type Row } from '../../src/training-feedback/synthetic-lineage/schema.js';
 const bytes = (value: string) => new TextEncoder().encode(value);
 const schema: EmbeddedSchema = 'synthetic.training-feedback-analysis.pinned-v1';
 const codec = syntheticTrainingBindings.codecs[schema];
