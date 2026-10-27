@@ -27,7 +27,7 @@ contract also needs Node 24, without installed npm dependencies.
 | Group ID | Selected checks | Public claim |
 | --- | --- | --- |
 | `runner-contract` | `python3 -B scripts/run-public-checks.test.py` | Group selection, baseline enforcement, actual API/app source-import resolution, subprocess status, evidence and scratch cleanup, SIGINT/SIGTERM cancellation |
-| `lifecycle-runtime` | API lifecycle, runtime modules, canonical account composition and request-factory tests (22 modules) | Synthetic purge authority, rollback/residuals, relocated restore admission and closed runtime boundaries; no real purge or restore qualification |
+| `lifecycle-runtime` | API lifecycle, runtime modules, canonical account composition and request-factory tests (26 modules) | Synthetic generation-bound scoped evidence, purge authority, rollback/residuals, relocated restore admission and closed runtime boundaries; source-only, no real purge or restore qualification |
 | `api-compile` | `node node_modules/typescript/bin/tsc -p tsconfig.json` in `services/api` | TypeScript compilation and fresh emitted API/test modules |
 | `app-static` | `npm run typecheck`; `npm run check:tokens` in `apps/form` | App TypeScript and token-style checks |
 | `form104-139` | Every `*.test.mjs` recursively in API `tests/wearables/` and `tests/direct-provider-transport/` | Synthetic wearable ingestion/providers/suggestions, persistence/checkpoints, upload/purge, canonical consumer and provider transport/auth coverage present at this SHA |

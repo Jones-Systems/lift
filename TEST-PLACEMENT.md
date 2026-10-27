@@ -16,7 +16,7 @@ prove that a new test was selected.
 
 | Placement/group | Files | Execution and reason |
 | --- | ---: | --- |
-| Existing hosted | 57 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
+| Existing hosted | 61 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
 | `api-breadth` | 92 | Compile API TypeScript with `tsc`; run emitted TS tests and original MJS/CJS tests using the existing source hook. Never run the private projection build. |
 | `app-breadth` | 81 | Compile the transport compatibility output, then run explicit CJS files serially. Phone sign-in embeds the standalone transport suite exactly once. |
 | `app-renderer` | 1 | Existing Jest renderer command selects `runtime-auth.test.tsx`; onboarding remains in the existing hosted group. |
@@ -26,9 +26,11 @@ prove that a new test was selected.
 | Blocked | 32 | Exact files, reasons, missing inputs and intended private/manual qualification routes remain in the manifest. |
 
 The pre-breadth state has 292 files. The new breadth contract and the
-private-inventory case split and three lifecycle/restore modules bring discovery to 297 files.
-The lifecycle candidate moves 19 existing API files into the public runner’s
-`lifecycle-runtime` group, alongside its three new test modules.
+private-inventory case split and three lifecycle/restore modules brought discovery to 297 files.
+The four lifecycle completion, coverage, evidence codec and durable evidence modules
+bring discovery to 301 files. The public runner’s `lifecycle-runtime` group now
+selects exactly 26 modules: its existing 22 plus those four. This is source-only
+synthetic placement, without live generation, provider, backup or retention qualification.
 There are 207 additional public product test files, plus the new contract.
 These are source selection counts, not executed case counts or proof of passing
 tests. The 32 blocked files remain intact: 29 need private research/projection
