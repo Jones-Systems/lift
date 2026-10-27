@@ -17,7 +17,7 @@ prove that a new test was selected.
 | Placement/group | Files | Execution and reason |
 | --- | ---: | --- |
 | Existing hosted | 67 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
-| `api-breadth` | 92 | Compile API TypeScript with `tsc`; run emitted TS tests and original MJS/CJS tests using the existing source hook. Never run the private projection build. |
+| `api-breadth` | 93 | Compile API TypeScript with `tsc`; run emitted TS tests and original MJS/CJS tests using the existing source hook. Never run the private projection build. |
 | `app-breadth` | 80 | Compile the transport compatibility output, then run explicit CJS files serially. Phone sign-in embeds the standalone transport suite exactly once. |
 | `app-renderer` | 1 | Existing Jest renderer command selects `runtime-auth.test.tsx`; onboarding remains in the existing hosted group. |
 | `website` | 29 | Explicit recursive Node test paths include nested voice modules. Require the real portable session-controller source before execution. |
@@ -25,7 +25,7 @@ prove that a new test was selected.
 | `breadth-contract` | 1 | This runner's selection, result and lifecycle contract runs inside the breadth job. |
 | Blocked | 32 | Exact files, reasons, missing inputs and intended private/manual qualification routes remain in the manifest. |
 
-Current discovery has 306 files. The two provider-revocation modules join
+Current discovery has 307 files. The two provider-revocation modules join
 existing hosted placement and core API discovery exactly once. The public
 runner's `lifecycle-runtime` group selects exactly 29 API modules: its existing
 28 plus the pure subscription status codec. The codec is registered once in
@@ -41,7 +41,7 @@ execution, and moves the existing v1 app lifecycle suite from `app-breadth` to
 hosted execution exactly once. Its API compilation precedes actual
 backend-encoder/client-parser interop. These unmounted syntax and compatibility
 tests do not qualify future producers, evidence authority, transport or consumer
-exposure. There are 206 additional public product test files, plus the breadth
+exposure. There are 207 additional public product test files, plus the breadth
 contract.
 These are source selection counts, not executed case counts or proof of passing
 tests. The 32 blocked files remain intact: 29 need private research/projection
