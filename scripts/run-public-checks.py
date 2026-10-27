@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -168,7 +169,16 @@ def copy_inputs(root, destination, install):
 
 @contextmanager
 def owned_workspace(root, install):
-    with tempfile.TemporaryDirectory(prefix=".lift-public-", dir=root) as temporary:
+    parent = Path.home()
+    if not parent.is_absolute() or parent.resolve(strict=True) != parent or parent.is_relative_to(root.resolve()):
+        raise ValueError("Unsafe public workspace parent: HOME must be canonical and outside the source checkout")
+    for ancestor in (parent, *parent.parents):
+        metadata = ancestor.lstat()
+        if not stat.S_ISDIR(metadata.st_mode) or metadata.st_mode & 0o022:
+            raise ValueError("Unsafe public workspace parent: directory ancestors must not be symlinks or group/other writable")
+        if ancestor == parent and metadata.st_uid != os.getuid():
+            raise ValueError("Unsafe public workspace parent: HOME must belong to the current user")
+    with tempfile.TemporaryDirectory(prefix=".lift-public-", dir=parent) as temporary:
         workspace = Path(temporary)
         copy_inputs(root, workspace, install)
         yield workspace
@@ -226,7 +236,9 @@ def execute(root, output, contract, install=False):
     try:
         with cancellation_handlers(), owned_workspace(root, install) as workspace:
             receipt["scratch_root"] = str(workspace)
-            environment = {**os.environ, "TMPDIR": str(workspace), "TMP": str(workspace), "TEMP": str(workspace),
+            home = workspace / "home"
+            home.mkdir(mode=0o700)
+            environment = {**os.environ, "HOME": str(home), "TMPDIR": str(workspace), "TMP": str(workspace), "TEMP": str(workspace),
                            "PYTHONDONTWRITEBYTECODE": "1", "CI": "1", "EXPO_NO_TELEMETRY": "1",
                            "EXPO_NO_DOTENV": "1", "EXPO_PUBLIC_FORM_API_URL": "http://127.0.0.1:9",
                            "npm_config_cache": str(workspace / "npm-cache")}
