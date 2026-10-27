@@ -9,6 +9,8 @@
       "files": [
         "apps/form/scripts/ci-ios-simulator.test.py",
         "apps/form/scripts/ios_e2e.test.py",
+        "apps/form/src/account-lifecycle/__tests__/contracts-v2.test.cjs",
+        "apps/form/src/account-lifecycle/__tests__/lifecycle.test.cjs",
         "apps/form/src/api/tests/community-group-role-controller.test.cjs",
         "apps/form/src/community/matching/__tests__/controller.test.cjs",
         "apps/form/src/features/feature-board/tests/controller.test.cjs",
@@ -42,6 +44,7 @@
         "services/api/tests/lifecycle-provider-revocation-apple.test.ts",
         "services/api/tests/lifecycle-provider-revocation.test.ts",
         "services/api/tests/lifecycle-purge-executor.test.ts",
+        "services/api/tests/lifecycle-wire-v2.test.ts",
         "services/api/tests/lifecycle.test.ts",
         "services/api/tests/runtime-modules/authority-currentness.test.ts",
         "services/api/tests/runtime-modules/capability-and-denial.test.ts",
@@ -185,7 +188,6 @@
       "reason": "Public app CJS contracts retain the transport compile seam and embedded transport suite once.",
       "files": [
         "apps/form/scripts/run-app-tests.test.cjs",
-        "apps/form/src/account-lifecycle/__tests__/lifecycle.test.cjs",
         "apps/form/src/account-lifecycle/__tests__/native-custody.test.cjs",
         "apps/form/src/activity/drafts/tests/activity.test.cjs",
         "apps/form/src/activity/screens/__tests__/model.test.cjs",

@@ -21,7 +21,7 @@ HELPER = "scripts/run-public-checks.py"
 HARNESS_TEST = "scripts/run-public-checks.test.py"
 SOURCE_HOOK = "scripts/integration/source-hook.mjs"
 SOURCE_RESOLVER = "scripts/integration/source-resolution.mjs"
-GROUP_IDS = ("runner-contract", "api-compile", "app-static", "form104-139", "form196", "form203", "form208", "simulator-portable", "native-e2e-backend", "native-e2e-app", "lifecycle-runtime")
+GROUP_IDS = ("runner-contract", "api-compile", "app-static", "form104-139", "form196", "form203", "form208", "simulator-portable", "native-e2e-backend", "native-e2e-app", "lifecycle-runtime", "lifecycle-wire-v2")
 BASELINE_HEALTH = (
     "tests/wearables/app.test.mjs", "tests/wearables/ingestion.test.mjs",
     "tests/wearables/providers.test.mjs", "tests/wearables/suggestions.test.mjs",
@@ -34,6 +34,8 @@ BASELINE_HEALTH = (
     "tests/direct-provider-transport/auth-state.test.mjs",
 )
 APP_TESTS = {
+    "lifecycle-wire-v2": ("src/account-lifecycle/__tests__/contracts-v2.test.cjs",
+                          "src/account-lifecycle/__tests__/lifecycle.test.cjs"),
     "native-e2e-app": ("src/integration/tests/account-switch-session.test.cjs",
                        "src/integration/tests/settings-mode-http.test.cjs",
                        "src/integration/tests/manual-progress-session.test.cjs",
@@ -43,6 +45,7 @@ APP_TESTS = {
     "form208": ("src/voice-coaching/standard/tests/wire-codec.test.cjs",),
 }
 API_TESTS = {
+    "lifecycle-wire-v2": ("tests/lifecycle-wire-v2.test.ts",),
     "lifecycle-runtime": (
         "tests/bug-intake/lifecycle-chain.test.ts",
         "tests/integration/account-modules/canonical-writer.test.ts",
@@ -90,7 +93,7 @@ def selection(root, requested):
     if chosen - set(GROUP_IDS):
         raise ValueError("Unknown public check group")
     # Interop, native E2E smoke tests and board workers load fresh emitted API JavaScript.
-    if chosen & {"form196", "form208", "native-e2e-backend", "native-e2e-app", "lifecycle-runtime"}:
+    if chosen & {"form196", "form208", "native-e2e-backend", "native-e2e-app", "lifecycle-runtime", "lifecycle-wire-v2"}:
         chosen.add("api-compile")
     groups = [group for group in GROUP_IDS if group in chosen]
     health = sorted(str(path.relative_to(root / API)) for directory in
