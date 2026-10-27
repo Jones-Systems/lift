@@ -46,6 +46,28 @@ class PublicChecksTests(unittest.TestCase):
         self.assertTrue(any("dist/tests/community/board/persistence-races.test.js" in c["argv"] for c in contract["commands"]))
         self.assertEqual(contract, checks.selection(ROOT, ["form208", "form196"]))
 
+    def test_lifecycle_runtime_compiles_first_and_requires_candidate_coverage(self):
+        contract = checks.selection(ROOT, ["lifecycle-runtime"])
+        self.assertEqual(contract["groups"], ["api-compile", "lifecycle-runtime"])
+        command = contract["commands"][1]
+        for source in ("tests/lifecycle-purge-executor.test.ts",
+                       "tests/bug-intake/lifecycle-chain.test.ts",
+                       "tests/usage-limits/lifecycle.test.ts",
+                       "tests/runtime-modules/relocated-admission.test.ts",
+                       "tests/runtime-modules/restore-drill.test.ts",
+                       "tests/integration/account-modules/canonical-writer.test.ts"):
+            self.assertIn("dist/" + source.removesuffix(".ts") + ".js", command["argv"])
+        self.assertIn("--test-concurrency=1", command["argv"])
+        for selected in contract["commands"]:
+            for source in selected["test_sources"]:
+                path = self.root / source
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("")
+        self.assertEqual(checks.selection(self.root, ["lifecycle-runtime"]), contract)
+        (self.root / "services/api/tests/runtime-modules/restore-drill.test.ts").unlink()
+        with self.assertRaises(FileNotFoundError):
+            checks.selection(self.root, ["lifecycle-runtime"])
+
     def test_health_discovery_includes_new_branch_tests_and_refuses_missing_baseline(self):
         for source in checks.BASELINE_HEALTH:
             target = self.root / checks.API / source

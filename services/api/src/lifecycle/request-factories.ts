@@ -1,3 +1,4 @@
+import type { CanonicalAccountWriter } from '../integration/account-modules/canonical-writer.js';
 import { assertRuntimeOwner, type RuntimeOwner } from '../runtime-modules/admission.js';
 import { CommunityLimiter } from '../runtime-modules/limiter.js';
 import { DomainError } from '../errors.js';
@@ -22,6 +23,7 @@ export type SourceRequestFactoryConfiguration = Readonly<{
 type FactoryInput = Readonly<{
   db: Sqlite;
   lifecycle: LifecycleBindings;
+  purgeReadiness?: CanonicalAccountWriter['purgeReadiness'];
   configuration: SourceRequestFactoryConfiguration;
   subjectEligibilityFor: (actor: AccountContext) => (accountId: string) => AdultEligibility;
 }>;
@@ -55,7 +57,7 @@ function composeFactories(input: FactoryInput) {
           row.epoch !== epoch || row.suppression_seq !== record.sequence)
           throw new DomainError(503, 'canonical_suppression_unproved');
       },
-      purgeReadiness: () => ({ status: 'unavailable', reason: 'exact_purge_executor_binding_required' }),
+      purgeReadiness: input.purgeReadiness ?? (() => ({ status: 'unavailable', reason: 'exact_purge_executor_binding_required' })),
   };
   const activityIntegration = configuration.activityCommands === 'owner-input'
     ? createActivityIntegration({ db, lifecycle, lifecycleControl, now }) : undefined;

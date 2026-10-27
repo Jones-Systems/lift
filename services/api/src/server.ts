@@ -177,9 +177,9 @@ async function createServerCandidate(config: ServerConfig): Promise<FormServer> 
       : createRetainedNutritionController({ lifecycle: bindings,
       ...(config.sourceNutritionConversations ? { projectionBytes: config.sourceNutritionConversations.projectionBytes } : {}) });
     runtime?.stage('server:factories');
-    const factoryInput = {db, lifecycle:bindings, subjectEligibilityFor:(actor:AccountContext)=>createSubjectEligibilityProvider(db,actor)};
+    const factoryInput = {db, lifecycle:bindings, purgeReadiness:writer.purgeReadiness, subjectEligibilityFor:(actor:AccountContext)=>createSubjectEligibilityProvider(db,actor)};
     const runtimeFactories=runtime?createRuntimeRequestFactories({...factoryInput,owner:runtime}):undefined;
-    const requestFactories = runtimeFactories ?? (config.sourceRequestFactories ? createSourceRequestFactories({ db, lifecycle: bindings,
+    const requestFactories = runtimeFactories ?? (config.sourceRequestFactories ? createSourceRequestFactories({ ...factoryInput,
       configuration: config.sourceRequestFactories, subjectEligibilityFor: actor => createSubjectEligibilityProvider(db, actor) }) : undefined);
     const tableInstalled = (table: string) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
     const lifecycleFactories = requestFactories ?? (config.lifecycle &&

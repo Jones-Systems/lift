@@ -1,3 +1,5 @@
+import { bindLocalPurgeExecutor, withLocalPurgeAuthority, type LocalPurgeAuthority } from './purge-executor.js';
+import { createCanonicalAccountWriter } from '../integration/account-modules/canonical-writer.js';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { DomainError } from '../errors.js';
@@ -39,6 +41,7 @@ export class AccountLifecycle {
       if (stored && !adapters.some(adapter => adapter.category === category)) throw new DomainError(503, 'lifecycle_adapter_required');
     }
     this.reconcileRestore();
+    bindLocalPurgeExecutor(this, db);
   }
   assertActive(context: AccountContext): void { assertActive(this.db, context); }
   private grant(context: AccountContext, token: string, purpose: 'account_delete' | 'account_export'): void {
@@ -147,20 +150,19 @@ export class AccountLifecycle {
     });
   }
   // No public purge route. Root must separately authorize any non-synthetic execution.
-  purgeLocal(requestId: string) {
-    return this.db.transaction(() => {
+  purgeLocal(capability: LocalPurgeAuthority) {
+    return withLocalPurgeAuthority(this.db, capability, authority => {
+      const { requestId, operationId } = authority;
       const row = this.db.prepare('SELECT * FROM account_deletion_requests WHERE id=?').get(requestId) as RequestRow | undefined;
       if (!row) throw new DomainError(404, 'not_found');
-      const evidence = suppressionAuthority(this.db).lookup(row.account_id);
-      const state = this.db.prepare('SELECT state,epoch FROM account_lifecycle WHERE account_id=?').get(row.account_id) as { state: string; epoch: number } | undefined;
-      if (!evidence || state?.state !== 'disabled' || state.epoch !== evidence.epoch) throw new DomainError(409, 'suppression_required');
+      const evidence = authority;
       const core = ['command_receipts', 'transcription_attempts', 'set_revisions', 'performed_sets', 'session_occurrences',
         'workout_sessions', 'plan_item_ids', 'plan_revisions', 'plans', 'document_revisions', 'documents', 'entitlement_grants'];
       for (const table of core) this.db.prepare(`DELETE FROM ${table} WHERE account_id=?`).run(row.account_id);
       this.db.prepare('DELETE FROM apple_purchase_grants WHERE account_id=?').run(row.account_id);
-      const subject = this.db.prepare('SELECT phoneNumber FROM "user" WHERE id=?').get(evidence.authUserId) as { phoneNumber: string | null } | undefined;
-      const phoneWhere = 'auth_user_id=@user OR (phone=@phone AND @phone IS NOT NULL)';
-      const scope = { user: evidence.authUserId, phone: subject?.phoneNumber ?? null };
+      // Phone-step completion covers only immutable attribution; unbound history remains unresolved.
+      const phoneWhere = 'auth_user_id=@user';
+      const scope = { user: evidence.authUserId };
       this.db.prepare(`DELETE FROM phone_operations WHERE challenge_id IN(SELECT id FROM phone_challenges WHERE ${phoneWhere})`).run(scope);
       this.db.prepare(`DELETE FROM phone_challenges WHERE ${phoneWhere}`).run(scope);
       // Provider revocation material stays restricted until its separately qualified acknowledgment/retention contract.
@@ -172,24 +174,35 @@ export class AccountLifecycle {
         const adapter = this.adapters.find(x => x.category === category);
         if (stored && !adapter) qualified = false;
       }
+      const writer = createCanonicalAccountWriter(this.db);
       for (const adapter of this.adapters) {
-        const result = adapter.purge(requestId, row.account_id);
-        const verified = adapter.verifySuppressed(row.account_id, evidence.epoch);
+        if (!authority.qualifiedCategories.includes(adapter.category)) {
+          qualified = false;
+          this.db.prepare("UPDATE account_deletion_steps SET status='pending',evidence_ref=NULL,updated_at_ms=? WHERE request_id=? AND category=?")
+            .run(this.clock(), requestId, adapter.category);
+          continue;
+        }
+        const guarded = writer.guardLifecycleAdapter(adapter);
+        const result = guarded.purge(requestId, row.account_id);
+        const verified = guarded.verifySuppressed(row.account_id, evidence.epoch);
         const complete = result.status === 'complete' && verified.status === 'complete';
         qualified &&= complete;
-        this.db.prepare('UPDATE account_deletion_steps SET status=?,updated_at_ms=? WHERE request_id=? AND category=?')
-          .run(complete ? 'complete' : result.status === 'unavailable' ? 'pending' : result.status, this.clock(), requestId, adapter.category);
+        const residual = result.status === 'complete' ? verified.status : result.status;
+        this.db.prepare('UPDATE account_deletion_steps SET status=?,evidence_ref=?,updated_at_ms=? WHERE request_id=? AND category=?')
+          .run(complete ? 'complete' : residual === 'unavailable' ? 'pending' : residual, operationId, this.clock(), requestId, adapter.category);
       }
       for (const table of core) if (this.db.prepare(`SELECT 1 FROM ${table} WHERE account_id=? LIMIT 1`).get(row.account_id))
         throw new DomainError(503, 'local_purge_readback_failed');
-      this.db.prepare("UPDATE account_deletion_steps SET status='complete',updated_at_ms=? WHERE request_id=? AND category IN('form_training_history','phone_challenges')")
-        .run(this.clock(), requestId);
+      if (this.db.prepare(`SELECT 1 FROM phone_challenges WHERE ${phoneWhere} LIMIT 1`).get(scope))
+        throw new DomainError(503, 'local_purge_readback_failed');
+      this.db.prepare("UPDATE account_deletion_steps SET status='complete',evidence_ref=?,updated_at_ms=? WHERE request_id=? AND category IN('form_training_history','phone_challenges')")
+        .run(operationId, this.clock(), requestId);
       this.db.prepare("UPDATE account_deletion_steps SET status='retained',updated_at_ms=? WHERE request_id=? AND category IN('purchase_proofs','auth_identity')")
         .run(this.clock(), requestId);
       this.db.prepare("UPDATE account_deletion_requests SET phase='pending_external',local_purged_at_ms=? WHERE id=?")
         .run(qualified ? this.clock() : null, requestId);
       return this.view(this.db.prepare('SELECT * FROM account_deletion_requests WHERE id=?').get(requestId) as RequestRow);
-    }).immediate();
+    });
   }
   status(requestId: string, secret: string) {
     try {
