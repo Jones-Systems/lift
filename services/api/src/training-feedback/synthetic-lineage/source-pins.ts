@@ -64,7 +64,7 @@ const sources: EmbeddedSourcePinsV1 = Object.freeze({
 function identity<S extends EmbeddedSchema>(schema: S): EmbeddedCodecIdentityV1<S> {
   return Object.freeze({ schema, implementation: implementationPins.codecs, subcodecDigest: implementationManifestDigest, sources });
 }
-export const identities = Object.freeze({
+export const identities: { readonly [S in EmbeddedSchema]: EmbeddedCodecIdentityV1<S> } = Object.freeze({
   'synthetic.training-feedback-analysis.pinned-v1': identity('synthetic.training-feedback-analysis.pinned-v1'),
   'synthetic.feedback-comparison-lineage.pinned-v1': identity('synthetic.feedback-comparison-lineage.pinned-v1'),
   'synthetic.comparison-witness.pinned-v2': identity('synthetic.comparison-witness.pinned-v2'),

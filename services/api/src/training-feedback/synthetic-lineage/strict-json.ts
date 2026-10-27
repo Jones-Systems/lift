@@ -15,7 +15,7 @@ export function result<T>(work: () => T): Decode<T> {
   catch (error) { return { ok: false, error: { kind: 'codec-error', code: error instanceof Invalid ? error.code : 'wrong_type',
     path: error instanceof Invalid ? error.path.slice(0, 256) : '$' } }; }
 }
-export function validString(value: string, max = EMBEDDED_LIMITS.string): void {
+export function validString(value: string, max: number = EMBEDDED_LIMITS.string): void {
   requireThat(value.length <= max, 'bounds_exceeded');
   for (let i = 0; i < value.length; i++) {
     const n = value.charCodeAt(i);
