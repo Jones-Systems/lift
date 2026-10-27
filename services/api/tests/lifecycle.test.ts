@@ -1,3 +1,4 @@
+import { issueLocalPurgeAuthority } from '../src/lifecycle/purge-executor.js';
 import { Domain, defaultPreferences } from '../src/domain.js';
 import { createCanonicalAccountWriter } from '../src/integration/account-modules/canonical-writer.js';
 import { createConfirmedCaptureHost, confirmedCaptureKind, confirmedCaptureOperation } from '../src/integration/first-plan/confirmed-capture.js';
@@ -486,6 +487,12 @@ function seedTrainingAndPhone(db: Sqlite, now: number): readonly string[] {
     .run('unbound-a', '+12025550111', 'synthetic-unbound-binding', 'synthetic-unbound-start', now, now + 300_000, now);
   db.prepare("INSERT INTO phone_operations VALUES(?,'start',?,'synthetic-intent','done',?)")
     .run('unbound-a', 'synthetic-unbound-operation', now);
+  db.prepare("INSERT INTO phone_challenges VALUES(?,?,?,?,'consumed',NULL,?,?,?,1,1,?,?)")
+    .run('historical-a', '+12025550000', 'synthetic-old-binding', 'synthetic-old-start', now - 600_000,
+      now - 300_000, now - 600_000, now - 500_000, 'auth-a');
+  db.prepare("INSERT INTO phone_operations VALUES(?,'check',?,'synthetic-old-intent','done',?)")
+    .run('historical-a', 'synthetic-old-operation', now - 500_000);
+  db.prepare("UPDATE phone_challenges SET phone='+12025550111' WHERE id='challenge-b'").run();
   return ['command_receipts', 'transcription_attempts', 'set_revisions', 'performed_sets', 'session_occurrences',
     'workout_sessions', 'plan_item_ids', 'plan_revisions', 'plans', 'document_revisions', 'documents', 'entitlement_grants'];
 }
@@ -500,21 +507,23 @@ test('synthetic local purge removes exact current and historical scope while ret
   const purchases = new ApplePurchaseService(f.db, purchaseConfig, { verify: async () => purchaseProof(f.now) }, () => f.now);
   assert.equal((await purchases.deliver(accountA, delivery())).status, 'delivered');
   const request = intent(); lifecycle.initiate(contextA, 'delete-a', request);
-  assert.throws(() => lifecycle.purgeLocal(request.requestId), domain('suppression_required', 409));
-  assert.throws(() => lifecycle.purgeLocal(randomUUID()), domain('not_found', 404));
+  assert.throws(() => lifecycle.purgeLocal(issueLocalPurgeAuthority(lifecycle, { requestId: request.requestId, operationId: 'synthetic-purge' })), domain('suppression_required', 409));
+  assert.throws(() => lifecycle.purgeLocal(issueLocalPurgeAuthority(lifecycle, { requestId: randomUUID(), operationId: 'synthetic-purge' })), domain('not_found', 404));
   lifecycle.confirm(contextA, request.requestId, confirmation(installGrant(f)));
   const second = Object.fromEntries(core.map(table => [table, f.db.prepare(`SELECT * FROM ${table} WHERE account_id=? ORDER BY rowid`).all(accountB)]));
   const retained = Object.fromEntries(['apple_purchase_owners', 'apple_purchase_transactions', 'apple_purchase_deliveries', 'apple_purchase_observations',
     'apple_purchase_commands', 'user', 'form_accounts', 'exercises', 'promos'].map(table => [table, rows(f.db, table)]));
   const secondCredentials = f.db.prepare('SELECT * FROM account WHERE userId=?').all('auth-b');
   const pendingProvider = f.db.prepare("SELECT * FROM account WHERE userId=? AND providerId<>'credential'").all('auth-a');
-  const secondPhone = f.db.prepare('SELECT * FROM phone_challenges WHERE auth_user_id=?').all('auth-b');
-  const secondOperations = f.db.prepare("SELECT * FROM phone_operations WHERE challenge_id='challenge-b'").all();
-  const result = lifecycle.purgeLocal(request.requestId);
+  const secondPhone = f.db.prepare("SELECT * FROM phone_challenges WHERE auth_user_id='auth-b' OR auth_user_id IS NULL ORDER BY rowid").all();
+  const secondOperations = f.db.prepare("SELECT o.* FROM phone_operations o JOIN phone_challenges c ON c.id=o.challenge_id WHERE c.auth_user_id='auth-b' OR c.auth_user_id IS NULL ORDER BY o.rowid").all();
+  const secondSession = f.db.prepare('SELECT * FROM session WHERE id=?').get(contextB.sessionId);
+  const result = lifecycle.purgeLocal(issueLocalPurgeAuthority(lifecycle, { requestId: request.requestId, operationId: 'synthetic-purge' }));
   assert.equal(result.phase, 'pending_external'); assert.equal(result.localPurged, true); assert.equal(result.complete, false);
   assert.equal(result.backupExpiryAt, null); assert.equal(result.billingCancellation, 'not_performed');
   assert.equal(result.steps.find(step => step.category === 'purchase_proofs')?.status, 'retained');
   assert.equal(result.steps.find(step => step.category === 'auth_identity')?.status, 'retained');
+  assert.equal(result.steps.find(step => step.category === 'phone_challenges')?.status, 'complete');
   for (const table of core) {
     assert.deepEqual(f.db.prepare(`SELECT * FROM ${table} WHERE account_id=?`).all(accountA), []);
     assert.deepEqual(f.db.prepare(`SELECT * FROM ${table} WHERE account_id=? ORDER BY rowid`).all(accountB), second[table]);
@@ -523,6 +532,7 @@ test('synthetic local purge removes exact current and historical scope while ret
   assert.deepEqual(f.db.prepare('SELECT * FROM account WHERE userId=?').all('auth-a'), pendingProvider);
   assert.deepEqual(f.db.prepare('SELECT * FROM account WHERE userId=?').all('auth-b'), secondCredentials);
   assert.deepEqual(rows(f.db, 'phone_challenges'), secondPhone); assert.deepEqual(rows(f.db, 'phone_operations'), secondOperations);
+  assert.deepEqual(f.db.prepare('SELECT * FROM session WHERE id=?').get(contextB.sessionId), secondSession);
   assert.equal(count(f.db, 'apple_purchase_grants'), 0);
   for (const [table, original] of Object.entries(retained)) assert.deepEqual(rows(f.db, table), original);
   assert.equal(f.ledger.lookup(accountA)?.requestId, request.requestId);
@@ -533,7 +543,7 @@ test('synthetic local purge removes exact current and historical scope while ret
     assert.equal((f.db.prepare(`SELECT count(*) n FROM ${table} WHERE account_id=? AND kind=?`).get(accountA, confirmedCaptureKind) as { n: number }).n, 0);
   assert.equal((f.db.prepare('SELECT count(*) n FROM command_receipts WHERE account_id=? AND operation=?').get(accountA, confirmedCaptureOperation) as { n: number }).n, 0);
   assert.equal(new Domain(f.db).confirmedCapture(accountB)?.revision, 1);
-  assert.equal(lifecycle.purgeLocal(request.requestId).complete, false); assertActive(f.db, contextB); integrity(f.db);
+  assert.equal(lifecycle.purgeLocal(issueLocalPurgeAuthority(lifecycle, { requestId: request.requestId, operationId: 'synthetic-purge' })).complete, false); assertActive(f.db, contextB); integrity(f.db);
 }));
 
 test('unadapted synthetic module storage prevents local purge qualification and whole deletion completion', () => fixture(f => {
@@ -542,7 +552,7 @@ test('unadapted synthetic module storage prevents local purge qualification and 
   f.db.exec('CREATE TABLE activity_lifecycle_test_inventory(account_id TEXT NOT NULL REFERENCES form_accounts(id),value TEXT NOT NULL)');
   f.db.prepare('INSERT INTO activity_lifecycle_test_inventory VALUES(?,?)').run(accountA, 'synthetic-remaining-module-row');
   const { request } = disable(f, lifecycle);
-  const result = lifecycle.purgeLocal(request.requestId);
+  const result = lifecycle.purgeLocal(issueLocalPurgeAuthority(lifecycle, { requestId: request.requestId, operationId: 'synthetic-purge' }));
   assert.equal(result.localPurged, false); assert.equal(result.complete, false); assert.equal(result.phase, 'pending_external');
   assert.equal(result.steps.find(step => step.category === 'activity')?.status, 'pending');
   assert.equal(count(f.db, 'activity_lifecycle_test_inventory'), 1);
