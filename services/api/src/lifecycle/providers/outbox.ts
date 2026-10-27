@@ -8,6 +8,7 @@ import { captureReference, providerAccounts, referenceStillPresent, validateReso
 import { decodeProviderFact, encodeProviderFact, intentCheckpoint, intentIdentity, parseAttempt, parseIntent,
   providerTarget, referenceFor, type ProviderAttempt, type ProviderIntent } from './outbox-codec.js';
 import { revokeApple, settleProviderOperation } from './apple.js';
+import { LocalTerminationUnconfirmed } from './types.js';
 import type { AttemptResult, BoundedAppleTransport, ConfirmationCapture, MaterialCustodian,
   ProviderBudget, ProviderConfirmationHook, ResolvedMaterial, RestrictedReference } from './types.js';
 
@@ -142,7 +143,10 @@ export class ProviderRevocationOutbox {
           if (resolved.status !== 'qualified') preparation = 'material_unavailable';
           else if (!validateResolvedReference(this.db, referenceFor(i), resolved.value)) preparation = 'reference_changed';
           else material = resolved.value;
-        } catch { preparation = budget.signal.aborted ? 'preparation_expired' : 'material_unavailable'; }
+        } catch (error) {
+          if (error instanceof LocalTerminationUnconfirmed) throw error;
+          preparation = budget.signal.aborted ? 'preparation_expired' : 'material_unavailable';
+        }
       }
       if (budget.signal.aborted || safeTime(this.clock()) >= budget.deadlineAtMs) preparation ??= 'preparation_expired';
       if (preparation || !material) return this.finish(i, attemptId, preparation ?? 'material_unavailable', null);
@@ -215,9 +219,9 @@ export class ProviderRevocationOutbox {
     if (!row) held();
     const i = this.intent(row.intent_id), a = this.attempt(attemptId, i); if (!a) held();
     this.assertAttemptCheckpoint(a, i);
-    if (a.state !== 'preparing' && a.state !== 'in_flight') return result(a);
-    if (safeTime(this.clock()) < a.deadline_at_ms) return result(a);
-    return this.finish(i, attemptId, a.state === 'preparing' ? 'preparation_expired' : 'transport_unknown', null);
+    // Expiry and absent invocation bookkeeping cannot prove local termination, including after restart.
+    // Keep active rows and their unique claim until independently bound termination evidence exists.
+    return result(a);
   }
   private facts(i: ProviderIntent): CompletionFact[] {
     const rows = this.db.prepare('SELECT * FROM account_provider_revocation_attempts WHERE intent_id=? ORDER BY ordinal').all(i.intent_id);

@@ -85,18 +85,35 @@ for (const phase of ['connect', 'body'] as const) test(`hanging ${phase} cancell
   assert.deepEqual(await running, { code: 'transport_unknown', status: null }); assert.equal(cleanupCalled, 1);
 });
 
-test('transport exception and cleanup rejection yield only closed uncertainty with no retries', async () => {
-  for (const cleanupFailure of [false, true]) {
+test('transport exception after successful cleanup yields closed remote uncertainty with no retries', async () => {
     let calls = 0, cleanups = 0;
     const transport: BoundedAppleTransport = { contract: 'bounded-apple-revoke-v1', post: () => {
       calls++; return { settled: Promise.reject(new Error('synthetic-token-secret-body')), cancel: async () => {
-        cleanups++; if (cleanupFailure) throw new Error('synthetic-cleanup-detail');
+        cleanups++;
       } };
     } };
     assert.deepEqual(await revokeApple(material, transport, budget()), { code: 'transport_unknown', status: null });
     assert.equal(calls, 1); assert.equal(cleanups, 1);
-  }
 });
+
+for (const settlement of ['error', 'empty200'] as const)
+  test(`P1 ${settlement} with rejected HTTP cleanup propagates only closed local termination failure`, async () => {
+    let starts = 0, cleanups = 0;
+    const transport: BoundedAppleTransport = { contract: 'bounded-apple-revoke-v1', post: () => {
+      starts++;
+      return { settled: settlement === 'error' ? Promise.reject(new Error('synthetic-operation-detail'))
+        : Promise.resolve({ status: 200, body: new Uint8Array(), truncated: false }),
+      cancel: async () => { cleanups++; throw new Error('synthetic-cleanup-detail'); } };
+    } };
+    await assert.rejects(revokeApple(material, transport, budget()), error => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, 'local_termination_unconfirmed');
+      assert.deepEqual(JSON.parse(JSON.stringify(error)), { code: 'local_termination_unconfirmed' });
+      assert.equal(error.cause, undefined);
+      return true;
+    });
+    assert.equal(starts, 1); assert.equal(cleanups, 1);
+  });
 
 test('material producer cancellation settles before caller sees a result or another phase starts', async () => {
   const controller = new AbortController(), value = pending<string>(), cleanup = pending<void>(); let delivered = false;

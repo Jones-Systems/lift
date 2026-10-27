@@ -410,16 +410,19 @@ function crashClaim(f: ReturnType<typeof fixture>, attemptId: string, inFlight: 
     if (inFlight) f.db.prepare("UPDATE account_provider_revocation_attempts SET state='in_flight',revision=1,dispatch_at_ms=? WHERE attempt_id=?").run(f.now(), attemptId);
   }).immediate();
 }
-for (const inFlight of [false, true]) test(`restart at committed ${inFlight ? 'dispatch gap' : 'preparing'} recovers only the named attempt without sending`, async t => {
+for (const inFlight of [false, true]) test(`P1 restart at committed ${inFlight ? 'dispatch gap' : 'preparing'} holds the named active attempt without termination evidence`, async t => {
   const f = fixture(t); await f.confirm(); const i = f.intent(), id = inFlight ? 'crash-flight' : 'crash-prepare';
-  crashClaim(f, id, inFlight); f.advance(10001); f.db.close(); const source = f.compose(f.reopen());
+  crashClaim(f, id, inFlight); f.advance(10001); f.db.close(); const reopened = f.reopen(), source = f.compose(reopened);
   const recovered = source.reconcileOne(id);
-  assert.equal(recovered.state, inFlight ? 'unknown' : 'no_effect'); assert.equal(f.sends(), 0);
+  assert.equal(recovered.state, inFlight ? 'in_flight' : 'preparing'); assert.equal(f.sends(), 0);
   assert.deepEqual(source.reconcileOne(id), recovered);
-  assert.equal((await source.attemptOne(i.intent_id, 'explicit-after-crash')).state, 'acknowledged'); assert.equal(f.sends(), 1);
+  assert.deepEqual(await source.attemptOne(i.intent_id, id), recovered);
+  await assert.rejects(source.attemptOne(i.intent_id, 'explicit-after-crash')); assert.equal(f.sends(), 0);
+  assert.equal(parseAttempt(reopened.prepare('SELECT * FROM account_provider_revocation_attempts WHERE attempt_id=?').get(id), i).result_fact_json, null);
+  assert.deepEqual(reopened.prepare('SELECT * FROM account_provider_revocation_intents').all().map(parseIntent), [i]);
 });
 
-test('lost ACK transaction rolls back fact and stable-ID reconciliation reads before any deliberate retry', async t => {
+test('P1 lost ACK transaction rolls back fact and holds the active claim through expiry without renewed send', async t => {
   const f = fixture(t); await f.confirm(); const i = f.intent(), original = f.db.prepare.bind(f.db);
   let fail = true;
   f.db.prepare = ((sql: string) => {
@@ -429,12 +432,14 @@ test('lost ACK transaction rolls back fact and stable-ID reconciliation reads be
     statement.run = ((...args: unknown[]) => { const effect = run(...args); if (fail) { fail = false; throw new Error('synthetic-ack-commit-failure'); } return effect; }) as typeof statement.run;
     return statement;
   }) as typeof f.db.prepare;
-  const result = await f.source.attemptOne(i.intent_id, 'ack-commit-lost'); f.db.prepare = original;
+  let result: Awaited<ReturnType<typeof f.source.attemptOne>>;
+  try { result = await f.source.attemptOne(i.intent_id, 'ack-commit-lost'); }
+  finally { f.db.prepare = original; }
   assert.equal(result.state, 'in_flight'); assert.equal(f.sends(), 1);
   assert.equal(parseAttempt(f.attempt('ack-commit-lost'), i).result_fact_json, null);
   assert.equal((await f.source.attemptOne(i.intent_id, 'ack-commit-lost')).state, 'in_flight'); assert.equal(f.sends(), 1);
-  f.advance(10001); assert.equal(f.source.reconcileOne('ack-commit-lost').state, 'unknown');
-  assert.equal((await f.source.attemptOne(i.intent_id, 'explicit-ack-retry')).state, 'acknowledged'); assert.equal(f.sends(), 2);
+  f.advance(10001); assert.equal(f.source.reconcileOne('ack-commit-lost').state, 'in_flight');
+  await assert.rejects(f.source.attemptOne(i.intent_id, 'explicit-ack-retry')); assert.equal(f.sends(), 1);
 });
 
 for (const fault of ['generation', 'proof', 'schema', 'history', 'subject', 'token', 'file', 'authority', 'pending-authority', 'checkpoint-head'] as const)
@@ -626,3 +631,73 @@ test('real competing terminal CAS during transport wins without a second fact or
   const a = parseAttempt(f.attempt('cas-one'), i); assert.equal(decodeProviderFact(a.result_fact_json!).status, 'unknown');
   assert.equal(f.source.providerCompletion(i.intent_id).status, 'unknown');
 });
+
+
+for (const phase of ['material', 'http'] as const)
+  for (const settlement of ['error', 'resolved', 'start-throw', 'missing-handle'] as const)
+    test(`P1 ${phase} ${settlement} without confirmed cleanup holds durable exclusion across handles and reopen`, async t => {
+      const f = fixture(t); await f.confirm(); const i = f.intent(), id = `held-${phase}-${settlement}`;
+      let cleanups = 0;
+      const operation = <T>(value: T): BoundedProviderOperation<T> => {
+        if (settlement === 'start-throw') throw new Error('synthetic-start-detail');
+        if (settlement === 'missing-handle') return undefined as unknown as BoundedProviderOperation<T>;
+        return { settled: settlement === 'error' ? Promise.reject(new Error('synthetic-operation-detail')) : Promise.resolve(value),
+          cancel: async () => { cleanups++; throw new Error('synthetic-cleanup-detail'); } };
+      };
+      if (phase === 'material') f.behavior.resolve = () => operation({ status: 'qualified',
+        value: { material: f.material, clientSecret: 'synthetic-secret' } });
+      else f.behavior.post = () => operation({ status: 200, body: new Uint8Array(), truncated: false });
+      const held = await f.source.attemptOne(i.intent_id, id);
+      const state = phase === 'material' ? 'preparing' : 'in_flight';
+      assert.equal(held.state, state); assert.equal(held.outcomeCode, null); assert.equal(held.protocolStatus, null);
+      const before = parseAttempt(f.attempt(id), i);
+      assert.equal(before.revision, phase === 'material' ? 0 : 1);
+      assert.equal(before.dispatch_at_ms, phase === 'material' ? null : f.now());
+      assert.equal(before.finished_at_ms, null); assert.equal(before.result_fact_json, null);
+      assert.equal(f.resolutions(), 1); assert.equal(f.sends(), phase === 'material' ? 0 : 1);
+      assert.equal(cleanups, settlement === 'error' || settlement === 'resolved' ? 1 : 0);
+      assert.deepEqual(f.intents(), [i]);
+      assert.deepEqual(await f.source.attemptOne(i.intent_id, id), held);
+      const other = f.reopen(), second = f.compose(other);
+      assert.deepEqual(await second.attemptOne(i.intent_id, id), held);
+      await assert.rejects(second.attemptOne(i.intent_id, 'different-held-id'));
+      f.advance(10001);
+      assert.deepEqual(second.reconcileOne(id), held);
+      assert.throws(() => other.prepare(`INSERT INTO account_provider_revocation_attempts
+        (attempt_id,intent_id,ordinal,binding_json,binding_digest,state,revision,started_at_ms,deadline_at_ms)
+        SELECT 'direct-competing-claim',intent_id,2,binding_json,binding_digest,'preparing',0,started_at_ms,deadline_at_ms
+        FROM account_provider_revocation_attempts WHERE attempt_id=?`).run(id),
+      /UNIQUE constraint failed: account_provider_revocation_attempts.intent_id/);
+      other.close(); f.db.close();
+      const reopened = f.reopen(), fresh = f.compose(reopened);
+      assert.deepEqual(fresh.reconcileOne(id), held);
+      assert.deepEqual(await fresh.attemptOne(i.intent_id, id), held);
+      await assert.rejects(fresh.attemptOne(i.intent_id, 'different-after-reopen'));
+      assert.deepEqual(parseAttempt(reopened.prepare('SELECT * FROM account_provider_revocation_attempts WHERE attempt_id=?').get(id), i), before);
+      assert.deepEqual(reopened.prepare('SELECT count(*) n FROM account_provider_revocation_attempts').get(), { n: 1 });
+      assert.deepEqual(reopened.prepare('SELECT * FROM account_provider_revocation_intents').all().map(parseIntent), [i]);
+      assert.equal(f.resolutions(), 1); assert.equal(f.sends(), phase === 'material' ? 0 : 1);
+      assert.equal(JSON.stringify(before).includes('synthetic-cleanup-detail'), false); integrity(reopened);
+    });
+
+for (const phase of ['material', 'http'] as const)
+  test(`P1 ${phase} cleanup rejection with currentness loss returns held without minting a fact or generation`, async t => {
+    const f = fixture(t); await f.confirm(); const i = f.intent(), id = `cleanup-currentness-${phase}`;
+    const operation = <T>(value: T): BoundedProviderOperation<T> => ({ settled: Promise.resolve(value), cancel: async () => {
+      f.writeGeneration('generation-two', 2); throw new Error('synthetic-cleanup-detail');
+    } });
+    if (phase === 'material') f.behavior.resolve = () => operation({ status: 'qualified',
+      value: { material: f.material, clientSecret: 'synthetic-secret' } });
+    else f.behavior.post = () => operation({ status: 200, body: new Uint8Array(), truncated: false });
+    await assert.rejects(f.source.attemptOne(i.intent_id, id), error => {
+      assert.ok(error instanceof DomainError); assert.equal(error.code, 'provider_revocation_held'); return true;
+    });
+    const a = parseAttempt(f.attempt(id), i);
+    assert.equal(a.state, phase === 'material' ? 'preparing' : 'in_flight');
+    assert.equal(a.revision, phase === 'material' ? 0 : 1);
+    assert.equal(a.result_fact_json, null); assert.equal(a.finished_at_ms, null);
+    assert.deepEqual(f.intents(), [i]); assert.equal(f.sends(), phase === 'material' ? 0 : 1);
+    assert.throws(() => f.source.reconcileOne(id));
+    await assert.rejects(f.source.attemptOne(i.intent_id, 'new-generation-denied'));
+    assert.deepEqual(parseAttempt(f.attempt(id), i), a); assert.equal(f.resolutions(), 1);
+  });

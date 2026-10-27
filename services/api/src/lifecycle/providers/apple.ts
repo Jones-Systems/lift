@@ -1,25 +1,30 @@
 import type { AppleOutcome, BoundedAppleTransport, BoundedProviderOperation, ProviderBudget, ResolvedMaterial } from './types.js';
+import { LocalTerminationUnconfirmed } from './types.js';
 
-// Settlement includes local producer cleanup. If a port violates it, this invocation stays unresolved;
-// its durable active claim prevents a competing send. No detached race winner grants retry authority.
+// Failed cleanup returns a closed failure while the durable active claim continues to exclude retry.
+// A pending port still needs separate termination qualification; no detached race winner grants authority.
 export async function settleProviderOperation<T>(start: () => BoundedProviderOperation<T>, budget: ProviderBudget): Promise<T> {
   if (budget.signal.aborted) throw new Error('provider_cancelled');
-  const operation = start();
-  if (!operation || typeof operation.cancel !== 'function' || !operation.settled || typeof operation.settled.then !== 'function')
-    throw new Error('provider_port_unqualified');
+  let operation: BoundedProviderOperation<T>;
+  try {
+    operation = start();
+    if (!operation || typeof operation.cancel !== 'function' || !operation.settled || typeof operation.settled.then !== 'function')
+      throw new LocalTerminationUnconfirmed();
+  } catch { throw new LocalTerminationUnconfirmed(); }
   let cleanup: Promise<void> | undefined;
   const cancel = () => { cleanup ??= Promise.resolve().then(() => operation.cancel()); void cleanup.catch(() => undefined); };
   budget.signal.addEventListener('abort', cancel, { once: true });
   if (budget.signal.aborted) cancel();
-  try {
-    const value = await operation.settled;
-    cancel(); await cleanup;
-    if (budget.signal.aborted) throw new Error('provider_cancelled');
-    return value;
-  } finally {
+  let value: T;
+  try { value = await operation.settled; }
+  finally {
     cancel();
-    try { await cleanup; } finally { budget.signal.removeEventListener('abort', cancel); }
+    try { await cleanup; }
+    catch { throw new LocalTerminationUnconfirmed(); }
+    finally { budget.signal.removeEventListener('abort', cancel); }
   }
+  if (budget.signal.aborted) throw new Error('provider_cancelled');
+  return value;
 }
 export async function revokeApple(material: ResolvedMaterial, transport: BoundedAppleTransport,
   budget: ProviderBudget): Promise<AppleOutcome> {
@@ -43,5 +48,8 @@ export async function revokeApple(material: ResolvedMaterial, transport: Bounded
       return { code: 'response_invalid', status };
     if (status !== 200) return { code: 'provider_error', status };
     return { code: response.body.byteLength === 0 ? 'apple_ack' : 'response_invalid', status };
-  } catch { return { code: 'transport_unknown', status: null }; }
+  } catch (error) {
+    if (error instanceof LocalTerminationUnconfirmed) throw error;
+    return { code: 'transport_unknown', status: null };
+  }
 }

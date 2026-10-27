@@ -16,11 +16,16 @@ export type RestrictedReference = Readonly<{ sourceAccountRowId: string; authUse
 export type ResolvedMaterial = Readonly<{ material: QualifiedToken; clientSecret: string }>;
 export type ResolveMaterial = Readonly<{ status: 'qualified'; value: ResolvedMaterial }> |
   Readonly<{ status: 'unavailable' }>;
-// Both ports own producer termination, including body consumption and abort cleanup, before settling.
+// Local termination requires both operation settlement and successful cancel cleanup, including body consumption.
+// A rejected cleanup or unusable start handle leaves the durable attempt active; it grants no retry authority.
 // The 10s total includes cancellation; abort starts with 500ms reserved for cleanup.
 // capture prefers a qualified refresh token; an access token needs the same exact issuer/subject provenance.
 // A real adapter needs separate qualification; this contract activates no network implementation.
 export type BoundedProviderOperation<T> = Readonly<{ settled: Promise<T>; cancel: () => Promise<void> }>;
+export class LocalTerminationUnconfirmed extends Error {
+  readonly code = 'local_termination_unconfirmed';
+  constructor() { super('local_termination_unconfirmed'); }
+}
 export type ProviderBudget = Readonly<{ deadlineAtMs: number; signal: AbortSignal; maxResponseBytes: 4096 }>;
 export type MaterialCustodian = Readonly<{
   contract: 'bounded-provider-material-v1';
