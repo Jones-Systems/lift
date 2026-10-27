@@ -13,8 +13,8 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
     paths:
-      - 'apps/form/**'
-      - 'services/api/**'
+      - 'apps/**'
+      - 'services/**'
       - 'packages/**'
       - '.gitattributes'
       - '.github/workflows/form-ios-simulator.yml'
