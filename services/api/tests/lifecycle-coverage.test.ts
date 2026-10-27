@@ -1,3 +1,4 @@
+import { selectSourceProviderRevocationMigrations } from '../src/lifecycle/providers/source-migrations.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AssertionError } from 'node:assert';
@@ -157,4 +158,22 @@ test('registry cascade and ownership boundaries match actual foreign keys and re
   assert.throws(() => db.prepare('UPDATE form_accounts SET auth_user_id=? WHERE id=?').run('two', 'form-one'), /immutable_account_mapping/);
   assert.throws(() => db.prepare('DELETE FROM account_lifecycle WHERE account_id=?').run('form-one'), /lifecycle_retained/);
   assert.deepEqual(db.pragma('foreign_key_check'), []);
+});
+
+
+test('source25 restricted provider authority/evidence has exact ownership without changing source24 or runtime16', t => {
+  const db: Sqlite = new Database(':memory:'); t.after(() => db.close());
+  install(db, selectSourceProviderRevocationMigrations());
+  qualify(db, ['runtime16', 'source17', 'source18', 'source20', 'source21', 'source23', 'source24', 'source25']);
+  assert.throws(() => qualify(db, ['runtime16', 'source17', 'source18', 'source20', 'source21', 'source23', 'source24']), /unclassified schema tables/);
+  const declared = lifecycleTableCoverage.filter(row => row.cohort === 'source25');
+  assert.deepEqual(declared.map(row => row.table).sort(), ['account_provider_revocation_attempts', 'account_provider_revocation_intents']);
+  for (const row of declared) {
+    assert.equal(row.disposition, 'retained');
+    assert.match(row.limits, /excluded from exports and local purge/);
+    assert.match(row.residual, /unavailable/);
+  }
+  assert.equal(inventory(memory(t)).includes('account_provider_revocation_intents'), false);
+  const old: Sqlite = new Database(':memory:'); t.after(() => old.close()); install(old, selectSourceLifecycleEvidenceMigrations());
+  assert.equal(inventory(old).includes('account_provider_revocation_attempts'), false);
 });

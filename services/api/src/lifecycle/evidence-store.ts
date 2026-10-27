@@ -7,6 +7,8 @@ import { CurrentSuppressionAuthority, canonicalDisable, advanceHead, genesisHead
 import { suppressionAuthority } from './guards.js';
 import { currentLocalPurgeFrame, type LocalPurgeFrame } from './purge-executor.js';
 import { lifecycleEvidenceSchemaObjects } from './evidence-migration.js';
+import { assertSourceProviderRevocationHistory } from './providers/source-migrations.js';
+import { assertProviderRevocationSchema } from './providers/outbox-migration.js';
 import { assertSourceLifecycleEvidenceHistory } from './source-migrations.js';
 import { evidenceCanonical, evidenceDigest, evidenceIdSchema, evidenceOperationSchema, encodeDurableEvidence,
   decodeDurableEvidence, type EvidenceOperation, type DurableEvidence } from './evidence-codec.js';
@@ -26,10 +28,14 @@ export function assertLifecycleEvidenceSchema(db: Sqlite, installed: boolean): v
   if (related.length !== lifecycleEvidenceSchemaObjects.length || lifecycleEvidenceSchemaObjects.some(object =>
     !related.some(row => row.name === object.name && row.type === object.type && row.sql !== null && normalize(row.sql) === normalize(object.sql)))) held();
 }
-function schemaDigest(db: Sqlite): string {
-  assertSourceLifecycleEvidenceHistory(db.prepare('SELECT version,checksum FROM form_migrations ORDER BY version').all() as
+export type SourceLifecycleHistorySelection = 'selected-lifecycle-evidence-24' | 'selected-provider-revocation-25';
+function schemaDigest(db: Sqlite, selected: SourceLifecycleHistorySelection): string {
+  if (selected !== 'selected-lifecycle-evidence-24' && selected !== 'selected-provider-revocation-25') held();
+  const validate = selected === 'selected-provider-revocation-25' ? assertSourceProviderRevocationHistory : assertSourceLifecycleEvidenceHistory;
+  validate(db.prepare('SELECT version,checksum FROM form_migrations ORDER BY version').all() as
     { version: number; checksum: string }[], true);
   assertLifecycleEvidenceSchema(db, true);
+  if (selected === 'selected-provider-revocation-25') assertProviderRevocationSchema(db, true);
   return evidenceDigest(db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name").all());
 }
 
@@ -62,8 +68,67 @@ export function bindSourceLifecycleEvidenceWitnessReader(db: Sqlite, authority: 
     return reader;
   } catch { return held(); }
 }
-type Snapshot = Readonly<{ binding: CompletionBinding; suppression: DisableRecord; policyVersion: string; proofDigest: string; stamp: string }>;
-type PurgeEvidenceAttempt = Readonly<{ frame: LocalPurgeFrame; operation: EvidenceOperation; snapshot: Snapshot; categories: readonly string[] }>;
+export type SourceLifecycleCurrentnessSnapshot = Readonly<{ binding: CompletionBinding; suppression: DisableRecord; policyVersion: string; proofDigest: string; stamp: string }>;
+declare const currentnessBrand: unique symbol;
+export type SourceLifecycleCurrentness = Readonly<{ [currentnessBrand]: true }>;
+type CurrentnessState = { db: Sqlite; reader: ReaderBinding; schema: string; selected: SourceLifecycleHistorySelection;
+  purpose: 'lifecycle-evidence-v1' | 'provider-revocation-v1'; lastCheckpoint: CompletionBinding['checkpoint'] };
+const currentnessPorts = new WeakMap<SourceLifecycleCurrentness, CurrentnessState>();
+export function bindSourceLifecycleCurrentness(db: Sqlite, reader: SourceLifecycleEvidenceWitnessReader,
+  selected: SourceLifecycleHistorySelection = 'selected-lifecycle-evidence-24',
+  purpose: 'lifecycle-evidence-v1' | 'provider-revocation-v1' = 'lifecycle-evidence-v1'): SourceLifecycleCurrentness {
+  const bound = readers.get(reader);
+  if (!bound || bound.db !== db || !['lifecycle-evidence-v1', 'provider-revocation-v1'].includes(purpose) ||
+    (selected !== 'selected-provider-revocation-25' && purpose !== 'lifecycle-evidence-v1')) held();
+  const schema = schemaDigest(db, selected), checkpoint = bound.authority.checkpoint();
+  const port = Object.freeze(Object.create(null)) as SourceLifecycleCurrentness;
+  currentnessPorts.set(port, { db, reader: bound, schema, selected, purpose,
+    lastCheckpoint: Object.freeze({ authorityId: checkpoint.authorityId, ledgerSchemaDigest: checkpoint.ledgerSchemaDigest,
+      revision: checkpoint.revision, committedSequence: checkpoint.committedSequence, committedHeadDigest: checkpoint.committedHeadDigest }) });
+  return port;
+}
+export function readSourceLifecycleCurrentness(port: SourceLifecycleCurrentness, requestId: string,
+  prior?: CompletionBinding['checkpoint']): SourceLifecycleCurrentnessSnapshot {
+  const state = currentnessPorts.get(port);
+  if (!state) held();
+  try {
+    const { db, reader } = state;
+    if (!db.open || suppressionAuthority(db) !== reader.authority || reader.file !== fileIdentity(db) ||
+      evidenceCanonical(generation(reader.read(db))) !== evidenceCanonical(reader.generation) || schemaDigest(db, state.selected) !== state.schema) held();
+    const row = db.prepare(`SELECT r.account_id,r.policy_version,r.intent_hash,r.verified_at_ms,r.verification_method,l.state,l.epoch,l.suppression_seq,f.auth_user_id
+      FROM account_deletion_requests r JOIN form_accounts f ON f.id=r.account_id
+      JOIN account_lifecycle l ON l.account_id=r.account_id WHERE r.id=?`).get(requestId) as
+      { account_id: string; auth_user_id: string; state: string; epoch: number; suppression_seq: number; policy_version: string;
+        intent_hash: string; verified_at_ms: number | null; verification_method: string | null } | undefined;
+    if (!row || row.verified_at_ms === null || !Number.isSafeInteger(row.verified_at_ms) || row.verification_method !== 'password') held();
+    const checkpoint = reader.authority.checkpoint(), suppression = reader.authority.lookup(row.account_id);
+    const checkpoints = [state.lastCheckpoint, ...(prior ? [prior] : [])];
+    for (const c of checkpoints) if (c.authorityId !== checkpoint.authorityId || c.ledgerSchemaDigest !== checkpoint.ledgerSchemaDigest ||
+      !Number.isSafeInteger(c.revision) || c.revision < 0 || !Number.isSafeInteger(c.committedSequence) || c.committedSequence < 0 ||
+      checkpoint.revision < c.revision || checkpoint.committedSequence < c.committedSequence) held();
+    let head = genesisHead(checkpoint.authorityId), sequence = 0;
+    for (const c of checkpoints) if (c.committedSequence === 0 && c.committedHeadDigest !== head) held();
+    reader.authority.reconcileRestore(record => {
+      if (record.sequence !== ++sequence) held(); head = advanceHead(head, record);
+      for (const c of checkpoints) if (c.committedSequence === sequence && c.committedHeadDigest !== head) held();
+    });
+    if (head !== checkpoint.committedHeadDigest || sequence !== checkpoint.committedSequence) held();
+    if (!suppression || checkpoint.pending || row.state !== 'disabled' || suppression.requestId !== requestId ||
+      suppression.authUserId !== row.auth_user_id || suppression.epoch !== row.epoch || suppression.sequence !== row.suppression_seq ||
+      checkpoint.committedSequence < suppression.sequence) held();
+    const binding: CompletionBinding = Object.freeze({ requestId, accountId: row.account_id, authUserId: row.auth_user_id,
+      epoch: row.epoch, sequence: suppression.sequence, databaseGeneration: evidenceDigest(reader.generation),
+      schemaDigest: state.schema, cohort: state.purpose, checkpoint: Object.freeze({ authorityId: checkpoint.authorityId,
+        ledgerSchemaDigest: checkpoint.ledgerSchemaDigest, revision: checkpoint.revision,
+        committedSequence: checkpoint.committedSequence, committedHeadDigest: checkpoint.committedHeadDigest }) });
+    state.lastCheckpoint = binding.checkpoint;
+    const proofDigest = evidenceDigest([row.intent_hash, row.verified_at_ms, row.verification_method]);
+    return Object.freeze({ binding, suppression: Object.freeze({ ...suppression }), policyVersion: row.policy_version, proofDigest,
+      stamp: evidenceDigest([binding, canonicalDisable(suppression), reader.generation, row.policy_version, proofDigest]) });
+  } catch { return held(); }
+}
+
+type PurgeEvidenceAttempt = Readonly<{ frame: LocalPurgeFrame; operation: EvidenceOperation; snapshot: SourceLifecycleCurrentnessSnapshot; categories: readonly string[] }>;
 const attempts = new WeakSet<PurgeEvidenceAttempt>();
 const completedAttempts = new WeakMap<PurgeEvidenceAttempt, readonly string[]>();
 export type LocalEvidenceProjection = Readonly<{ calculation: CompletionCalculation; localPurged: boolean;
@@ -73,55 +138,22 @@ export type LocalEvidenceProjection = Readonly<{ calculation: CompletionCalculat
 
 export class LifecycleEvidenceStore {
   private readonly reader: ReaderBinding;
-  private readonly schema: string;
-  private lastCheckpoint: CompletionBinding['checkpoint'];
+  private readonly currentness: SourceLifecycleCurrentness;
   private readonly absence: ReturnType<typeof sourceLifecycleLocalAbsenceReadback>;
   constructor(private readonly db: Sqlite, reader: SourceLifecycleEvidenceWitnessReader,
-    adapters: readonly LifecycleAdapter[] = [], localAbsence: readonly SourceLifecycleLocalAbsenceReader[] = []) {
+    adapters: readonly LifecycleAdapter[] = [], localAbsence: readonly SourceLifecycleLocalAbsenceReader[] = [],
+    selected: SourceLifecycleHistorySelection = 'selected-lifecycle-evidence-24') {
     this.absence = sourceLifecycleLocalAbsenceReadback(db, adapters, localAbsence);
     const bound = readers.get(reader);
     if (!bound || bound.db !== db) held();
-    this.reader = bound; this.schema = schemaDigest(db);
-    const checkpoint = bound.authority.checkpoint();
-    this.lastCheckpoint = Object.freeze({ authorityId: checkpoint.authorityId, ledgerSchemaDigest: checkpoint.ledgerSchemaDigest,
-      revision: checkpoint.revision, committedSequence: checkpoint.committedSequence, committedHeadDigest: checkpoint.committedHeadDigest });
+    this.reader = bound; this.currentness = bindSourceLifecycleCurrentness(db, reader, selected, 'lifecycle-evidence-v1');
   }
   hasLocalAbsence(category: string): boolean { return this.absence.qualified(category); }
   localAbsent(accountId: string, category: string): boolean { return this.absence.absent(accountId, category); }
   assertDatabase(db: Sqlite): void { if (db !== this.db) held(); }
   assertAuthority(authority: CurrentSuppressionAuthority): void { if (authority !== this.reader.authority) held(); }
-  private snapshot(requestId: string): Snapshot {
-    try {
-      const { db, reader } = this;
-      if (!db.open || suppressionAuthority(db) !== reader.authority || reader.file !== fileIdentity(db) ||
-        evidenceCanonical(generation(reader.read(db))) !== evidenceCanonical(reader.generation) || schemaDigest(db) !== this.schema) held();
-      const row = db.prepare(`SELECT r.account_id,r.policy_version,r.intent_hash,r.verified_at_ms,r.verification_method,l.state,l.epoch,l.suppression_seq,f.auth_user_id
-        FROM account_deletion_requests r JOIN form_accounts f ON f.id=r.account_id
-        JOIN account_lifecycle l ON l.account_id=r.account_id WHERE r.id=?`).get(requestId) as
-        { account_id: string; auth_user_id: string; state: string; epoch: number; suppression_seq: number; policy_version: string;
-          intent_hash: string; verified_at_ms: number | null; verification_method: string | null } | undefined;
-      if (!row || row.verified_at_ms === null || !Number.isSafeInteger(row.verified_at_ms) || row.verification_method !== 'password') held();
-      const checkpoint = reader.authority.checkpoint(), suppression = reader.authority.lookup(row.account_id);
-      let head = genesisHead(checkpoint.authorityId), sequence = 0;
-      reader.authority.reconcileRestore(record => {
-        if (record.sequence !== ++sequence) held(); head = advanceHead(head, record);
-      });
-      if (head !== checkpoint.committedHeadDigest || sequence !== checkpoint.committedSequence ||
-        checkpoint.revision < this.lastCheckpoint.revision || checkpoint.committedSequence < this.lastCheckpoint.committedSequence ||
-        (checkpoint.committedSequence === this.lastCheckpoint.committedSequence && checkpoint.committedHeadDigest !== this.lastCheckpoint.committedHeadDigest)) held();
-      if (!suppression || checkpoint.pending || row.state !== 'disabled' || suppression.requestId !== requestId ||
-        suppression.authUserId !== row.auth_user_id || suppression.epoch !== row.epoch || suppression.sequence !== row.suppression_seq ||
-        checkpoint.committedSequence < suppression.sequence) held();
-      const binding: CompletionBinding = Object.freeze({ requestId, accountId: row.account_id, authUserId: row.auth_user_id,
-        epoch: row.epoch, sequence: suppression.sequence, databaseGeneration: evidenceDigest(reader.generation),
-        schemaDigest: this.schema, cohort: 'lifecycle-evidence-v1', checkpoint: Object.freeze({ authorityId: checkpoint.authorityId,
-          ledgerSchemaDigest: checkpoint.ledgerSchemaDigest, revision: checkpoint.revision,
-          committedSequence: checkpoint.committedSequence, committedHeadDigest: checkpoint.committedHeadDigest }) });
-      this.lastCheckpoint = binding.checkpoint;
-      const proofDigest = evidenceDigest([row.intent_hash, row.verified_at_ms, row.verification_method]);
-      return Object.freeze({ binding, suppression: Object.freeze({ ...suppression }), policyVersion: row.policy_version, proofDigest,
-        stamp: evidenceDigest([binding, canonicalDisable(suppression), reader.generation, row.policy_version, proofDigest]) });
-    } catch { return held(); }
+  private snapshot(requestId: string): SourceLifecycleCurrentnessSnapshot {
+    return readSourceLifecycleCurrentness(this.currentness, requestId);
   }
   private assertFrame(frame: LocalPurgeFrame): void {
     const current = currentLocalPurgeFrame(this.db);

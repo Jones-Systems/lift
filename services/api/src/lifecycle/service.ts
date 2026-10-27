@@ -11,6 +11,7 @@ import { bugIntakeOwnedTables } from '../bug-intake/migration.js';
 import { progressComparisonOwnedTables } from '../progress-comparison/migration.js';
 import { manualRetentionOwnedTables } from '../body/manual-retention-migration.js';
 import { feedbackOwnedTables } from '../training-feedback/migration.js';
+import type { ProviderConfirmationHook } from './providers/types.js';
 import type { LifecycleEvidenceStore, LocalEvidenceProjection } from './evidence-store.js';
 
 export const lifecyclePolicy = 'form-account-lifecycle-v1';
@@ -29,7 +30,7 @@ const localCoreTables = ['command_receipts', 'transcription_attempts', 'set_revi
 
 export class AccountLifecycle {
   constructor(private readonly db: Sqlite, readonly adapters: readonly LifecycleAdapter[], ledger: SuppressionLedger,
-    private readonly clock: () => number = Date.now, private readonly evidenceStore?: LifecycleEvidenceStore) {
+    private readonly clock: () => number = Date.now, private readonly evidenceStore?: LifecycleEvidenceStore, private readonly providerConfirmation?: ProviderConfirmationHook) {
     evidenceStore?.assertDatabase(db);
     if (!hasLifecycleSchema(db)) throw new DomainError(503, 'lifecycle_migration_required');
     if (new Set(adapters.map(x => x.category)).size !== adapters.length) throw new Error('Duplicate lifecycle category');
@@ -102,12 +103,15 @@ export class AccountLifecycle {
         if (row.phase !== 'awaiting_reauthentication') throw new DomainError(409, 'deletion_confirmation_unavailable');
         this.grant(context, input.grant, 'account_delete');
         const now = this.clock();
+        const providerCapture = this.providerConfirmation?.capture({ context, requestId, now });
         // The independent ledger commits first. Main rollback must never undo that suppression.
         const evidence = suppressionAuthority(this.db).recordDisable({ accountId: context.accountId, authUserId: context.authUserId,
           epoch: context.epoch + 1, requestId, disabledAtMs: now });
         this.applyDisable(evidence);
         this.db.prepare("UPDATE account_deletion_requests SET phase='disabled_pending_purge',verified_at_ms=?,verification_method='password',disabled_at_ms=? WHERE id=?")
           .run(now, evidence.disabledAtMs, requestId);
+        try { this.providerConfirmation?.persist(providerCapture, requestId); }
+        catch { throw new Error('provider_intent_persistence_unknown'); }
         for (const adapter of this.adapters) {
           let result;
           try { result = adapter.suppress(context.accountId, evidence.epoch); } catch { result = { status: 'unknown' as const }; }
