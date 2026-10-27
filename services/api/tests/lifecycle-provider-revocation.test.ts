@@ -238,13 +238,43 @@ test('capture follows grant/session/epoch/request ownership and leaves foreign u
   f.source.lifecycle.assertActive(B); assert.equal(f.sends(), 0);
 });
 
+function scopedPurgeWitness(f: ReturnType<typeof fixture>) {
+  for (const actor of [A, B]) f.db.prepare('INSERT INTO documents VALUES(?,?,1,?)')
+    .run(actor.accountId, 'synthetic-local-purge', '{"synthetic":true}');
+  const documents = (actor: AccountContext) => f.db.prepare('SELECT * FROM documents WHERE account_id=? ORDER BY kind').all(actor.accountId);
+  const accounts = (actor: AccountContext) => f.db.prepare('SELECT * FROM account WHERE userId=? ORDER BY id').all(actor.authUserId);
+  const sessions = () => f.db.prepare('SELECT * FROM session WHERE userId=? ORDER BY id').all(B.authUserId);
+  const foreign = { documents: documents(B), accounts: accounts(B), sessions: sessions() };
+  const retained = f.db.prepare("SELECT * FROM account WHERE userId=? AND providerId<>'credential' ORDER BY id").all(A.authUserId);
+  assert.equal(documents(A).length, 2); assert.equal(foreign.documents.length, 2);
+  return () => {
+    assert.deepEqual(documents(A), []);
+    assert.deepEqual({ documents: documents(B), accounts: accounts(B), sessions: sessions() }, foreign);
+    f.source.lifecycle.assertActive(B);
+    assert.deepEqual(f.db.prepare("SELECT * FROM account WHERE userId=? AND providerId<>'credential' ORDER BY id").all(A.authUserId), retained);
+    const status = f.source.lifecycle.status(requestId, statusSecret), projection = f.source.localCompletion(requestId)!;
+    for (const category of ['form_training_history', 'phone_challenges']) {
+      assert.equal(status.steps.find(step => step.category === category)?.status, 'complete');
+      assert.deepEqual(f.db.prepare('SELECT result,fact_kind FROM account_deletion_evidence WHERE request_id=? AND category=?')
+        .all(requestId, category), [{ result: 'qualifying', fact_kind: 'local_purge_readback' }]);
+      assert.ok(projection.completedCategories.includes(category));
+    }
+    assert.equal(status.steps.find(step => step.category === 'community')?.status, 'pending');
+    assert.deepEqual(f.db.prepare('SELECT result FROM account_deletion_evidence WHERE request_id=? AND category=?')
+      .all(requestId, 'community'), [{ result: 'pending' }]);
+    assert.equal(projection.localPurged, false); assert.equal(status.localPurged, false); assert.equal(status.complete, false);
+    assert.equal(projection.residuals.providers, 'unavailable'); assert.equal(projection.residuals.backups, 'unavailable');
+    assert.equal(projection.residuals.retentionPolicy, 'unavailable'); assert.equal(f.sends(), 0);
+  };
+}
+
 for (const reason of ['material_missing', 'client_binding_unavailable', 'token_provenance_unavailable', 'material_invalid'] as const)
   test(`unavailable ${reason} survives local purge without fabricating a provider target or credential copy`, async t => {
-    const f = fixture(t); f.behavior.capture = () => ({ status: 'unavailable', reason });
+    const f = fixture(t), provePurge = scopedPurgeWitness(f); f.behavior.capture = () => ({ status: 'unavailable', reason });
     await f.confirm(); const i = f.intent(); assert.equal(i.residual_code, reason); assert.equal(i.reference_version, null);
     const foreign = f.db.prepare('SELECT * FROM account WHERE userId=?').all(B.authUserId);
     f.source.lifecycle.purgeLocal(issueLocalPurgeAuthority(f.source.lifecycle, { requestId, operationId: 'purge-unavailable' }));
-    assert.equal(f.source.localCompletion(requestId)!.localPurged, true);
+    provePurge();
     assert.equal(f.source.lifecycle.status(requestId, statusSecret).complete, false);
     assert.deepEqual(f.source.providerCompletion(i.intent_id), { status: 'unavailable', residual: reason, wholeAccountDeviceProviderErasure: 'unproven' });
     await assert.rejects(f.source.attemptOne(i.intent_id, 'missing-material')); assert.equal(f.sends(), 0);
@@ -408,33 +438,48 @@ test('lost ACK transaction rolls back fact and stable-ID reconciliation reads be
 });
 
 for (const fault of ['generation', 'proof', 'schema', 'history', 'subject', 'token', 'file', 'authority', 'pending-authority', 'checkpoint-head'] as const)
-  test(`fresh post-await ${fault} denial never records a qualifying fact or changes original intent`, async t => {
+  test(`fresh post-await ${fault === 'subject' || fault === 'token' ? `supplied-material ${fault} drift` : fault} denial never records a qualifying fact or changes original intent`, async t => {
     const f = fixture(t); await f.confirm(); const i = f.intent(), response = pending<AppleResponse>(), started = pending<void>();
+    const supplied = { ...f.material };
+    if (fault === 'subject' || fault === 'token') f.behavior.resolve = () => done({ status: 'qualified',
+      value: { material: supplied, clientSecret: 'synthetic-secret' } });
     f.behavior.post = () => { started.resolve(); return { settled: response.settled, cancel: async () => {} }; };
-    const running = f.source.attemptOne(i.intent_id, `late-${fault}`); await started.settled;
-    if (fault === 'generation') f.writeGeneration('generation-two', 2);
-    if (fault === 'proof') f.db.prepare('UPDATE account_deletion_requests SET intent_hash=? WHERE id=?').run('changed-proof', requestId);
-    if (fault === 'schema') f.db.exec('DROP INDEX account_provider_revocation_attempts_deadline');
-    if (fault === 'history') f.db.prepare('UPDATE form_migrations SET checksum=? WHERE version=25').run('a'.repeat(64));
-    if (fault === 'subject') f.db.prepare('UPDATE account SET accountId=? WHERE id=?').run('different-subject', f.material.rowId);
-    if (fault === 'token') f.db.prepare('UPDATE account SET refreshToken=? WHERE id=?').run('synthetic-rotated', f.material.rowId);
-    if (fault === 'file') renameSync(f.db.name, join(f.root, 'moved-main.sqlite'));
-    if (fault === 'authority') f.auth.current.close();
-    if (fault === 'pending-authority' || fault === 'checkpoint-head') {
-      const path = join(f.auth.directory, 'currentness.json'), witness = JSON.parse(readFileSync(path, 'utf8'));
-      if (fault === 'checkpoint-head') witness.committedHeadDigest = 'f'.repeat(64);
-      else witness.pending = { sequence: witness.committedSequence + 1, priorHeadDigest: witness.committedHeadDigest,
-        nextHeadDigest: 'a'.repeat(64), recordDigest: 'b'.repeat(64), operationId: randomUUID() };
-      writeFileSync(path, JSON.stringify(witness), { mode: 0o600 });
+    const running = f.source.attemptOne(i.intent_id, `late-${fault}`);
+    try {
+      await started.settled;
+      if (fault === 'generation') f.writeGeneration('generation-two', 2);
+      if (fault === 'proof') f.db.prepare('UPDATE account_deletion_requests SET intent_hash=? WHERE id=?').run('changed-proof', requestId);
+      if (fault === 'schema') f.db.exec('DROP INDEX account_provider_revocation_attempts_deadline');
+      if (fault === 'history') f.db.prepare('UPDATE form_migrations SET checksum=? WHERE version=25').run('a'.repeat(64));
+      if (fault === 'subject' || fault === 'token') {
+        const before = f.db.prepare('SELECT * FROM account WHERE id=?').get(f.material.rowId);
+        assert.throws(() => f.db.prepare(`UPDATE account SET ${fault === 'subject' ? 'accountId' : 'refreshToken'}=? WHERE id=?`)
+          .run('synthetic-drift', f.material.rowId), /account_disabled/);
+        assert.deepEqual(f.db.prepare('SELECT * FROM account WHERE id=?').get(f.material.rowId), before);
+        if (fault === 'subject') supplied.immutableSubject = 'different-subject';
+        else supplied.token = 'synthetic-rotated';
+      }
+      if (fault === 'file') renameSync(f.db.name, join(f.root, 'moved-main.sqlite'));
+      if (fault === 'authority') f.auth.current.close();
+      if (fault === 'pending-authority' || fault === 'checkpoint-head') {
+        const path = join(f.auth.directory, 'currentness.json'), witness = JSON.parse(readFileSync(path, 'utf8'));
+        if (fault === 'checkpoint-head') witness.committedHeadDigest = 'f'.repeat(64);
+        else witness.pending = { sequence: witness.committedSequence + 1, priorHeadDigest: witness.committedHeadDigest,
+          nextHeadDigest: 'a'.repeat(64), recordDigest: 'b'.repeat(64), operationId: randomUUID() };
+        writeFileSync(path, JSON.stringify(witness), { mode: 0o600 });
+      }
+      response.resolve({ status: 200, body: new Uint8Array(), truncated: false });
+      let observed: Awaited<typeof running> | null = null;
+      try { observed = await running; } catch (error) { assert.ok(error instanceof DomainError); }
+      assert.notEqual(observed?.state, 'acknowledged'); assert.equal(f.sends(), 1);
+      const row = f.attempt(`late-${fault}`) as { state: string; result_fact_json: string | null };
+      assert.notEqual(row.state, 'acknowledged');
+      if (row.result_fact_json) assert.notEqual(decodeProviderFact(row.result_fact_json).status, 'qualifying');
+      assert.deepEqual(f.intents(), [i]);
+    } finally {
+      response.resolve({ status: 200, body: new Uint8Array(), truncated: false });
+      await running.catch(() => undefined);
     }
-    response.resolve({ status: 200, body: new Uint8Array(), truncated: false });
-    let observed: Awaited<typeof running> | null = null;
-    try { observed = await running; } catch (error) { assert.ok(error instanceof DomainError); }
-    assert.notEqual(observed?.state, 'acknowledged'); assert.equal(f.sends(), 1);
-    const row = f.attempt(`late-${fault}`) as { state: string; result_fact_json: string | null };
-    assert.notEqual(row.state, 'acknowledged');
-    if (row.result_fact_json) assert.notEqual(decodeProviderFact(row.result_fact_json).status, 'qualifying');
-    assert.deepEqual(f.intents(), [i]);
   });
 
 test('unrelated suppression advance validates saved prefix, constructs fresh ACK binding and leaves earlier uncertainty historical', async t => {
@@ -501,12 +546,14 @@ for (const point of ['ledger:before-commit', 'ledger:after-commit']) test(`real 
 test('unsupported provider creates an unavailable retained intent while local purge proceeds', async t => {
   const f = fixture(t);
   f.db.prepare(`INSERT INTO account(id,accountId,providerId,userId,createdAt,updatedAt) VALUES('unsupported-row','synthetic-other-subject','other-provider',?,1,1)`).run(A.authUserId);
+  const provePurge = scopedPurgeWitness(f);
   await f.confirm();
   const unsupported = f.intents().find(i => i.source_account_row_id === 'unsupported-row')!;
+  const originalIntents = f.intents();
   assert.equal(unsupported.residual_code, 'unsupported_provider'); assert.equal(unsupported.token_kind, null);
   await assert.rejects(f.source.attemptOne(unsupported.intent_id, 'unsupported-attempt')); assert.equal(f.sends(), 0);
   f.source.lifecycle.purgeLocal(issueLocalPurgeAuthority(f.source.lifecycle, { requestId, operationId: 'unsupported-local-purge' }));
-  assert.equal(f.source.localCompletion(requestId)!.localPurged, true); assert.equal(f.intents().length, 2);
+  provePurge(); assert.equal(f.intents().length, 2); assert.deepEqual(f.intents(), originalIntents);
 });
 
 test('total deadline covers resolution and transport, and expiry never acknowledges a late empty200', async t => {
@@ -534,18 +581,31 @@ test('caller cancellation retains active claim until HTTP producer and cleanup s
 });
 
 test('lost response after ACK commit reads back the terminal fact and never resends on replay', async t => {
-  const f = fixture(t); await f.confirm(); const i = f.intent(), original = f.db.transaction.bind(f.db); let lost = false;
+  const f = fixture(t); await f.confirm(); const i = f.intent(), original = f.db.transaction;
+  let losses = 0, claims = 0;
   f.db.transaction = ((fn: (...args: unknown[]) => unknown) => {
-    const transaction = original(fn), immediate = transaction.immediate.bind(transaction);
-    transaction.immediate = ((...args: unknown[]) => {
-      const value = immediate(...args);
-      if (!lost && (value as { state?: string } | undefined)?.state === 'acknowledged') { lost = true; throw new Error('synthetic-post-commit-response-loss'); }
+    const transaction = original.call(f.db, fn);
+    const forward = (native: (...args: unknown[]) => unknown) => function(this: unknown, ...args: unknown[]) {
+      const value = native.apply(this, args);
+      const a = parseAttempt(f.attempt('ack-response-lost'), i);
+      assert.equal(f.db.inTransaction, false);
+      if (a.state === 'preparing') claims++;
+      if (!losses && (value as { state?: string } | undefined)?.state === 'acknowledged') {
+        assert.equal(claims, 1); assert.equal(a.state, 'acknowledged');
+        assert.equal(decodeProviderFact(a.result_fact_json!).status, 'qualifying');
+        losses++; throw new Error('synthetic-post-commit-response-loss');
+      }
       return value;
-    }) as typeof transaction.immediate;
-    return transaction;
+    };
+    const modes = { default: forward(transaction.default), deferred: forward(transaction.deferred),
+      immediate: forward(transaction.immediate), exclusive: forward(transaction.exclusive) };
+    for (const mode of Object.values(modes)) Object.assign(mode, modes, { database: f.db });
+    return modes.default;
   }) as typeof f.db.transaction;
-  const result = await f.source.attemptOne(i.intent_id, 'ack-response-lost'); f.db.transaction = original;
-  assert.equal(lost, true); assert.equal(result.state, 'acknowledged'); assert.equal(f.sends(), 1);
+  let result: Awaited<ReturnType<typeof f.source.attemptOne>>;
+  try { result = await f.source.attemptOne(i.intent_id, 'ack-response-lost'); }
+  finally { f.db.transaction = original; }
+  assert.equal(claims, 1); assert.equal(losses, 1); assert.equal(result.state, 'acknowledged'); assert.equal(f.sends(), 1);
   assert.equal(parseAttempt(f.attempt('ack-response-lost'), i).state, 'acknowledged');
   assert.deepEqual(await f.source.attemptOne(i.intent_id, 'ack-response-lost'), result); assert.equal(f.sends(), 1);
 });
