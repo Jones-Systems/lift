@@ -18,7 +18,7 @@ import { assertSourceLifecycleEvidenceHistory, assertSourceLifecycleEvidenceSele
 import { assertLifecycleEvidenceSchema, LifecycleEvidenceStore } from '../src/lifecycle/evidence-store.js';
 import { bindSourceLifecycleLocalAbsenceReader, bindSourceLifecycleEvidenceWitnessReader, createSourceLifecycleEvidence, openSourceLifecycleEvidenceStorage,
   type SourceLifecycleEvidenceWitnessReader, type SourceLifecycleEvidenceGeneration } from '../src/lifecycle/evidence-source.js';
-import { evidenceCanonical, decodeDurableEvidence } from '../src/lifecycle/evidence-codec.js';
+import { evidenceCanonical, evidenceDigest, encodeDurableEvidence, decodeDurableEvidence, type DurableEvidence } from '../src/lifecycle/evidence-codec.js';
 import { CurrentSuppressionAuthority, genesisHead, ledgerSchemaDigest, witnessSchema, type Witness } from '../src/runtime-modules/currentness.js';
 import { AuthorityLock, JsonFile, canonicalPath, fileDigest } from '../src/runtime-modules/files.js';
 import { readClosedReceipts } from '../src/runtime-modules/closed-read.js';
@@ -527,3 +527,179 @@ test('P1 adapter side effect during the response readback cannot bypass the fina
   assert.deepEqual(f.db.prepare('SELECT * FROM documents ORDER BY account_id').all(), before);
   assert.equal(f.db.prepare('SELECT 1 FROM activity_state WHERE account_id=?').get(A.accountId), undefined);
 });
+
+test('P1 two different successful operations at different times preserve compatible positive proof and immutable history', async t => {
+  const f = fixture(t); await f.confirm(); f.purge('first-operation');
+  const first = f.facts(); f.advanceClock(); f.purge('second-operation');
+  const all = f.facts(); assert.deepEqual(all.slice(0, first.length), first); assert.ok(all.length > first.length);
+  assert.equal(f.source.completion(requestId)!.calculation.hold, null);
+  assert.equal(f.source.completion(requestId)!.completedCategories.includes('form_training_history'), true);
+  const operations = f.db.prepare('SELECT created_at_ms FROM account_deletion_evidence_operations ORDER BY rowid').all() as { created_at_ms: number }[];
+  assert.ok(operations[1]!.created_at_ms > operations[0]!.created_at_ms);
+  f.advanceClock(); f.purge('first-operation'); assert.deepEqual(f.facts(), all);
+});
+
+test('P1 fresh guarded operation resolves later uncertainty while old replay preserves it and all first observations', async t => {
+  let unknown = false;
+  const f = fixture(t, values => values.map(value => value.category !== 'activity' ? value : { ...value,
+    purge: (request: string, account: string) => unknown ? { status: 'unknown' as const } : value.purge(request, account) }));
+  await f.confirm(); f.purge('first-operation'); const first = f.facts();
+  unknown = true; f.advanceClock(); f.purge('first-operation'); const uncertain = f.facts();
+  unknown = false; f.advanceClock(); f.purge('first-operation'); assert.deepEqual(f.facts(), uncertain);
+  assert.equal(f.source.completion(requestId)!.completedCategories.includes('activity'), false);
+  f.advanceClock(); f.purge('fresh-operation');
+  assert.equal(f.source.completion(requestId)!.calculation.hold, null);
+  assert.equal(f.source.completion(requestId)!.completedCategories.includes('activity'), true);
+  assert.deepEqual(f.facts().slice(0, uncertain.length), uncertain); assert.deepEqual(uncertain.slice(0, first.length), first);
+  const recovered = f.facts(); f.advanceClock(); f.purge('first-operation'); assert.deepEqual(f.facts(), recovered);
+  assert.equal(f.source.completion(requestId)!.completedCategories.includes('activity'), true);
+});
+
+test('P1 fresh envelopes retain genuine operation time, immutable first proof, B rows and replay bytes', async t => {
+  const f = fixture(t); await f.confirm(); f.purge('proof-operation');
+  const first = f.facts() as { category: string; payload: string }[];
+  const other = f.db.prepare('SELECT * FROM documents WHERE account_id=?').all(B.accountId);
+  f.advanceClock(); f.purge('observation-operation');
+  const all = f.facts() as { category: string; payload: string }[];
+  assert.deepEqual(all.slice(0, first.length), first);
+  const operation = f.db.prepare('SELECT created_at_ms FROM account_deletion_evidence_operations WHERE operation_id=?')
+    .get('observation-operation') as { created_at_ms: number };
+  for (const row of all.slice(first.length)) {
+    const next = decodeDurableEvidence(row.payload);
+    const prior = decodeDurableEvidence(first.find(value => value.category === row.category)!.payload);
+    assert.equal(next.observedAtMs, operation.created_at_ms);
+    assert.ok(next.observedAtMs > prior.observedAtMs);
+    if (next.fact.status === 'qualifying') {
+      assert.equal(prior.fact.status, 'qualifying');
+      assert.deepEqual(next.fact.witness, prior.fact.witness);
+      assert.equal(next.fact.witness.observedAtMs, prior.observedAtMs);
+      assert.ok(next.fact.witness.observedAtMs < next.observedAtMs);
+    }
+  }
+  assert.deepEqual(f.db.prepare('SELECT * FROM documents WHERE account_id=?').all(B.accountId), other);
+  f.source.lifecycle.assertActive(B);
+  f.advanceClock(); f.purge('observation-operation'); assert.deepEqual(f.facts(), all);
+  f.db.close();
+  const reopened: Sqlite = new Database(join(f.root, 'main.sqlite')); f.handles.add(reopened); reopened.pragma('foreign_keys=ON');
+  const restored = f.compose(reopened);
+  assert.equal(restored.completion(requestId)!.calculation.hold, null);
+  assert.deepEqual(reopened.prepare('SELECT * FROM account_deletion_evidence ORDER BY rowid').all(), all);
+});
+
+for (const status of ['pending', 'unavailable'] as const)
+  test(`P1 only fresh guarded success resolves later ${status} with the original local proof`, async t => {
+    let uncertain = false;
+    const f = fixture(t, values => values.map(value => value.category !== 'activity' ? value : { ...value,
+      purge: (request: string, account: string) => uncertain ? { status } : value.purge(request, account) }));
+    await f.confirm(); f.purge('proof-operation'); const first = f.facts() as { category: string; payload: string }[];
+    uncertain = true; f.advanceClock(); f.purge('proof-operation');
+    const before = f.facts() as { category: string; payload: string }[];
+    const pending = before.map(row => decodeDurableEvidence(row.payload)).find(value => value.fact.status === status &&
+      value.fact.target.kind === 'category' && value.fact.target.category === 'activity')!;
+    uncertain = false; f.advanceClock(); f.purge('proof-operation'); assert.deepEqual(f.facts(), before);
+    assert.equal(f.source.completion(requestId)!.completedCategories.includes('activity'), false);
+    f.advanceClock(); f.purge('fresh-operation');
+    const all = f.facts() as { category: string; payload: string }[];
+    assert.deepEqual(all.slice(0, before.length), before);
+    const recovered = decodeDurableEvidence(all.slice(before.length).find(row => row.category === 'activity')!.payload);
+    assert.equal(recovered.fact.status, 'qualifying');
+    assert.deepEqual(recovered.fact.resolves, [pending.evidenceId]);
+    assert.deepEqual(recovered.fact.witness, decodeDurableEvidence(first.find(row => row.category === 'activity')!.payload).fact.witness);
+    assert.ok(recovered.observedAtMs > pending.observedAtMs);
+    assert.equal(f.source.completion(requestId)!.completedCategories.includes('activity'), true);
+  });
+
+function replaceSyntheticEvidence(db: Sqlite, row: { operation_id: string; evidence_id: string; payload: string }, value: DurableEvidence): void {
+  const payload = encodeDurableEvidence(value), b = value.fact.binding, c = b.checkpoint;
+  assert.equal(value.fact.target.kind, 'category');
+  db.exec('DROP TRIGGER account_deletion_evidence_no_update');
+  try {
+    db.prepare(`UPDATE account_deletion_evidence SET evidence_id=?, category=?, target_digest=?, result=?, observed_at_ms=?,
+      database_generation=?, schema_digest=?, authority_id=?, authority_schema_digest=?, suppression_sequence=?,
+      suppression_floor=?, suppression_head=?, witness_revision=?, policy_version=?, payload=?, payload_digest=?
+      WHERE operation_id=? AND evidence_id=?`).run(value.evidenceId,
+      value.fact.target.kind === 'category' ? value.fact.target.category : '', evidenceDigest(value.fact.target), value.fact.status,
+      value.observedAtMs, b.databaseGeneration, b.schemaDigest, c.authorityId, c.ledgerSchemaDigest, b.sequence,
+      c.committedSequence, c.committedHeadDigest, c.revision, value.policyVersion, payload, evidenceDigest(payload), row.operation_id, row.evidence_id);
+  } finally { db.exec(lifecycleEvidenceSchemaObjects.find(object => object.name === 'account_deletion_evidence_no_update')!.sql); }
+}
+
+for (const mismatch of ['scope', 'proof', 'policy'] as const)
+  test(`P1 a fresh operation cannot reuse local proof across a ${mismatch} mismatch`, async t => {
+    const f = fixture(t); await f.confirm(); f.purge('proof-operation'); const before = f.facts();
+    if (mismatch === 'scope') {
+      const witness = bindSourceLifecycleEvidenceWitnessReader(f.db, f.auth.current,
+        () => ({ databaseGeneration: 'generation-one', mainStoreId: 'synthetic-source-main', witnessRevision: 1 }));
+      const values = [...adapters(f.db, f.auth.current), { category: 'synthetic-foreign-category',
+        suppress: () => ({ status: 'complete' as const }), verifySuppressed: () => ({ status: 'complete' as const }),
+        purge: () => ({ status: 'unavailable' as const }), inventory: () => ({ category: 'synthetic-foreign-category', status: 'unavailable' as const }),
+        export: () => ({ category: 'synthetic-foreign-category', status: 'unavailable' as const }) }];
+      const localAbsence = ([['activity', 'activity-owned-v1'], ['trainingFeedback', 'training-feedback-owned-v1'], ['progressComparison', 'progress-comparison-owned-v1']] as const)
+        .map(([category, owner]) => bindSourceLifecycleLocalAbsenceReader(f.db, values.find(value => value.category === category)!, owner));
+      const changed = createSourceLifecycleEvidence({ configuration, db: f.db, authority: f.auth.current, witness, adapters: values, localAbsence });
+      f.advanceClock();
+      changed.lifecycle.purgeLocal(issueLocalPurgeAuthority(changed.lifecycle, { requestId, operationId: 'foreign-scope-operation' }));
+      assert.equal(changed.completion(requestId)!.calculation.hold, 'evidence_conflict');
+      assert.deepEqual(changed.completion(requestId)!.completedCategories, []);
+      assert.deepEqual(f.facts().slice(0, before.length), before);
+    } else {
+      if (mismatch === 'proof') f.db.prepare('UPDATE account_deletion_requests SET verified_at_ms=verified_at_ms+1 WHERE id=?').run(requestId);
+      else f.db.prepare('UPDATE account_deletion_requests SET policy_version=? WHERE id=?').run('foreign-policy', requestId);
+      f.advanceClock(); assert.throws(() => f.purge('foreign-operation'), code('lifecycle_evidence_held'));
+      assert.deepEqual(f.facts(), before);
+    }
+  });
+
+for (const mismatch of ['digest', 'target', 'binding', 'future', 'operation-time'] as const)
+  test(`P1 ${mismatch} evidence cannot supply a matching earlier local proof`, async t => {
+    const f = fixture(t); await f.confirm(); f.purge('proof-operation');
+    const row = (f.facts() as { operation_id: string; evidence_id: string; category: string; payload: string }[])
+      .find(value => value.category === 'activity')!;
+    const value = decodeDurableEvidence(row.payload); assert.equal(value.fact.status, 'qualifying');
+    if (value.fact.status !== 'qualifying') throw new Error('expected positive fixture');
+    const changed: DurableEvidence = mismatch === 'digest' ? { ...value, fact: { ...value.fact,
+      witness: { ...value.fact.witness, evidenceDigest: 'f'.repeat(64) } } }
+      : mismatch === 'target' ? { ...value, fact: { ...value.fact, target: { kind: 'category', category: 'synthetic-other-target' } } }
+      : mismatch === 'binding' ? { ...value, fact: { ...value.fact, binding: { ...value.fact.binding, databaseGeneration: 'foreign-generation' } } }
+      : mismatch === 'future' ? { ...value, observedAtMs: value.observedAtMs + 10000,
+        fact: { ...value.fact, witness: { ...value.fact.witness, observedAtMs: value.observedAtMs + 10000 } } }
+      : { ...value, observedAtMs: value.observedAtMs - 1,
+        fact: { ...value.fact, witness: { ...value.fact.witness, observedAtMs: value.observedAtMs - 1 } } };
+    replaceSyntheticEvidence(f.db, row, changed);
+    const before = f.facts(); f.advanceClock();
+    if (mismatch === 'future' || mismatch === 'operation-time') {
+      assert.throws(() => f.purge('fresh-operation'), code('lifecycle_evidence_held')); assert.deepEqual(f.facts(), before);
+    } else {
+      f.purge('fresh-operation');
+      const current = f.source.completion(requestId)!;
+      const rows = f.facts() as { operation_id: string; category: string; payload: string }[];
+      const fresh = decodeDurableEvidence(rows.find(item => item.operation_id === 'fresh-operation' && item.category === 'activity')!.payload);
+      assert.equal(fresh.fact.status, 'qualifying');
+      if (fresh.fact.status !== 'qualifying') throw new Error('expected current positive');
+      assert.equal(fresh.fact.witness.observedAtMs, fresh.observedAtMs);
+      assert.notDeepEqual(fresh.fact.witness, changed.fact.witness);
+      assert.deepEqual(rows.slice(0, before.length), before);
+      if (mismatch === 'digest') { assert.equal(current.calculation.hold, 'evidence_conflict'); assert.deepEqual(current.completedCategories, []); }
+      else assert.equal(current.calculation.hold, null);
+    }
+  });
+
+for (const status of ['retained', 'not_qualifying', 'conflicting'] as const)
+  test(`P1 fresh success never resolves ${status} evidence`, async t => {
+    let retained = false;
+    const f = fixture(t, values => values.map(value => value.category !== 'activity' ? value : { ...value,
+      purge: (request: string, account: string) => retained ? { status: 'retained' as const } : value.purge(request, account) }));
+    await f.confirm(); f.purge('proof-operation'); retained = true; f.advanceClock(); f.purge('proof-operation');
+    if (status !== 'retained') {
+      const row = (f.facts() as { operation_id: string; evidence_id: string; result: string; payload: string }[]).find(value => value.result === 'retained')!;
+      const value = decodeDurableEvidence(row.payload);
+      replaceSyntheticEvidence(f.db, row, { ...value, fact: { ...value.fact, status, witness: null } });
+    }
+    const before = f.facts(); retained = false; f.advanceClock(); f.purge('fresh-operation');
+    const all = f.facts() as { operation_id: string; category: string; payload: string }[];
+    assert.deepEqual(all.slice(0, before.length), before);
+    const fresh = decodeDurableEvidence(all.find(value => value.operation_id === 'fresh-operation' && value.category === 'activity')!.payload);
+    assert.deepEqual(fresh.fact.resolves, []);
+    assert.equal(f.source.completion(requestId)!.completedCategories.includes('activity'), false);
+    if (status === 'conflicting') assert.equal(f.source.completion(requestId)!.calculation.hold, 'evidence_conflict');
+  });

@@ -42,7 +42,9 @@ export function encodeDurableEvidence(input: unknown): string {
   try {
     const parsed = envelope.parse(input);
     if (parsed.fact.operationId !== parsed.evidenceId) invalid();
-    if (parsed.fact.status === 'qualifying' && parsed.observedAtMs !== parsed.fact.witness.observedAtMs) invalid();
+    if (parsed.fact.status === 'qualifying' && (parsed.fact.witness.kind === 'local_purge_readback'
+      ? parsed.fact.witness.observedAtMs > parsed.observedAtMs
+      : parsed.fact.witness.observedAtMs !== parsed.observedAtMs)) invalid();
     const validated = appendCompletionFact(createCompletionHistory(parsed.fact.binding), parsed.fact as CompletionFact).history.facts[0]!;
     const bytes = evidenceCanonical({ ...parsed, fact: validated });
     if (Buffer.byteLength(bytes) > 16384) invalid();

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { encodeDurableEvidence, decodeDurableEvidence, evidenceDigest, compareEvidenceReplay } from '../src/lifecycle/evidence-codec.js';
+import { encodeDurableEvidence, decodeDurableEvidence, evidenceCanonical, evidenceDigest, compareEvidenceReplay } from '../src/lifecycle/evidence-codec.js';
 
 const value = () => ({ version: 1, evidenceId: 'fact-one', attemptId: 'attempt-one', observedAtMs: 100,
   policyVersion: 'form-account-lifecycle-v1', fact: { operationId: 'fact-one', status: 'qualifying', resolves: [],
@@ -41,7 +41,7 @@ test('discriminated facts require matching scoped witnesses and never accept dea
   for (const change of [{ status: 'retained' }, { witness: null }, { operationId: 'another-fact' },
     { target: { kind: 'provider', provider: 'apple', clientDigest: 'a'.repeat(64), subjectDigest: 'b'.repeat(64), referenceVersion: 'v1' } },
     { target: { kind: 'backup', inventoryDigest: 'a'.repeat(64), policyVersion: 'synthetic-policy' } },
-    { witness: { ...baseline.fact.witness, observedAtMs: 99 } }])
+    { witness: { ...baseline.fact.witness, observedAtMs: 101 } }])
     assert.throws(() => encodeDurableEvidence({ ...baseline, fact: { ...baseline.fact, ...change } }), /lifecycle_evidence_codec_invalid/);
   const retained = { ...baseline, fact: { ...baseline.fact, status: 'retained', witness: null } };
   assert.equal(decodeDurableEvidence(encodeDurableEvidence(retained)).fact.status, 'retained');
@@ -49,4 +49,39 @@ test('discriminated facts require matching scoped witnesses and never accept dea
     witness: { kind: 'backup_disposition', disposition: 'expiry_witnessed', evidenceDigest: 'd'.repeat(64), inventoryWitnessDigest: 'e'.repeat(64), observedAtMs: 100 } } };
   assert.equal(decodeDurableEvidence(encodeDurableEvidence(backup)).fact.target.kind, 'backup');
   assert.throws(() => encodeDurableEvidence({ ...backup, retainUntilMs: 100 }), /lifecycle_evidence_codec_invalid/);
+});
+
+test('local first proof may precede its operation observation while equal-time v1 bytes stay canonical', () => {
+  const legacy = evidenceCanonical(value());
+  assert.equal(encodeDurableEvidence(decodeDurableEvidence(legacy)), legacy);
+  for (const proofTime of [0, 99, 100]) {
+    const input = value(); input.fact.witness.observedAtMs = proofTime;
+    const bytes = encodeDurableEvidence(input);
+    assert.deepEqual(decodeDurableEvidence(bytes), input);
+    assert.equal(encodeDurableEvidence(decodeDurableEvidence(bytes)), bytes);
+    assert.equal(decodeDurableEvidence(bytes).observedAtMs, 100);
+  }
+  const future = value(); future.fact.witness.observedAtMs = 101;
+  assert.throws(() => encodeDurableEvidence(future), /lifecycle_evidence_codec_invalid/);
+  assert.throws(() => decodeDurableEvidence(evidenceCanonical(future)), /lifecycle_evidence_codec_invalid/);
+});
+
+test('provider and backup proof times still equal the durable observation exactly', () => {
+  const baseline = value();
+  const external = [
+    { ...baseline, fact: { ...baseline.fact,
+      target: { kind: 'provider', provider: 'apple', clientDigest: 'a'.repeat(64), subjectDigest: 'b'.repeat(64), referenceVersion: 'v1' },
+      witness: { kind: 'provider_revocation_acknowledgment', evidenceDigest: 'd'.repeat(64), observedAtMs: 100 } } },
+    { ...baseline, fact: { ...baseline.fact,
+      target: { kind: 'backup', inventoryDigest: 'a'.repeat(64), policyVersion: 'synthetic-policy' },
+      witness: { kind: 'backup_disposition', disposition: 'destruction_witnessed', evidenceDigest: 'd'.repeat(64), inventoryWitnessDigest: 'e'.repeat(64), observedAtMs: 100 } } },
+  ];
+  for (const input of external) {
+    assert.deepEqual(decodeDurableEvidence(encodeDurableEvidence(input)), input);
+    for (const time of [99, 101]) {
+      const changed = { ...input, fact: { ...input.fact, witness: { ...input.fact.witness, observedAtMs: time } } };
+      assert.throws(() => encodeDurableEvidence(changed), /lifecycle_evidence_codec_invalid/);
+      assert.throws(() => decodeDurableEvidence(evidenceCanonical(changed)), /lifecycle_evidence_codec_invalid/);
+    }
+  }
 });

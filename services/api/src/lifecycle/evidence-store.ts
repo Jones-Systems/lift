@@ -150,6 +150,7 @@ export class LifecycleEvidenceStore {
     const snapshot = this.snapshot(frame.requestId), candidate = this.operation(frame, categories, now);
     const prior = this.readOperation(frame.requestId, frame.operationId);
     if (prior && evidenceCanonical(prior) !== evidenceCanonical({ ...candidate, createdAtMs: prior.createdAtMs })) conflict();
+    if (prior && now < prior.createdAtMs) held();
     const attempt = Object.freeze({ frame, operation: prior ?? candidate, snapshot, categories: Object.freeze([...categories].sort()) });
     attempts.add(attempt); return attempt;
   }
@@ -162,6 +163,7 @@ export class LifecycleEvidenceStore {
     const successful = results.filter(result => result.status === 'complete').map(result => result.category);
     for (const category of successful) if (readback(category) !== true) held();
     const op = attempt.operation, b = attempt.snapshot.binding;
+    if (!Number.isSafeInteger(now) || now < op.createdAtMs) held();
     if (!this.readOperation(op.requestId, op.operationId)) this.db.prepare(`INSERT INTO account_deletion_evidence_operations
       VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(op.requestId, op.operationId, op.accountId, op.authUserId, op.epoch, op.sequence,
       op.purpose, op.scopeDigest, op.proofDigest, op.policyVersion, op.createdAtMs);
@@ -169,11 +171,12 @@ export class LifecycleEvidenceStore {
       const target: CompletionTarget = { kind: 'category', category: result.category };
       const evidenceId = evidenceDigest(['local-fact-v1', op.operationId, b, target, result.status]);
       const prior = this.readFact(op.requestId, op.operationId, evidenceId);
+      if (prior && now < prior.observedAtMs) held();
       const observedAtMs = prior?.observedAtMs ?? now;
       const status = result.status === 'complete' ? 'qualifying' as const : result.status;
       const resolves = prior?.fact.resolves ?? (status === 'qualifying' ? this.uncertainFacts(op.requestId, b, target) : []);
       const fact: CompletionFact = { operationId: evidenceId, binding: b, target, resolves, ...(status === 'qualifying'
-        ? { status, witness: { kind: 'local_purge_readback' as const, evidenceDigest: evidenceDigest([op.scopeDigest, target, b]), observedAtMs } }
+        ? { status, witness: prior?.fact.status === 'qualifying' ? prior.fact.witness : this.positiveWitness(op, b, target, observedAtMs) }
         : { status, witness: null }) };
       const attemptId = evidenceDigest(['attempt-v1', op.operationId, b, result.status]);
       const encoded = encodeDurableEvidence({ version: 1, evidenceId, attemptId,
@@ -198,6 +201,25 @@ export class LifecycleEvidenceStore {
     const foreignKeys = this.db.pragma('foreign_key_check');
     if (!Array.isArray(foreignKeys) || foreignKeys.length !== 0) held();
     if (this.snapshot(attempt.frame.requestId).stamp !== attempt.snapshot.stamp) held();
+  }
+  private positiveWitness(op: EvidenceOperation, binding: CompletionBinding, target: CompletionTarget, observedAtMs: number) {
+    const digest = evidenceDigest([op.scopeDigest, target, binding]);
+    const keys = this.db.prepare(`SELECT operation_id,evidence_id FROM account_deletion_evidence
+      WHERE request_id=? AND target_digest=? AND result='qualifying' ORDER BY rowid LIMIT 2049`)
+      .all(op.requestId, evidenceDigest(target)) as { operation_id: string; evidence_id: string }[];
+    if (keys.length > 2048) held();
+    for (const key of keys) {
+      const prior = this.readFact(op.requestId, key.operation_id, key.evidence_id);
+      const operation = this.readOperation(op.requestId, key.operation_id);
+      if (!prior || !operation) held();
+      if (operation.scopeDigest === op.scopeDigest && operation.proofDigest === op.proofDigest && operation.policyVersion === op.policyVersion &&
+        evidenceCanonical(prior.fact.binding) === evidenceCanonical(binding) && evidenceCanonical(prior.fact.target) === evidenceCanonical(target) &&
+        prior.fact.status === 'qualifying' && prior.fact.witness.kind === 'local_purge_readback' && prior.fact.witness.evidenceDigest === digest) {
+        if (prior.observedAtMs > observedAtMs) held();
+        return prior.fact.witness;
+      }
+    }
+    return { kind: 'local_purge_readback' as const, evidenceDigest: digest, observedAtMs };
   }
   private uncertainFacts(requestId: string, binding: CompletionBinding, target: CompletionTarget): readonly string[] {
     const keys = this.db.prepare(`SELECT operation_id,evidence_id FROM account_deletion_evidence WHERE request_id=? AND target_digest=?
@@ -225,7 +247,8 @@ export class LifecycleEvidenceStore {
         'suppression_floor','suppression_head','witness_revision','policy_version','payload','payload_digest'].map(key => row[key]);
       const op = this.readOperation(requestId, operationId);
       if (!op || evidenceCanonical(actual) !== evidenceCanonical(expected) || b.requestId !== op.requestId || b.accountId !== op.accountId ||
-        b.authUserId !== op.authUserId || b.epoch !== op.epoch || b.sequence !== op.sequence || value.policyVersion !== op.policyVersion) held();
+        b.authUserId !== op.authUserId || b.epoch !== op.epoch || b.sequence !== op.sequence || value.policyVersion !== op.policyVersion ||
+        value.observedAtMs < op.createdAtMs) held();
       return value;
     } catch { return held(); }
   }
