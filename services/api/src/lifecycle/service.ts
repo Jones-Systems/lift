@@ -160,9 +160,9 @@ export class AccountLifecycle {
         'workout_sessions', 'plan_item_ids', 'plan_revisions', 'plans', 'document_revisions', 'documents', 'entitlement_grants'];
       for (const table of core) this.db.prepare(`DELETE FROM ${table} WHERE account_id=?`).run(row.account_id);
       this.db.prepare('DELETE FROM apple_purchase_grants WHERE account_id=?').run(row.account_id);
-      const subject = this.db.prepare('SELECT phoneNumber FROM "user" WHERE id=?').get(evidence.authUserId) as { phoneNumber: string | null } | undefined;
-      const phoneWhere = 'auth_user_id=@user OR (phone=@phone AND @phone IS NOT NULL)';
-      const scope = { user: evidence.authUserId, phone: subject?.phoneNumber ?? null };
+      // Phone-step completion covers only immutable attribution; unbound history remains unresolved.
+      const phoneWhere = 'auth_user_id=@user';
+      const scope = { user: evidence.authUserId };
       this.db.prepare(`DELETE FROM phone_operations WHERE challenge_id IN(SELECT id FROM phone_challenges WHERE ${phoneWhere})`).run(scope);
       this.db.prepare(`DELETE FROM phone_challenges WHERE ${phoneWhere}`).run(scope);
       // Provider revocation material stays restricted until its separately qualified acknowledgment/retention contract.

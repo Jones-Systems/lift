@@ -29,6 +29,11 @@ function fixture(t: TestContext, makeAdapters: (db: Database.Database, writer: R
     db.prepare('INSERT INTO session(id,expiresAt,token,createdAt,updatedAt,userId) VALUES(?,?,?,?,?,?)')
       .run(actor.sessionId, now + 86400_000, `synthetic-${actor.sessionId}`, now, now, actor.authUserId);
     db.prepare('INSERT INTO documents VALUES(?,?,?,?)').run(actor.accountId, 'profile', 1, '{"age":18}');
+    db.prepare('UPDATE "user" SET phoneNumber=? WHERE id=?').run(actor === A ? '+12025550111' : '+12025550122', actor.authUserId);
+    db.prepare("INSERT INTO phone_challenges VALUES(?,?,?,?,'pending',NULL,?,?,?,1,0,NULL,?)")
+      .run(actor.authUserId, '+12025550111', `binding-${actor.authUserId}`, `start-${actor.authUserId}`, now, now + 300_000, now, actor.authUserId);
+    db.prepare("INSERT INTO phone_operations VALUES(?,'start',?,'synthetic-intent','done',?)")
+      .run(actor.authUserId, `key-${actor.authUserId}`, now);
   }
   const records = new Map<string, DisableRecord>();
   let sequence = 0, available = true;
@@ -49,7 +54,8 @@ function fixture(t: TestContext, makeAdapters: (db: Database.Database, writer: R
     initiate(); ledger.recordDisable({ ...A, epoch: 1, requestId, disabledAtMs: now }); lifecycle.reconcileRestore();
   }
   const mint = () => issueLocalPurgeAuthority(lifecycle, { requestId, operationId: 'synthetic-operation' });
-  const snapshot = () => ['documents', 'account_deletion_requests', 'account_deletion_steps'].map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
+  const snapshot = () => ['documents', 'phone_challenges', 'phone_operations', 'user', 'form_accounts', 'account_lifecycle',
+    'account', 'session', 'account_deletion_requests', 'account_deletion_steps'].map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
   return { db, writer, lifecycle, records, ledger, initiate, disable, mint, snapshot, unavailable: () => { available = false; } };
 }
 function adapter(category: string, purge: LifecycleAdapter['purge']): LifecycleAdapter {
@@ -121,18 +127,48 @@ test('qualified subframes delegate readiness, reject category switching and reta
   assert.equal(f.lifecycle.purgeLocal(f.mint()).complete, false); assert.equal(calls, 2);
 });
 
-for (const failure of ['thenable', 'readback', 'authority'] as const) test(`${failure} failure rolls back core, steps and phase and consumes authority`, t => {
+test('contact reassociation never widens immutable phone purge ownership', t => {
+  const f = fixture(t);
+  for (const [id, phone, subject] of [['old-unbound', '+12025550111', null], ['new-unbound', '+12025550133', null],
+    ['new-foreign', '+12025550133', B.authUserId]] as const) {
+    f.db.prepare("INSERT INTO phone_challenges VALUES(?,?,?,?,'pending',NULL,1,2,1,1,0,NULL,?)")
+      .run(id, phone, `binding-${id}`, `start-${id}`, subject);
+    f.db.prepare("INSERT INTO phone_operations VALUES(?,'start',?,'synthetic-intent','done',1)").run(id, `key-${id}`);
+  }
+  f.db.prepare('UPDATE "user" SET phoneNumber=? WHERE id=?').run('+12025550133', A.authUserId);
+  const preserved = ['phone_challenges', 'phone_operations'].map(table => f.db.prepare(table === 'phone_challenges'
+    ? "SELECT * FROM phone_challenges WHERE auth_user_id IS NULL OR auth_user_id<>? ORDER BY rowid"
+    : 'SELECT o.* FROM phone_operations o JOIN phone_challenges c ON c.id=o.challenge_id WHERE c.auth_user_id IS NULL OR c.auth_user_id<>? ORDER BY o.rowid').all(A.authUserId));
+  f.disable();
+  const other = f.db.prepare('SELECT * FROM session WHERE id=?').get(B.sessionId);
+  const result = f.lifecycle.purgeLocal(f.mint());
+  assert.deepEqual(['phone_challenges', 'phone_operations'].map(table => f.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()), preserved);
+  assert.equal(result.steps.find(step => step.category === 'phone_challenges')?.status, 'complete');
+  assert.equal(result.complete, false); assert.equal(result.backupExpiryAt, null);
+  assert.deepEqual(f.db.prepare('SELECT * FROM session WHERE id=?').get(B.sessionId), other);
+  f.lifecycle.assertActive(B);
+  assert.deepEqual(f.db.pragma('foreign_key_check'), []);
+});
+
+for (const failure of ['thenable', 'adapter', 'readback', 'authority'] as const) test(`${failure} failure rolls back core, steps and phase and consumes authority`, t => {
   let unavailable = () => {};
-  const f = fixture(t, () => [adapter('activity', () => {
+  const f = fixture(t, db => [adapter('activity', () => {
+    assert.deepEqual(db.prepare('SELECT * FROM phone_challenges WHERE auth_user_id=?').all(A.authUserId), []);
+    assert.deepEqual(db.prepare('SELECT * FROM phone_operations WHERE challenge_id=?').all(A.authUserId), []);
     if (failure === 'thenable') return { then() {} } as unknown as LifecycleResult;
-    if (failure === 'readback') throw new DomainError(503, 'synthetic_readback_failed');
-    unavailable(); return { status: 'complete' };
+    if (failure === 'adapter') throw new DomainError(503, 'synthetic_adapter_failed');
+    if (failure === 'readback') db.prepare("INSERT INTO phone_challenges VALUES('late-own','+12025550111','late-binding','late-start','pending',NULL,1,2,1,1,0,NULL,?)").run(A.authUserId);
+    if (failure === 'authority') unavailable();
+    return { status: 'complete' };
   })]);
   unavailable = f.unavailable;
   f.disable(); const before = f.snapshot(), capability = f.mint();
+  const suppression = [...f.records];
   assert.throws(() => f.lifecycle.purgeLocal(capability), code(failure === 'thenable' ? 'canonical_writer_requires_synchronous_effect'
-    : failure === 'readback' ? 'synthetic_readback_failed' : 'suppression_authority_unavailable'));
+    : failure === 'adapter' ? 'synthetic_adapter_failed' : failure === 'readback' ? 'local_purge_readback_failed' : 'suppression_authority_unavailable'));
   assert.deepEqual(f.snapshot(), before);
+  assert.deepEqual([...f.records], suppression);
+  assert.equal(f.records.get(A.accountId)?.requestId, requestId);
   assert.throws(() => f.lifecycle.purgeLocal(capability), code('purge_authority_invalid'));
 });
 
