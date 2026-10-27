@@ -162,6 +162,7 @@
         "services/api/tests/progress-comparison/persistence.test.mjs",
         "services/api/tests/purchases/purchases.test.ts",
         "services/api/tests/purchases/reconciliation.test.ts",
+        "services/api/tests/purchases/status.test.ts",
         "services/api/tests/runtime-path.test.ts",
         "services/api/tests/settings.test.ts",
         "services/api/tests/source-prescription-domain.test.ts",
