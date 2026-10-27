@@ -1,3 +1,4 @@
+import { issueLocalPurgeAuthority } from '../../src/lifecycle/purge-executor.js';
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import Database from 'better-sqlite3';
@@ -99,11 +100,11 @@ test('actual canonical purge qualifies an empty bug module and preserves account
   await f.disable();
   assert.equal(f.adapter.verifySuppressed(f.contexts.A.accountId, 1).status, 'complete');
   assert.equal(f.db.transaction(() => f.adapter.purge('wrong-request', f.contexts.A.accountId))().status, 'unavailable');
-  const result = f.lifecycle.purgeLocal(f.requestId);
+  const result = f.lifecycle.purgeLocal(issueLocalPurgeAuthority(f.lifecycle, { requestId: f.requestId, operationId: 'synthetic-purge' }));
   assert.equal(result.localPurged, true, 'successful component purge must qualify the actual root localPurged result');
   assert.deepEqual(f.counts(f.contexts.A.accountId), [0, 0, 0]);
   assert.equal(f.adapter.verifySuppressed(f.contexts.A.accountId, 1).status, 'complete');
-  assert.equal(f.lifecycle.purgeLocal(f.requestId).localPurged, true);
+  assert.equal(f.lifecycle.purgeLocal(issueLocalPurgeAuthority(f.lifecycle, { requestId: f.requestId, operationId: 'synthetic-purge' })).localPurged, true);
   assert.equal(result.phase, 'pending_external'); assert.equal(result.complete, false);
   for (const category of ['backups', 'providers']) assert.equal(result.steps.find(step => step.category === category)?.status, 'pending');
   assert.equal(f.ledger.lookup(f.contexts.A.accountId)?.epoch, 1);
@@ -122,7 +123,7 @@ for (const effect of ['unknown', 'accepted'] as const) {
     await f.disable();
     const before = f.counts(f.contexts.A.accountId);
     assert.equal(f.adapter.verifySuppressed(f.contexts.A.accountId, 1).status, 'unknown');
-    const result = f.lifecycle.purgeLocal(f.requestId);
+    const result = f.lifecycle.purgeLocal(issueLocalPurgeAuthority(f.lifecycle, { requestId: f.requestId, operationId: 'synthetic-purge' }));
     assert.equal(result.localPurged, false); assert.equal(result.complete, false);
     assert.equal(result.steps.find(step => step.category === 'bugIntake')?.status, 'unknown');
     assert.deepEqual(f.counts(f.contexts.A.accountId), before);

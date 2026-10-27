@@ -15,6 +15,7 @@
       "tests/backend.test.ts",
       "tests/lifecycle-export.test.ts",
       "tests/lifecycle-http.test.ts",
+      "tests/lifecycle-purge-executor.test.ts",
       "tests/lifecycle.test.ts",
       "tests/runtime-path.test.ts",
       "tests/settings.test.ts",
@@ -104,7 +105,9 @@
       "tests/runtime-modules/grounded-answer-startup.test.ts",
       "tests/runtime-modules/late-boundary-regression.test.ts",
       "tests/runtime-modules/migrations-and-restart.test.ts",
-      "tests/runtime-modules/restore-admission.test.ts"
+      "tests/runtime-modules/relocated-admission.test.ts",
+      "tests/runtime-modules/restore-admission.test.ts",
+      "tests/runtime-modules/restore-drill.test.ts"
     ],
     "usage-limits": [
       "tests/usage-limits/economics.test.mjs",
