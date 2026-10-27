@@ -81,7 +81,7 @@ export type StatusProjectionV1 = Readonly<{
 export class StatusCodecError extends Error {
   constructor() { super('Invalid subscription status record'); this.name = 'StatusCodecError'; }
 }
-const invalid = (): never => { throw new StatusCodecError(); };
+const invalid: () => never = (): never => { throw new StatusCodecError(); };
 type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
 type JsonRecord = { readonly [key: string]: Json };
 type Rule = (value: Json) => boolean;
