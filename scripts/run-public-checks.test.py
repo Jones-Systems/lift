@@ -53,9 +53,11 @@ class PublicChecksTests(unittest.TestCase):
         evidence_sources = ("tests/lifecycle-completion.test.ts",
                             "tests/lifecycle-coverage.test.ts",
                             "tests/lifecycle-evidence-codec.test.ts",
-                            "tests/lifecycle-evidence.test.ts")
-        self.assertEqual(len(checks.API_TESTS["lifecycle-runtime"]), 26)
-        self.assertEqual(len(set(checks.API_TESTS["lifecycle-runtime"])), 26)
+                            "tests/lifecycle-evidence.test.ts",
+                            "tests/lifecycle-provider-revocation-apple.test.ts",
+                            "tests/lifecycle-provider-revocation.test.ts")
+        self.assertEqual(len(checks.API_TESTS["lifecycle-runtime"]), 28)
+        self.assertEqual(len(set(checks.API_TESTS["lifecycle-runtime"])), 28)
         discovery = json.loads((ROOT / "services/api/scripts/integration/test-modules.json").read_text())
         for source in evidence_sources:
             with self.subTest(source=source):

@@ -1,4 +1,4 @@
-export type LifecycleCoverageCohort = 'runtime16' | 'source17' | 'source18' | 'source20' | 'source21' | 'source23' | 'source24' |
+export type LifecycleCoverageCohort = 'runtime16' | 'source17' | 'source18' | 'source20' | 'source21' | 'source23' | 'source24' | 'source25' |
   'optional-family' | 'optional-wearables' | 'optional-wearable-auth' | 'optional-purchase-reconciliation';
 export type LifecycleTableCoverage = Readonly<{
   table: string;
@@ -42,6 +42,12 @@ const body = { owner: 'Body manual measurements/retention', attribution: 'accoun
 
 // Qualification inventory only: no SQL, adapter registration, startup gate or deletion authority is derived from these rows.
 export const lifecycleTableCoverage: readonly LifecycleTableCoverage[] = Object.freeze([
+  ...rows(['account_provider_revocation_intents', 'account_provider_revocation_attempts'], { cohort: 'source25', owner: 'Account provider revocation',
+    attribution: 'Original deletion request, immutable Form/auth/provider subject, exact source row and content-versioned token reference',
+    limits: 'Explicit full1–25 only; restricted authority/evidence excluded from exports and local purge; no token copy.',
+    disposition: 'retained', mechanism: 'Immutable intents and guarded bounded attempt CAS with exact independent generation/currentness and provider-purpose facts.',
+    residual: 'Scoped token acknowledgment only; retention duration, real client/token/key custody and live generation authority unavailable.',
+    evidence: 'lifecycle/providers/outbox.ts; lifecycle/providers/outbox-migration.ts; lifecycle/providers/source.ts; lifecycle-provider-revocation.test.ts' }),
   ...rows(['account_deletion_evidence_operations', 'account_deletion_evidence'], { cohort: 'source24', owner: 'Account lifecycle evidence',
     attribution: 'request_id/operation_id with immutable account/auth-user/epoch/suppression binding checked inside the guarded frame',
     limits: 'Source-only full1–24; independent generation and current suppression witness required; never exported as account data.',

@@ -19,6 +19,8 @@
       "tests/lifecycle-evidence.test.ts",
       "tests/lifecycle-export.test.ts",
       "tests/lifecycle-http.test.ts",
+      "tests/lifecycle-provider-revocation-apple.test.ts",
+      "tests/lifecycle-provider-revocation.test.ts",
       "tests/lifecycle-purge-executor.test.ts",
       "tests/lifecycle-wire-v2.test.ts",
       "tests/lifecycle.test.ts",
