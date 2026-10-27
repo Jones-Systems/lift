@@ -3,9 +3,9 @@ import type { EmbeddedCodecIdentityV1, EmbeddedSourcePinsV1, SyntheticImplementa
 import { detach, type Json } from './strict-json.js';
 import { digest, implementation } from './schema.js';
 
-// Metadata checkpoint: these implementation files are byte-identical to the first published source commit below.
+// Metadata checkpoint: these implementation files are byte-identical to the source commit below.
 // The set digest hashes actual source bytes with length framing in the listed order; this metadata and test/fixture builders are excluded.
-export const implementationSourceRevision = 'b46e00192894505c8190cd720caff6a21cc11f86';
+export const implementationSourceRevision = '807100868ad94008d923abecc970f4984be6aea7';
 export const sourceFiles = [
   {
     "path": "attempt-shape.ts",
@@ -25,7 +25,7 @@ export const sourceFiles = [
   },
   {
     "path": "guard.ts",
-    "sha256": "f85e16d79ed75328d5b0a9a28bcc4df24d45c0dacac0b3828a00fccb32146fc2"
+    "sha256": "e81f7e8804d255e8dea1f0ff37e3463d3f567fc314ce6b8ee6a5ad77f2053f6e"
   },
   {
     "path": "meaning.ts",
@@ -41,7 +41,7 @@ export const sourceFiles = [
   }
 ] as const;
 function checkedDigest(value: string): Digest { digest(value); return value as Digest; }
-export const implementationManifestDigest = checkedDigest('dabd15e7dd4c197f51dfa22398646fbe648ece630fc827816b560f22548a91f5');
+export const implementationManifestDigest = checkedDigest('ce604f7b58367c2e0a54e74826b9bb06b1a0035d684ed2f2f9e274eb6d9538b1');
 function pin(path: typeof sourceFiles[number]['path']): SyntheticImplementationPinV1 {
   const file = sourceFiles.find(file => file.path === path)!;
   const value = detach({ repository: 'Jones-Systems/lift', revision: implementationSourceRevision,
