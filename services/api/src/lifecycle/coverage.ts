@@ -1,4 +1,4 @@
-export type LifecycleCoverageCohort = 'runtime16' | 'source17' | 'source18' | 'source20' | 'source21' | 'source23' | 'source24' | 'source25' | 'source26' |
+export type LifecycleCoverageCohort = 'runtime16' | 'source17' | 'source18' | 'source20' | 'source21' | 'source23' | 'source24' | 'source25' | 'source26' | 'source27' |
   'optional-family' | 'optional-wearables' | 'optional-wearable-auth' | 'optional-purchase-reconciliation';
 export type LifecycleTableCoverage = Readonly<{
   table: string;
@@ -197,6 +197,11 @@ export const lifecycleTableCoverage: readonly LifecycleTableCoverage[] = Object.
     attribution: 'account_id FK plus JSON scope.accountId/key/revision constraints', limits: 'Restricted auth-state bytes; exact record revision is required for deletion.',
     disposition: 'account-purge', mechanism: 'Auth lifecycle requires current transaction, readiness and suppression, deletes exact store keys/revisions and verifies absence.',
     residual: 'Unnumbered/optional; remote revocation unproved. No raw auth state becomes an export.', evidence: 'wearables/direct-provider-transport/auth-store-schema.ts; wearables/direct-provider-transport/auth-lifecycle.ts' }),
+  ...rows(['apple_purchase_reconciliations','apple_purchase_reconciliation_pages','apple_purchase_notifications','apple_purchase_status_observations','apple_purchase_status_projection'], {
+    cohort:'source27', owner:'Source subscription status', attribution:'immutable purchase owner account/lineage; pages through handle FK',
+    limits:'Restricted retained evidence and projection; raw proofs remain in existing restricted ledger.', disposition:'retained',
+    mechanism:'Genuine selected27 schema; no core purge or export projection.', residual:'No erasure, provider, billing or production custody qualification.',
+    evidence:'purchases/status-migration.ts; purchases/status-source.ts' }),
   ...rows(['apple_purchase_reconciliations', 'apple_purchase_notifications'], { cohort: 'optional-purchase-reconciliation', owner: 'Purchases reconciliation',
     attribution: 'account_id plus original_transaction_id/account composite owner FK', limits: 'Reconciliation bindings and notification payloads are immutable/restricted proof material.',
     disposition: 'retained', mechanism: 'Optional unnumbered source schema is not removed or projected by core lifecycle purge/export.',

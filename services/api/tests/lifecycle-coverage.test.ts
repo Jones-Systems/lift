@@ -194,3 +194,14 @@ test('exact source26 inventories three retained security tables without export o
     assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND tbl_name=? AND sql LIKE '%BEFORE DELETE%'").get(row.table));
   }
 });
+
+test('selected27 counts reconciliation once and retains all five restricted tables without export/purge completion',async t=>{
+  const {selectSourceSubscriptionStatusMigrations}=await import('../src/purchases/status-source-migrations.js');
+  const db:Sqlite=new Database(':memory:');t.after(()=>db.close());install(db,selectSourceSubscriptionStatusMigrations());
+  const cohorts:LifecycleCoverageCohort[]=['runtime16','source17','source18','source20','source21','source23','source24','source25','source26','source27'];
+  qualify(db,cohorts);
+  const rows=lifecycleTableCoverage.filter(row=>row.cohort==='source27');assert.equal(rows.length,5);
+  assert.equal(new Set(rows.map(row=>row.table)).size,5);
+  for(const row of rows){assert.equal(row.disposition,'retained');assert.match(row.residual,/No erasure/);}
+  assert.throws(()=>qualify(db,[...cohorts,'optional-purchase-reconciliation']),/table classification must be unique/);
+});

@@ -1,3 +1,4 @@
+import { consumeSourceStatusGracePermit, type SourceStatusGracePermit, type SourceStatusLedgerHooks } from './status-projection.js';
 import { DomainError } from '../errors.js';
 import type { AccountContext } from '../lifecycle/types.js';
 import { assertAccountActive, assertActive } from '../lifecycle/guards.js';
@@ -23,7 +24,7 @@ type ObservationDecision = { status: 'observed' } | Exclude<AppleDeliveryDecisio
 export class ApplePurchaseService {
   private readonly config: Readonly<Required<AppleSandboxConfiguration>>;
   constructor(private readonly db: Sqlite, configuration: AppleSandboxConfiguration,
-    private readonly verifier: AppleTransactionVerifier, private readonly clock: () => number = Date.now) {
+    private readonly verifier: AppleTransactionVerifier, private readonly clock: () => number = Date.now, private readonly sourceStatus?: SourceStatusLedgerHooks) {
     this.config = validateAppleConfiguration(configuration);
     if (db.pragma('foreign_keys', { simple: true }) !== 1 || db.pragma('synchronous', { simple: true }) !== 2)
       throw new Error('Apple delivery requires foreign_keys ON and synchronous FULL');
@@ -56,7 +57,13 @@ export class ApplePurchaseService {
     if (validation) return reject(validation);
     try {
       // Verification is asynchronous; durable ownership, state, grant and exact-proof receipt commit together under a write lock.
-      return this.db.transaction(() => { guard(); return this.commitDelivery(authenticatedAccountId, request, proof); }).immediate();
+      const effect = () => {
+        guard(); const decision = this.commitDelivery(authenticatedAccountId, request, proof);
+        this.sourceStatus?.afterLedgerMutation({accountId:authenticatedAccountId, originalTransactionId:proof.originalTransactionId,
+          transactionId:proof.transactionId,proofHash:sha256(request.jwsRepresentation),observationOnly:false,decision});
+        guard(); return decision;
+      };
+      return this.sourceStatus ? this.sourceStatus.withDeliveryWrite(effect) : this.db.transaction(effect).immediate();
     } catch { return { status: 'unknown', code: 'purchase_storage_effect_unknown' }; }
   }
 
@@ -84,7 +91,7 @@ export class ApplePurchaseService {
   }
 
   /** Trusted verified-input seam; caller owns the canonical synchronous write frame and existing owner binding. */
-  observeVerified(accountId: string, jws: string, proof: VerifiedAppleTransaction, assertWriter: () => void): ObservationDecision {
+  observeVerified(accountId: string, jws: string, proof: VerifiedAppleTransaction, assertWriter: () => void, gracePermit?: SourceStatusGracePermit): ObservationDecision {
     assertWriter();
     if (!this.db.inTransaction) throw new Error('Apple observation requires an admitted transaction');
     const request = { transactionId: proof.transactionId, productId: proof.productId, jwsRepresentation: jws, idempotencyKey: '' };
@@ -94,14 +101,16 @@ export class ApplePurchaseService {
       .get(proof.originalTransactionId) as { account_id: string; bundle_id: string; environment: string } | undefined;
     if (!owner || owner.account_id !== accountId || owner.bundle_id !== proof.bundleId || owner.environment !== proof.environment)
       return { status: 'rejected', code: 'apple_transaction_owned' };
-    const decision = this.commitDelivery(accountId, request, proof, true);
+    const decision = this.commitDelivery(accountId, request, proof, true, gracePermit);
+    this.sourceStatus?.afterLedgerMutation({accountId,originalTransactionId:proof.originalTransactionId,transactionId:proof.transactionId,
+      proofHash:sha256(jws),observationOnly:true,decision});
     assertWriter();
     return decision;
   }
 
   private commitDelivery(accountId: string, request: AppleDeliveryRequest, p: VerifiedAppleTransaction): AppleDeliveryDecision;
-  private commitDelivery(accountId: string, request: AppleDeliveryRequest, p: VerifiedAppleTransaction, observationOnly: true): ObservationDecision;
-  private commitDelivery(accountId: string, request: AppleDeliveryRequest, p: VerifiedAppleTransaction, observationOnly = false): AppleDeliveryDecision | ObservationDecision {
+  private commitDelivery(accountId: string, request: AppleDeliveryRequest, p: VerifiedAppleTransaction, observationOnly: true, gracePermit?: SourceStatusGracePermit): ObservationDecision;
+  private commitDelivery(accountId: string, request: AppleDeliveryRequest, p: VerifiedAppleTransaction, observationOnly = false, gracePermit?: SourceStatusGracePermit): AppleDeliveryDecision | ObservationDecision {
     if (!this.accountBinding(accountId)) return reject('authentication_required');
     const now = this.clock();
     const fingerprint = sha256(request.jwsRepresentation);
@@ -137,7 +146,10 @@ export class ApplePurchaseService {
     if (revokedAt !== null) return reject('apple_revoked');
     if (upgraded === 1) return reject('apple_upgraded');
     const expiry = newer || !existing ? p.expiresDate ?? null : existing.expires_date_ms;
-    if (expiry !== null && expiry <= now) return reject('apple_expired');
+    if (expiry !== null && expiry <= now) {
+      if (!observationOnly || !gracePermit) return reject('apple_expired');
+      consumeSourceStatusGracePermit(gracePermit,{db:this.db,accountId,exactJws:request.jwsRepresentation,proof:p,nowMs:now});
+    }
     if (existing && p.signedDate === existing.signed_date_ms && fingerprint !== existing.proof_hash
       && (p.expiresDate ?? null) !== existing.expires_date_ms) return reject('apple_conflicting_proof');
     if (observationOnly) {
@@ -168,14 +180,19 @@ export class ApplePurchaseService {
     if (!this.accountBinding(authenticatedAccountId)) return { grants: [], active: [] };
     const now = this.clock();
     const rows = this.db.prepare(`SELECT g.id,g.entitlement,g.transaction_id,g.granted_at_ms,t.expires_date_ms,
-      t.revocation_date_ms,t.is_upgraded,t.purchase_date_ms FROM apple_purchase_grants g
+      t.revocation_date_ms,t.is_upgraded,t.purchase_date_ms,t.original_transaction_id,t.product_type FROM apple_purchase_grants g
       JOIN apple_purchase_transactions t ON t.transaction_id=g.transaction_id AND t.account_id=g.account_id WHERE g.account_id=?`)
       .all(authenticatedAccountId) as { id: string; entitlement: string; transaction_id: string; granted_at_ms: number;
-        expires_date_ms: number | null; revocation_date_ms: number | null; is_upgraded: number; purchase_date_ms: number }[];
-    const grants: AppleEntitlementGrant[] = rows.map(row => ({ id: row.id, entitlement: row.entitlement, source: 'apple', sourceId: row.transaction_id,
-      grantedAt: new Date(row.granted_at_ms).toISOString(), expiresAt: row.expires_date_ms === null ? null : new Date(row.expires_date_ms).toISOString(),
-      environment: 'Sandbox', active: row.revocation_date_ms === null && row.is_upgraded === 0 && row.purchase_date_ms <= now
-        && (row.expires_date_ms === null || row.expires_date_ms > now) }));
+        original_transaction_id: string; product_type: string; expires_date_ms: number | null; revocation_date_ms: number | null; is_upgraded: number; purchase_date_ms: number }[];
+    const grants: AppleEntitlementGrant[] = rows.map(row => {
+      const ordinaryActive = row.revocation_date_ms === null && row.is_upgraded === 0 && row.purchase_date_ms <= now &&
+        (row.expires_date_ms === null || row.expires_date_ms > now);
+      const decision = this.sourceStatus?.entitlement({accountId:authenticatedAccountId,transactionId:row.transaction_id,
+        originalTransactionId:row.original_transaction_id,productType:row.product_type,ordinaryActive,ordinaryExpiresAtMs:row.expires_date_ms,nowMs:now});
+      const cutoff = decision ? decision.effectiveExpiresAtMs : row.expires_date_ms;
+      return { id:row.id,entitlement:row.entitlement,source:'apple',sourceId:row.transaction_id,grantedAt:new Date(row.granted_at_ms).toISOString(),
+        expiresAt:cutoff === null ? null : new Date(cutoff).toISOString(),environment:'Sandbox',active:decision ? decision.active : ordinaryActive };
+    });
     return { grants, active: [...new Set(grants.filter(x => x.active).map(x => x.entitlement))] };
   }
 }

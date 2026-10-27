@@ -8,7 +8,8 @@ import { DomainError } from '../errors.js';
 import { phoneEmail } from '../phone/challenges.js';
 import { assertActive } from './guards.js';
 import { evidenceCanonical, evidenceDigest } from './evidence-codec.js';
-import { bindSourceLifecycleCurrentness, readSourceLifecycleStoreCurrentness,
+import { bindSourceSubscriptionStatusStoreCurrentness, readSourceSubscriptionStatusStoreCurrentness,
+  type SourceSubscriptionStatusStoreCurrentness, bindSourceLifecycleCurrentness, readSourceLifecycleStoreCurrentness,
   type SourceLifecycleCurrentness, type SourceLifecycleEvidenceGeneration, type SourceLifecycleEvidenceWitnessReader,
   type SourceLifecycleStoreSnapshot } from './evidence-store.js';
 import type { AccountContext, SourceActionKeys, SourceActionMethod, SourceActionPurpose, SourceActionState } from './types.js';
@@ -263,4 +264,77 @@ export function resolveSourceActionDeletionProof(db: Sqlite, requestId: string, 
     c.generation_digest !== generationDigest || c.schema_digest !== schemaDigest || !/^[a-f0-9]{64}$/.test(p.grant_hash) ||
     actionProofDigest(c, p) !== p.proof_digest) actionHeld();
   return evidenceDigest(['form-action-deletion-proof/v1', r.id, r.intent_hash, p.proof_digest, p.used_at_ms]);
+}
+
+// Selected27 has independent handle and one-use snapshot registries. Old26 authority stays separate.
+declare const statusContinuityBrand: unique symbol;
+declare const statusSnapshotBrand: unique symbol;
+export type SourceSubscriptionStatusContinuityWitness = Readonly<{[statusContinuityBrand]:true}>;
+export type SourceSubscriptionStatusNativeRecord = ContinuityRecord;
+export type SourceSubscriptionStatusContinuitySnapshot = SourceLifecycleStoreSnapshot & Readonly<{
+  [statusSnapshotBrand]:true; nativeStoreDigest:string; continuityDigest:string; recordRevision:number;
+  recordObservedAtMs:number; restoreBoundaryMs:number|null; trustedNowMs:number;
+}>;
+type StatusContinuityState = {db:Sqlite; path:string; identity:string; file:string; generation:SourceLifecycleEvidenceGeneration;
+  digest:string; port?:SourceSubscriptionStatusStoreCurrentness; lastNow:number};
+const statusContinuity = new WeakMap<SourceSubscriptionStatusContinuityWitness, StatusContinuityState>();
+const statusContinuityByDatabase = new WeakMap<Sqlite, StatusContinuityState>();
+const statusSnapshots = new WeakMap<SourceSubscriptionStatusContinuitySnapshot, {state:StatusContinuityState; used:boolean}>();
+function statusFile(db:Sqlite):string {
+  const stat = lstatSync(db.name, {bigint:true});
+  if (!db.open || !stat.isFile() || stat.nlink !== 1n || realpathSync(db.name) !== db.name) actionHeld();
+  return evidenceCanonical([db.name,String(stat.dev),String(stat.ino)]);
+}
+const statusContinuityDigest = (r:ContinuityRecord) => evidenceDigest(['source-subscription-status-continuity/v1',recordGeneration(r),r.restoreBoundaryMs]);
+function statusDate(n:number):void { if (!Number.isSafeInteger(n) || n<0 || n>8640000000000000) actionHeld(); }
+export function bindSourceSubscriptionStatusContinuityWitness(db:Sqlite, evidenceWitness:SourceLifecycleEvidenceWitnessReader,
+  input:Readonly<{recordPath:string}>):SourceSubscriptionStatusContinuityWitness {
+  let own:StatusContinuityState|undefined;
+  try {
+    if (!db.open || db.inTransaction || statusContinuityByDatabase.has(db) || !input || Object.keys(input).join(',') !== 'recordPath' ||
+      typeof input.recordPath !== 'string' || !relative(dirname(db.name),input.recordPath).startsWith('..')) actionHeld();
+    const read = nativeContinuity(input.recordPath); statusDate(read.record.observedAtMs);
+    if (read.record.restoreBoundaryMs !== null) statusDate(read.record.restoreBoundaryMs);
+    own = {db,path:input.recordPath,identity:read.identity,file:statusFile(db),generation:recordGeneration(read.record),
+      digest:statusContinuityDigest(read.record),lastNow:read.record.observedAtMs};
+    statusContinuityByDatabase.set(db,own);
+    own.port = bindSourceSubscriptionStatusStoreCurrentness(db,evidenceWitness);
+    const current = readSourceSubscriptionStatusStoreCurrentness(own.port);
+    if (evidenceCanonical(current.generation) !== evidenceCanonical(own.generation)) actionHeld();
+    const handle = Object.freeze(Object.create(null)) as SourceSubscriptionStatusContinuityWitness;
+    statusContinuity.set(handle,own); return handle;
+  } catch {
+    if (own && statusContinuityByDatabase.get(db) === own) statusContinuityByDatabase.delete(db);
+    return actionHeld();
+  }
+}
+export function assertSourceSubscriptionStatusContinuityRecord(db:Sqlite, generation:SourceLifecycleEvidenceGeneration):SourceSubscriptionStatusNativeRecord {
+  try {
+    const state = statusContinuityByDatabase.get(db); if (!state || statusFile(db) !== state.file) actionHeld();
+    const read = nativeContinuity(state.path); statusDate(read.record.observedAtMs);
+    if (read.identity !== state.identity || evidenceCanonical(recordGeneration(read.record)) !== evidenceCanonical(generation) ||
+      evidenceCanonical(generation) !== evidenceCanonical(state.generation) || statusContinuityDigest(read.record) !== state.digest) actionHeld();
+    return read.record;
+  } catch { return actionHeld(); }
+}
+export function readSourceSubscriptionStatusContinuity(db:Sqlite, witness:SourceSubscriptionStatusContinuityWitness, trustedNowMs:number,
+  prior?:SourceSubscriptionStatusContinuitySnapshot):SourceSubscriptionStatusContinuitySnapshot {
+  const state = statusContinuity.get(witness); if (!state || state.db !== db || !state.port) actionHeld();
+  statusDate(trustedNowMs);
+  if (prior && statusSnapshots.get(prior)?.state !== state) actionHeld();
+  const current = readSourceSubscriptionStatusStoreCurrentness(state.port, prior?.checkpoint);
+  const record = assertSourceSubscriptionStatusContinuityRecord(db,current.generation);
+  if (trustedNowMs < record.observedAtMs || trustedNowMs < state.lastNow) actionHeld();
+  state.lastNow = trustedNowMs;
+  const snapshot = Object.freeze({...current, nativeStoreDigest:evidenceDigest(['source-status-native/v1',state.file,current.generation.mainStoreId]),
+    continuityDigest:state.digest, recordRevision:record.revision, recordObservedAtMs:record.observedAtMs,
+    restoreBoundaryMs:record.restoreBoundaryMs, trustedNowMs}) as SourceSubscriptionStatusContinuitySnapshot;
+  statusSnapshots.set(snapshot,{state,used:false}); return snapshot;
+}
+export function consumeSourceSubscriptionStatusContinuity(db:Sqlite,witness:SourceSubscriptionStatusContinuityWitness,
+  snapshot:SourceSubscriptionStatusContinuitySnapshot,trustedNowMs:number):void {
+  const state=statusContinuity.get(witness), seal=statusSnapshots.get(snapshot);
+  if (!state || !seal || seal.used || seal.state !== state || state.db !== db || !db.open || !db.inTransaction) actionHeld();
+  readSourceSubscriptionStatusContinuity(db,witness,trustedNowMs,snapshot);
+  seal.used=true;
 }

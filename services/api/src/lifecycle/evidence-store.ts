@@ -1,3 +1,6 @@
+import { assertSourceSubscriptionStatusHistory } from '../purchases/status-source-migrations.js';
+import { assertSubscriptionStatusSchema } from '../purchases/status-migration.js';
+import { assertSourceSubscriptionStatusContinuityRecord } from './reauthentication-proof.js';
 import { assertSourceActionReauthenticationHistory } from './reauthentication-source-migrations.js';
 import { assertActionReauthenticationSchema } from './reauthentication-migration.js';
 import { assertSourceActionContinuityRecord, resolveSourceActionDeletionProof } from './reauthentication-proof.js';
@@ -338,4 +341,52 @@ export class LifecycleEvidenceStore {
       residuals: Object.freeze({ retentionPolicy: 'unavailable', providers: 'unavailable', backups: 'unavailable',
         identityAnchors: 'retained', purchaseProofs: 'retained', billingCancellation: 'not_performed' }) });
   }
+}
+
+// Separate selected27 store seals do not widen lifecycle/action producer purposes.
+declare const statusStoreBrand: unique symbol;
+export type SourceSubscriptionStatusStoreCurrentness = Readonly<{ [statusStoreBrand]: true }>;
+type StatusStoreState = { db: Sqlite; reader: ReaderBinding; schema: string; lastCheckpoint: CompletionBinding['checkpoint'] };
+const statusStorePorts = new WeakMap<SourceSubscriptionStatusStoreCurrentness, StatusStoreState>();
+function statusSchemaDigest(db: Sqlite): string {
+  assertSourceSubscriptionStatusHistory(db.prepare('SELECT version,checksum FROM form_migrations ORDER BY version').all() as {version:number;checksum:string}[], true);
+  assertLifecycleEvidenceSchema(db, true); assertProviderRevocationSchema(db, true);
+  assertActionReauthenticationSchema(db, true); assertSubscriptionStatusSchema(db, true);
+  return evidenceDigest(db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name").all());
+}
+export function bindSourceSubscriptionStatusStoreCurrentness(db: Sqlite, witness: SourceLifecycleEvidenceWitnessReader): SourceSubscriptionStatusStoreCurrentness {
+  const reader = readers.get(witness);
+  if (!reader || reader.db !== db || !db.open || suppressionAuthority(db) !== reader.authority) held();
+  const schema = statusSchemaDigest(db), checkpoint = reader.authority.checkpoint();
+  const port = Object.freeze(Object.create(null)) as SourceSubscriptionStatusStoreCurrentness;
+  statusStorePorts.set(port, {db, reader, schema, lastCheckpoint: Object.freeze({authorityId:checkpoint.authorityId,
+    ledgerSchemaDigest:checkpoint.ledgerSchemaDigest, revision:checkpoint.revision, committedSequence:checkpoint.committedSequence,
+    committedHeadDigest:checkpoint.committedHeadDigest})});
+  readSourceSubscriptionStatusStoreCurrentness(port);
+  return port;
+}
+export function readSourceSubscriptionStatusStoreCurrentness(port: SourceSubscriptionStatusStoreCurrentness,
+  prior?: CompletionBinding['checkpoint']): SourceLifecycleStoreSnapshot {
+  const state = statusStorePorts.get(port); if (!state) held();
+  try {
+    const {db, reader} = state, actual = generation(reader.read(db));
+    if (!db.open || suppressionAuthority(db) !== reader.authority || fileIdentity(db) !== reader.file ||
+      evidenceCanonical(actual) !== evidenceCanonical(reader.generation) || statusSchemaDigest(db) !== state.schema) held();
+    assertSourceSubscriptionStatusContinuityRecord(db, actual);
+    const checkpoint = reader.authority.checkpoint(), checkpoints = [state.lastCheckpoint, ...(prior ? [prior] : [])];
+    for (const c of checkpoints) if (c.authorityId !== checkpoint.authorityId || c.ledgerSchemaDigest !== checkpoint.ledgerSchemaDigest ||
+      !Number.isSafeInteger(c.revision) || c.revision < 0 || !Number.isSafeInteger(c.committedSequence) || c.committedSequence < 0 ||
+      checkpoint.revision < c.revision || checkpoint.committedSequence < c.committedSequence) held();
+    let head = genesisHead(checkpoint.authorityId), sequence = 0;
+    for (const c of checkpoints) if (c.committedSequence === 0 && c.committedHeadDigest !== head) held();
+    reader.authority.reconcileRestore(record => {
+      if (record.sequence !== ++sequence) held(); head = advanceHead(head, record);
+      for (const c of checkpoints) if (c.committedSequence === sequence && c.committedHeadDigest !== head) held();
+    });
+    if (checkpoint.pending || sequence !== checkpoint.committedSequence || head !== checkpoint.committedHeadDigest) held();
+    const current = Object.freeze({authorityId:checkpoint.authorityId, ledgerSchemaDigest:checkpoint.ledgerSchemaDigest,
+      revision:checkpoint.revision, committedSequence:checkpoint.committedSequence, committedHeadDigest:checkpoint.committedHeadDigest});
+    state.lastCheckpoint = current;
+    return Object.freeze({generation:actual, schemaDigest:state.schema, checkpoint:current, authority:reader.authority});
+  } catch { return held(); }
 }
