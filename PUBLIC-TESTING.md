@@ -27,7 +27,7 @@ contract also needs Node 24, without installed npm dependencies.
 | Group ID | Selected checks | Public claim |
 | --- | --- | --- |
 | `runner-contract` | `python3 -B scripts/run-public-checks.test.py` | Group selection, baseline enforcement, actual API/app source-import resolution, subprocess status, evidence and scratch cleanup, SIGINT/SIGTERM cancellation |
-| `lifecycle-runtime` | API lifecycle, runtime modules, canonical account composition, request-factory, provider-revocation and action-reauthentication tests (30 modules) | Synthetic generation-bound scoped evidence, purge authority, rollback/residuals, relocated restore admission and closed runtime boundaries; source-only dedicated email/phone action proof, intent-free Source26 upgrades and quiescent synthetic restores; injected synthetic Apple revocation only; no live provider, real purge or restore qualification |
+| `lifecycle-runtime` | API lifecycle, runtime modules, canonical account composition, request-factory, provider-revocation, action-reauthentication and pure subscription status codec tests (31 modules) | Synthetic generation-bound scoped evidence, purge authority, rollback/residuals, relocated restore admission, closed runtime boundaries and bounded canonical codec/ordering; source-only dedicated email/phone action proof, intent-free Source26 upgrades and quiescent synthetic restores; injected synthetic Apple revocation only; no live provider, real purge or restore qualification |
 | `lifecycle-wire-v2` | New API wire-v2 suite; APP contracts-v2 interop and existing v1 lifecycle suites | Unmounted v2 syntax, bounds, subject/evidence consistency, actual backend encoder to independent client parser and v1 compatibility; no producer, transport or evidence-authority qualification |
 | `api-compile` | `node node_modules/typescript/bin/tsc -p tsconfig.json` in `services/api` | TypeScript compilation and fresh emitted API/test modules |
 | `app-static` | `npm run typecheck`; `npm run check:tokens` in `apps/form` | App TypeScript and token-style checks |
@@ -66,6 +66,12 @@ digested source input compiled by the API TypeScript configuration, never a
 standalone test invocation or counted test module. Registration does not qualify
 runtime/default activation, real delivery, arbitrary/crash restore or provider
 acceptance.
+
+The pure subscription status codec runs once from fresh compiled JavaScript in
+`lifecycle-runtime`. Its 18 synthetic tests cover bounded canonical parsing,
+domain-separated identities and conservative ordering/reduction. The library
+has no mounted consumer and grants no access; these tests do not qualify proof
+authenticity, provenance, currentness, persistence or full Source27 adoption.
 
 `lifecycle-wire-v2` is included by default with the other group IDs. Its app
 suite requires the freshly compiled real backend encoder and independently

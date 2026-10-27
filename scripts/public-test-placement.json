@@ -48,6 +48,7 @@
         "services/api/tests/lifecycle-reauthentication.test.ts",
         "services/api/tests/lifecycle-wire-v2.test.ts",
         "services/api/tests/lifecycle.test.ts",
+        "services/api/tests/purchases/status-codec.test.ts",
         "services/api/tests/runtime-modules/authority-currentness.test.ts",
         "services/api/tests/runtime-modules/capability-and-denial.test.ts",
         "services/api/tests/runtime-modules/closed-read-admission.test.ts",

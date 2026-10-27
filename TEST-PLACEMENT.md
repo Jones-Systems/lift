@@ -16,7 +16,7 @@ prove that a new test was selected.
 
 | Placement/group | Files | Execution and reason |
 | --- | ---: | --- |
-| Existing hosted | 68 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
+| Existing hosted | 69 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
 | `api-breadth` | 93 | Compile API TypeScript with `tsc`; run emitted TS tests and original MJS/CJS tests using the existing source hook. Never run the private projection build. |
 | `app-breadth` | 80 | Compile the transport compatibility output, then run explicit CJS files serially. Phone sign-in embeds the standalone transport suite exactly once. |
 | `app-renderer` | 1 | Existing Jest renderer command selects `runtime-auth.test.tsx`; onboarding remains in the existing hosted group. |
@@ -25,15 +25,20 @@ prove that a new test was selected.
 | `breadth-contract` | 1 | This runner's selection, result and lifecycle contract runs inside the breadth job. |
 | Blocked | 32 | Exact files, reasons, missing inputs and intended private/manual qualification routes remain in the manifest. |
 
-Current discovery has 308 files. The two provider-revocation modules and the two
-Source26 action-reauthentication modules join existing hosted placement and core
-API discovery exactly once. The public runner's `lifecycle-runtime` group selects
-exactly 30 API modules: its existing 28 plus the two action-reauthentication suites.
-Their shared fixture helper is a required compiled source input, excluded from
-test discovery, invocation and module counts. Source26 placement covers dedicated
-email/phone action proof, intent-free upgrades and quiescent synthetic restores;
-it does not qualify runtime/default activation or arbitrary/crash restore.
-Provider execution uses injected synthetic material and
+Current discovery has 309 files. The two provider-revocation modules join
+existing hosted placement and core API discovery exactly once. The public
+runner's `lifecycle-runtime` group selects exactly 31 API modules: its canonical
+29 plus the two Source26 action-reauthentication suites. The codec is registered once in
+API purchases discovery and existing hosted placement, with no `api-breadth`
+duplicate. Its 18 synthetic cases execute from fresh compiled JavaScript;
+bounded canonical syntax, content identities and conservative ordering do not
+establish provenance, currentness, persistence, access or full Source27 adoption.
+The library remains unmounted. The two Source26 suites join core API discovery
+and existing hosted placement exactly once. Their shared fixture helper is a
+required compiled source input, excluded from test discovery, invocation and
+module counts. Source26 placement covers dedicated email/phone action proof,
+intent-free upgrades and quiescent synthetic restores; it does not qualify
+runtime/default activation or arbitrary/crash restore. Provider execution uses injected synthetic material and
 Apple transport only. This is source-only synthetic placement, without live
 generation, provider, backup or retention qualification. The default
 `lifecycle-wire-v2` group adds the API wire suite and app interop suite to hosted

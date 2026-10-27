@@ -65,6 +65,7 @@ API_TESTS = {
         "tests/lifecycle-reauthentication-source.test.ts",
         "tests/lifecycle-reauthentication.test.ts",
         "tests/lifecycle.test.ts",
+        "tests/purchases/status-codec.test.ts",
         "tests/runtime-modules/authority-currentness.test.ts",
         "tests/runtime-modules/capability-and-denial.test.ts",
         "tests/runtime-modules/closed-read-admission.test.ts",
