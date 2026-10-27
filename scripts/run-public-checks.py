@@ -21,7 +21,7 @@ HELPER = "scripts/run-public-checks.py"
 HARNESS_TEST = "scripts/run-public-checks.test.py"
 SOURCE_HOOK = "scripts/integration/source-hook.mjs"
 SOURCE_RESOLVER = "scripts/integration/source-resolution.mjs"
-GROUP_IDS = ("runner-contract", "api-compile", "app-static", "form104-139", "form196", "form203", "form208", "simulator-portable", "native-e2e-backend", "native-e2e-app")
+GROUP_IDS = ("runner-contract", "api-compile", "app-static", "form104-139", "form196", "form203", "form208", "simulator-portable", "native-e2e-backend", "native-e2e-app", "lifecycle-runtime")
 BASELINE_HEALTH = (
     "tests/wearables/app.test.mjs", "tests/wearables/ingestion.test.mjs",
     "tests/wearables/providers.test.mjs", "tests/wearables/suggestions.test.mjs",
@@ -43,6 +43,30 @@ APP_TESTS = {
     "form208": ("src/voice-coaching/standard/tests/wire-codec.test.cjs",),
 }
 API_TESTS = {
+    "lifecycle-runtime": (
+        "tests/bug-intake/lifecycle-chain.test.ts",
+        "tests/integration/account-modules/canonical-writer.test.ts",
+        "tests/integration/account-modules/composition.test.ts",
+        "tests/integration/account-modules/server.test.ts",
+        "tests/integration/request-factories.test.ts",
+        "tests/lifecycle-export.test.ts",
+        "tests/lifecycle-http.test.ts",
+        "tests/lifecycle-purge-executor.test.ts",
+        "tests/lifecycle.test.ts",
+        "tests/runtime-modules/authority-currentness.test.ts",
+        "tests/runtime-modules/capability-and-denial.test.ts",
+        "tests/runtime-modules/closed-read-admission.test.ts",
+        "tests/runtime-modules/closed-read-storage.test.ts",
+        "tests/runtime-modules/composition-http.test.ts",
+        "tests/runtime-modules/configuration-and-lifetime.test.ts",
+        "tests/runtime-modules/export-http.test.ts",
+        "tests/runtime-modules/late-boundary-regression.test.ts",
+        "tests/runtime-modules/migrations-and-restart.test.ts",
+        "tests/runtime-modules/relocated-admission.test.ts",
+        "tests/runtime-modules/restore-admission.test.ts",
+        "tests/runtime-modules/restore-drill.test.ts",
+        "tests/usage-limits/lifecycle.test.ts",
+    ),
     "native-e2e-backend": ("tests/e2e/native-backend.test.ts",),
     "form196": ("tests/community/board/correction.test.ts", "tests/community/board/board.test.ts", "tests/community/board/persistence-races.test.ts"),
     "form208": ("tests/voice-coaching/standard-wire.test.ts", "tests/voice-coaching/turn-controller.test.ts",
@@ -60,7 +84,7 @@ def selection(root, requested):
     if chosen - set(GROUP_IDS):
         raise ValueError("Unknown public check group")
     # Interop, native E2E smoke tests and board workers load fresh emitted API JavaScript.
-    if chosen & {"form196", "form208", "native-e2e-backend", "native-e2e-app"}:
+    if chosen & {"form196", "form208", "native-e2e-backend", "native-e2e-app", "lifecycle-runtime"}:
         chosen.add("api-compile")
     groups = [group for group in GROUP_IDS if group in chosen]
     health = sorted(str(path.relative_to(root / API)) for directory in
@@ -99,6 +123,8 @@ def selection(root, requested):
             if group in API_TESTS:
                 sources = API_TESTS[group]
                 emitted = ["dist/" + source.removesuffix(".ts") + ".js" for source in sources]
+                if group == "lifecycle-runtime":
+                    sources = (*sources, "tests/runtime-modules/restore-drill-fixture.ts")
                 if group == "native-e2e-backend":
                     sources = (*sources, "tests/e2e/native-backend.ts", SOURCE_HOOK, SOURCE_RESOLVER)
                 add(group, API, ["node", "--test", "--test-concurrency=1", *emitted], sources)

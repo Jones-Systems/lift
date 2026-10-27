@@ -27,6 +27,7 @@ contract also needs Node 24, without installed npm dependencies.
 | Group ID | Selected checks | Public claim |
 | --- | --- | --- |
 | `runner-contract` | `python3 -B scripts/run-public-checks.test.py` | Group selection, baseline enforcement, actual API/app source-import resolution, subprocess status, evidence and scratch cleanup, SIGINT/SIGTERM cancellation |
+| `lifecycle-runtime` | API lifecycle, runtime modules, canonical account composition and request-factory tests (22 modules) | Synthetic purge authority, rollback/residuals, relocated restore admission and closed runtime boundaries; no real purge or restore qualification |
 | `api-compile` | `node node_modules/typescript/bin/tsc -p tsconfig.json` in `services/api` | TypeScript compilation and fresh emitted API/test modules |
 | `app-static` | `npm run typecheck`; `npm run check:tokens` in `apps/form` | App TypeScript and token-style checks |
 | `form104-139` | Every `*.test.mjs` recursively in API `tests/wearables/` and `tests/direct-provider-transport/` | Synthetic wearable ingestion/providers/suggestions, persistence/checkpoints, upload/purge, canonical consumer and provider transport/auth coverage present at this SHA |
@@ -38,7 +39,7 @@ contract also needs Node 24, without installed npm dependencies.
 | `native-e2e-app` | APP integration `account-switch-session`, `settings-mode-http`, `manual-progress-session`, `runtime-lifecycle-composition`; renderer `tests/renderer/onboarding-save.test.tsx` | App authentication, settings/manual-session lifecycle and injury save/navigation concurrency regressions affected by native journeys |
 
 To run a group, use `--group GROUP_ID` (repeatable). Board, Standard interop and
-both native E2E groups automatically include `api-compile` first: workers and app tests load
+both native E2E groups and `lifecycle-runtime` automatically include `api-compile` first: workers and app tests load
 fresh emitted JavaScript. Tests execute serially; intentional worker races
 remain intact. The exact argv and selected source paths are available through
 `--list` and each run's receipt. API source tests use the existing integration
