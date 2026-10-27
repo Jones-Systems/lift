@@ -16,7 +16,7 @@ prove that a new test was selected.
 
 | Placement/group | Files | Execution and reason |
 | --- | ---: | --- |
-| Existing hosted | 66 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
+| Existing hosted | 67 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
 | `api-breadth` | 92 | Compile API TypeScript with `tsc`; run emitted TS tests and original MJS/CJS tests using the existing source hook. Never run the private projection build. |
 | `app-breadth` | 80 | Compile the transport compatibility output, then run explicit CJS files serially. Phone sign-in embeds the standalone transport suite exactly once. |
 | `app-renderer` | 1 | Existing Jest renderer command selects `runtime-auth.test.tsx`; onboarding remains in the existing hosted group. |
@@ -25,10 +25,15 @@ prove that a new test was selected.
 | `breadth-contract` | 1 | This runner's selection, result and lifecycle contract runs inside the breadth job. |
 | Blocked | 32 | Exact files, reasons, missing inputs and intended private/manual qualification routes remain in the manifest. |
 
-Current discovery has 305 files. The two provider-revocation modules join
+Current discovery has 306 files. The two provider-revocation modules join
 existing hosted placement and core API discovery exactly once. The public
-runner's `lifecycle-runtime` group selects exactly 28 API modules: its existing
-26 plus those two. Provider execution uses injected synthetic material and
+runner's `lifecycle-runtime` group selects exactly 29 API modules: its existing
+28 plus the pure subscription status codec. The codec is registered once in
+API purchases discovery and existing hosted placement, with no `api-breadth`
+duplicate. Its 18 synthetic cases execute from fresh compiled JavaScript;
+bounded canonical syntax, content identities and conservative ordering do not
+establish provenance, currentness, persistence, access or full Source27 adoption.
+The library remains unmounted. Provider execution uses injected synthetic material and
 Apple transport only. This is source-only synthetic placement, without live
 generation, provider, backup or retention qualification. The default
 `lifecycle-wire-v2` group adds the API wire suite and app interop suite to hosted

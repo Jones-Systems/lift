@@ -99,7 +99,8 @@
       "tests/phone/phone.test.ts"
     ],
     "purchases": [
-      "tests/purchases/purchases.test.ts"
+      "tests/purchases/purchases.test.ts",
+      "tests/purchases/status-codec.test.ts"
     ],
     "runtime-modules": [
       "tests/runtime-modules/authority-currentness.test.ts",
