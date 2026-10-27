@@ -39,6 +39,8 @@
         "services/api/tests/lifecycle-evidence.test.ts",
         "services/api/tests/lifecycle-export.test.ts",
         "services/api/tests/lifecycle-http.test.ts",
+        "services/api/tests/lifecycle-provider-revocation-apple.test.ts",
+        "services/api/tests/lifecycle-provider-revocation.test.ts",
         "services/api/tests/lifecycle-purge-executor.test.ts",
         "services/api/tests/lifecycle.test.ts",
         "services/api/tests/runtime-modules/authority-currentness.test.ts",
