@@ -27,7 +27,8 @@ contract also needs Node 24, without installed npm dependencies.
 | Group ID | Selected checks | Public claim |
 | --- | --- | --- |
 | `runner-contract` | `python3 -B scripts/run-public-checks.test.py` | Group selection, baseline enforcement, actual API/app source-import resolution, subprocess status, evidence and scratch cleanup, SIGINT/SIGTERM cancellation |
-| `lifecycle-runtime` | API lifecycle, runtime modules, canonical account composition and request-factory tests (22 modules) | Synthetic purge authority, rollback/residuals, relocated restore admission and closed runtime boundaries; no real purge or restore qualification |
+| `lifecycle-runtime` | API lifecycle, runtime modules, canonical account composition, request-factory and provider-revocation tests (28 modules) | Synthetic generation-bound scoped evidence, purge authority, rollback/residuals, relocated restore admission and closed runtime boundaries; source-only, injected synthetic Apple revocation only; no live provider, real purge or restore qualification |
+| `lifecycle-wire-v2` | New API wire-v2 suite; APP contracts-v2 interop and existing v1 lifecycle suites | Unmounted v2 syntax, bounds, subject/evidence consistency, actual backend encoder to independent client parser and v1 compatibility; no producer, transport or evidence-authority qualification |
 | `api-compile` | `node node_modules/typescript/bin/tsc -p tsconfig.json` in `services/api` | TypeScript compilation and fresh emitted API/test modules |
 | `app-static` | `npm run typecheck`; `npm run check:tokens` in `apps/form` | App TypeScript and token-style checks |
 | `form104-139` | Every `*.test.mjs` recursively in API `tests/wearables/` and `tests/direct-provider-transport/` | Synthetic wearable ingestion/providers/suggestions, persistence/checkpoints, upload/purge, canonical consumer and provider transport/auth coverage present at this SHA |
@@ -39,7 +40,7 @@ contract also needs Node 24, without installed npm dependencies.
 | `native-e2e-app` | APP integration `account-switch-session`, `settings-mode-http`, `manual-progress-session`, `runtime-lifecycle-composition`; renderer `tests/renderer/onboarding-save.test.tsx` | App authentication, settings/manual-session lifecycle and injury save/navigation concurrency regressions affected by native journeys |
 
 To run a group, use `--group GROUP_ID` (repeatable). Board, Standard interop and
-both native E2E groups and `lifecycle-runtime` automatically include `api-compile` first: workers and app tests load
+both native E2E groups, `lifecycle-runtime` and `lifecycle-wire-v2` automatically include `api-compile` first: workers and app tests load
 fresh emitted JavaScript. Tests execute serially; intentional worker races
 remain intact. The exact argv and selected source paths are available through
 `--list` and each run's receipt. API source tests use the existing integration
@@ -57,6 +58,14 @@ snapshot with those additions absent only qualifies the tests listed in its
 receipt; it does not qualify a later branch's new behavior. Other groups have
 explicit module lists in `scripts/run-public-checks.py`; add new test modules to
 their owning group when extending that contract.
+
+`lifecycle-wire-v2` is included by default with the other group IDs. Its app
+suite requires the freshly compiled real backend encoder and independently
+transpiles the client parser with the app's installed TypeScript helper. Missing
+inputs or backend emission fail; there is no substitute codec or missing-build
+skip. Synthetic scoped-completion fixtures prove wire representation only.
+Existing v1 routes, settings and consumers remain unchanged; production mapping,
+current evidence, provider methods and consumer exposure require separate qualification.
 
 The helper owns a unique `TemporaryDirectory` under the repository workspace.
 It copies `apps`, `services` and `packages`, excluding dependency trees,

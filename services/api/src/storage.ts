@@ -145,19 +145,35 @@ export async function backupAndVerify(db: Sqlite, destination: string): Promise<
 
 export type SourceReportedLoadSelection = 'selected-migration-22';
 export type SourceManualRetentionSelection = 'selected-migration-23';
+export type SourceLifecycleEvidenceSelection = 'selected-lifecycle-evidence-24';
+export type SourceProviderRevocationSelection = 'selected-provider-revocation-25';
 export async function migrate(db: Sqlite, dbPath: string, selected: readonly Migration[] = migrations,
-  sourceReportedLoad?: SourceReportedLoadSelection, sourceManualRetention?: SourceManualRetentionSelection): Promise<string[]> {
-  // Only the two explicit source selections may use their finite coordinated migration histories.
+  sourceReportedLoad?: SourceReportedLoadSelection, sourceManualRetention?: SourceManualRetentionSelection,
+  sourceLifecycleEvidence?: SourceLifecycleEvidenceSelection, sourceProviderRevocation?: SourceProviderRevocationSelection): Promise<string[]> {
+  // Each explicit source selection owns its finite coordinated history.
   if ((sourceReportedLoad !== undefined && sourceReportedLoad !== 'selected-migration-22') ||
-    (sourceManualRetention !== undefined && sourceManualRetention !== 'selected-migration-23'))
+    (sourceManualRetention !== undefined && sourceManualRetention !== 'selected-migration-23') ||
+    (sourceLifecycleEvidence !== undefined && sourceLifecycleEvidence !== 'selected-lifecycle-evidence-24') ||
+    (sourceProviderRevocation !== undefined && sourceProviderRevocation !== 'selected-provider-revocation-25'))
     throw new Error('Invalid source migration selection');
+  const providerValidation = sourceProviderRevocation ? await import('./lifecycle/providers/source-migrations.js') : undefined;
+  if (providerValidation) {
+    if (!sourceReportedLoad || !sourceManualRetention || !sourceLifecycleEvidence) throw new Error('Explicit source22, source23 and source24 selections required');
+    providerValidation.assertSourceProviderRevocationSelection(selected);
+  } else if (selected.some(entry => entry.version >= 25)) throw new Error('Explicit provider-revocation selection required');
+  const evidenceValidation = sourceLifecycleEvidence ? await import('./lifecycle/source-migrations.js') : undefined;
+  if (evidenceValidation) {
+    if (!sourceReportedLoad || !sourceManualRetention) throw new Error('Explicit source22 and source23 selections required');
+    evidenceValidation.assertSourceLifecycleEvidenceSelection(providerValidation ? selected.slice(0, 24) : selected);
+  } else if (selected.some(entry => entry.version === 24)) throw new Error('Explicit lifecycle-evidence selection required');
+  const historicalSelection = evidenceValidation ? selected.slice(0, 23) : selected;
   const sourceValidation = sourceReportedLoad || sourceManualRetention
     ? await import('./integration/account-modules/migrations.js') : undefined;
   if (sourceManualRetention) {
-    sourceValidation!.assertSourceManualRetentionSelection(selected);
+    sourceValidation!.assertSourceManualRetentionSelection(historicalSelection);
     if (selected.some(entry => entry.version === 22) !== !!sourceReportedLoad) throw new Error('Explicit reported-load selection required');
   } else if (selected.some(entry => entry.version === 23)) throw new Error('Explicit manual-retention selection required');
-  if (sourceReportedLoad) sourceValidation!.assertSourceReportedLoadSelection(selected);
+  if (sourceReportedLoad) sourceValidation!.assertSourceReportedLoadSelection(historicalSelection);
   else if (!sourceManualRetention && selected.some((entry, index) => entry.version !== index + 1))
     throw new Error('Migration sequence must be contiguous');
   const existing = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='form_migrations'").get();
@@ -166,9 +182,15 @@ export async function migrate(db: Sqlite, dbPath: string, selected: readonly Mig
     const source = selected.find(x => x.version === record.version);
     if (!source || record.checksum !== hash(source.sql)) throw new Error('Unknown or modified migration history');
   }
-  if (sourceManualRetention) sourceValidation!.assertSourceManualRetentionHistory(applied);
+  if (providerValidation) providerValidation.assertSourceProviderRevocationHistory(applied);
+  else if (evidenceValidation) evidenceValidation.assertSourceLifecycleEvidenceHistory(applied);
+  else if (sourceManualRetention) sourceValidation!.assertSourceManualRetentionHistory(applied);
   else if (sourceReportedLoad) sourceValidation!.assertSourceReportedLoadHistory(applied);
   const pending = selected.filter(x => !applied.some(y => y.version === x.version));
+  const evidenceSchemaValidation = evidenceValidation ? await import('./lifecycle/evidence-store.js') : undefined;
+  evidenceSchemaValidation?.assertLifecycleEvidenceSchema(db, applied.some(entry => entry.version === 24));
+  const providerSchemaValidation = providerValidation ? await import('./lifecycle/providers/outbox-migration.js') : undefined;
+  providerSchemaValidation?.assertProviderRevocationSchema(db, applied.some(entry => entry.version === 25));
   if (pending.some(entry => entry.version === 23)) {
     const { manualRetentionOwnedTables } = await import('./body/manual-retention-migration.js');
     if (manualRetentionOwnedTables.some(table => db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)))
@@ -184,19 +206,44 @@ export async function migrate(db: Sqlite, dbPath: string, selected: readonly Mig
     db.transaction(() => {
       db.exec('CREATE TABLE IF NOT EXISTS form_migrations (version INTEGER PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)');
       db.exec(migration.sql);
+      if (migration.version === 24) evidenceSchemaValidation!.assertLifecycleEvidenceSchema(db, true);
+      if (migration.version === 25) providerSchemaValidation!.assertProviderRevocationSchema(db, true);
       db.prepare('INSERT INTO form_migrations VALUES (?,?,?)').run(migration.version, hash(migration.sql), new Date().toISOString());
       integrity(db);
     }).immediate();
   }
   const finalHistory = db.prepare('SELECT version,checksum FROM form_migrations ORDER BY version').all() as { version: number; checksum: string }[];
-  if (sourceManualRetention) sourceValidation!.assertSourceManualRetentionHistory(finalHistory, true);
-  if (sourceReportedLoad) sourceValidation!.assertSourceReportedLoadHistory(finalHistory, true);
+  if (evidenceValidation) {
+    if (providerValidation) {
+      providerValidation.assertSourceProviderRevocationHistory(finalHistory, true);
+      providerSchemaValidation!.assertProviderRevocationSchema(db, true);
+    }
+    evidenceValidation.assertSourceLifecycleEvidenceHistory(providerValidation ? finalHistory.slice(0, 24) : finalHistory, true);
+    const { assertLifecycleEvidenceSchema } = await import('./lifecycle/evidence-store.js');
+    assertLifecycleEvidenceSchema(db, true);
+  } else {
+    if (sourceManualRetention) sourceValidation!.assertSourceManualRetentionHistory(finalHistory, true);
+    if (sourceReportedLoad) sourceValidation!.assertSourceReportedLoadHistory(finalHistory, true);
+  }
   integrity(db);
   return backups;
 }
 
 export async function openStorage(dbPath: string, selected: readonly Migration[] = migrations,
-  sourceReportedLoad?: SourceReportedLoadSelection, sourceManualRetention?: SourceManualRetentionSelection): Promise<{ db: Sqlite; migrationBackups: string[] }> {
+  sourceReportedLoad?: SourceReportedLoadSelection, sourceManualRetention?: SourceManualRetentionSelection,
+  sourceLifecycleEvidence?: SourceLifecycleEvidenceSelection, sourceProviderRevocation?: SourceProviderRevocationSelection): Promise<{ db: Sqlite; migrationBackups: string[] }> {
+  if (sourceProviderRevocation !== undefined || selected.some(entry => entry.version >= 25)) {
+    if (sourceProviderRevocation !== 'selected-provider-revocation-25' || sourceLifecycleEvidence !== 'selected-lifecycle-evidence-24' ||
+      sourceReportedLoad !== 'selected-migration-22' || sourceManualRetention !== 'selected-migration-23') throw new Error('Invalid source migration selection');
+    const validation = await import('./lifecycle/providers/source-migrations.js');
+    validation.assertSourceProviderRevocationSelection(selected);
+  }
+  if (sourceLifecycleEvidence !== undefined || selected.some(entry => entry.version === 24)) {
+    if (sourceLifecycleEvidence !== 'selected-lifecycle-evidence-24' || sourceReportedLoad !== 'selected-migration-22' ||
+      sourceManualRetention !== 'selected-migration-23') throw new Error('Invalid source migration selection');
+    const validation = await import('./lifecycle/source-migrations.js');
+    validation.assertSourceLifecycleEvidenceSelection(sourceProviderRevocation ? selected.slice(0, 24) : selected);
+  }
   if (!isAbsolute(dbPath) || dbPath === ':memory:') throw new Error('A durable absolute database path is required');
   mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 });
   if (existsSync(dbPath) && (!statSync(dbPath).isFile() || realpathSync(dbPath) !== resolve(dbPath)))
@@ -204,7 +251,7 @@ export async function openStorage(dbPath: string, selected: readonly Migration[]
   const db = new Database(dbPath);
   try {
     chmodSync(dbPath, 0o600); configure(db);
-    const migrationBackups = await migrate(db, dbPath, selected, sourceReportedLoad, sourceManualRetention);
+    const migrationBackups = await migrate(db, dbPath, selected, sourceReportedLoad, sourceManualRetention, sourceLifecycleEvidence, sourceProviderRevocation);
     db.transaction(() => {
       for (const entry of catalogSeed)
         db.prepare('INSERT INTO exercises(id,data) VALUES (?,?) ON CONFLICT(id) DO NOTHING').run(entry.id, JSON.stringify(entry));

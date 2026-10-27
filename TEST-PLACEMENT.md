@@ -16,20 +16,28 @@ prove that a new test was selected.
 
 | Placement/group | Files | Execution and reason |
 | --- | ---: | --- |
-| Existing hosted | 57 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
+| Existing hosted | 66 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
 | `api-breadth` | 92 | Compile API TypeScript with `tsc`; run emitted TS tests and original MJS/CJS tests using the existing source hook. Never run the private projection build. |
-| `app-breadth` | 81 | Compile the transport compatibility output, then run explicit CJS files serially. Phone sign-in embeds the standalone transport suite exactly once. |
+| `app-breadth` | 80 | Compile the transport compatibility output, then run explicit CJS files serially. Phone sign-in embeds the standalone transport suite exactly once. |
 | `app-renderer` | 1 | Existing Jest renderer command selects `runtime-auth.test.tsx`; onboarding remains in the existing hosted group. |
 | `website` | 29 | Explicit recursive Node test paths include nested voice modules. Require the real portable session-controller source before execution. |
 | `adapter-unit` | 4 | Same four files and serial Node options as adapter `npm test`, with explicit TAP reporting. |
 | `breadth-contract` | 1 | This runner's selection, result and lifecycle contract runs inside the breadth job. |
 | Blocked | 32 | Exact files, reasons, missing inputs and intended private/manual qualification routes remain in the manifest. |
 
-The pre-breadth state has 292 files. The new breadth contract and the
-private-inventory case split and three lifecycle/restore modules bring discovery to 297 files.
-The lifecycle candidate moves 19 existing API files into the public runner’s
-`lifecycle-runtime` group, alongside its three new test modules.
-There are 207 additional public product test files, plus the new contract.
+Current discovery has 305 files. The two provider-revocation modules join
+existing hosted placement and core API discovery exactly once. The public
+runner's `lifecycle-runtime` group selects exactly 28 API modules: its existing
+26 plus those two. Provider execution uses injected synthetic material and
+Apple transport only. This is source-only synthetic placement, without live
+generation, provider, backup or retention qualification. The default
+`lifecycle-wire-v2` group adds the API wire suite and app interop suite to hosted
+execution, and moves the existing v1 app lifecycle suite from `app-breadth` to
+hosted execution exactly once. Its API compilation precedes actual
+backend-encoder/client-parser interop. These unmounted syntax and compatibility
+tests do not qualify future producers, evidence authority, transport or consumer
+exposure. There are 206 additional public product test files, plus the breadth
+contract.
 These are source selection counts, not executed case counts or proof of passing
 tests. The 32 blocked files remain intact: 29 need private research/projection
 inputs, one needs the internal website route inventory, one needs
