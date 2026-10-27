@@ -61,6 +61,8 @@ API_TESTS = {
         "tests/lifecycle-provider-revocation-apple.test.ts",
         "tests/lifecycle-provider-revocation.test.ts",
         "tests/lifecycle-purge-executor.test.ts",
+        "tests/lifecycle-reauthentication-source.test.ts",
+        "tests/lifecycle-reauthentication.test.ts",
         "tests/lifecycle.test.ts",
         "tests/runtime-modules/authority-currentness.test.ts",
         "tests/runtime-modules/capability-and-denial.test.ts",
@@ -133,7 +135,8 @@ def selection(root, requested):
                 sources = API_TESTS[group]
                 emitted = ["dist/" + source.removesuffix(".ts") + ".js" for source in sources]
                 if group == "lifecycle-runtime":
-                    sources = (*sources, "tests/runtime-modules/restore-drill-fixture.ts")
+                    sources = (*sources, "tests/runtime-modules/restore-drill-fixture.ts",
+                               "tests/lifecycle-reauthentication-fixture.ts")
                 if group == "native-e2e-backend":
                     sources = (*sources, "tests/e2e/native-backend.ts", SOURCE_HOOK, SOURCE_RESOLVER)
                 add(group, API, ["node", "--test", "--test-concurrency=1", *emitted], sources)

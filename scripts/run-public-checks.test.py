@@ -55,9 +55,11 @@ class PublicChecksTests(unittest.TestCase):
                             "tests/lifecycle-evidence-codec.test.ts",
                             "tests/lifecycle-evidence.test.ts",
                             "tests/lifecycle-provider-revocation-apple.test.ts",
-                            "tests/lifecycle-provider-revocation.test.ts")
-        self.assertEqual(len(checks.API_TESTS["lifecycle-runtime"]), 28)
-        self.assertEqual(len(set(checks.API_TESTS["lifecycle-runtime"])), 28)
+                            "tests/lifecycle-provider-revocation.test.ts",
+                            "tests/lifecycle-reauthentication-source.test.ts",
+                            "tests/lifecycle-reauthentication.test.ts")
+        self.assertEqual(len(checks.API_TESTS["lifecycle-runtime"]), 30)
+        self.assertEqual(len(set(checks.API_TESTS["lifecycle-runtime"])), 30)
         discovery = json.loads((ROOT / "services/api/scripts/integration/test-modules.json").read_text())
         for source in evidence_sources:
             with self.subTest(source=source):
@@ -66,6 +68,10 @@ class PublicChecksTests(unittest.TestCase):
                 self.assertEqual(command["test_sources"].count("services/api/" + source), 1)
                 owners = [group for group, files in discovery["groups"].items() for path in files if path == source]
                 self.assertEqual(owners, ["core"])
+        helper = "tests/lifecycle-reauthentication-fixture.ts"
+        self.assertEqual(command["test_sources"].count("services/api/" + helper), 1)
+        self.assertNotIn("dist/" + helper.removesuffix(".ts") + ".js", command["argv"])
+        self.assertFalse(any(helper in files for files in discovery["groups"].values()))
         for source in ("tests/lifecycle-purge-executor.test.ts",
                        "tests/bug-intake/lifecycle-chain.test.ts",
                        "tests/usage-limits/lifecycle.test.ts",
@@ -80,7 +86,7 @@ class PublicChecksTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("")
         self.assertEqual(checks.selection(self.root, ["lifecycle-runtime"]), contract)
-        for source in evidence_sources:
+        for source in (*evidence_sources, helper):
             with self.subTest(missing=source):
                 path = self.root / "services/api" / source
                 path.unlink()
