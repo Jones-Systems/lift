@@ -48,6 +48,7 @@ export async function source27Fixture(t:TestContext,upgrade=true) {
   const resourceHolds=new Set<SourceStatusProducerKind>();
   let cancelPending=false,cancelRejected=false;
   const before=new Map<SourceStatusProducerKind,()=>void>();
+  const afterCompletion=new Map<SourceStatusProducerKind,()=>void>();
   function operation<T>(kind:SourceStatusProducerKind,effect:()=>T|Promise<T>):Promise<T> {
     assert.equal(base.db.inTransaction,false,'original producer starts outside SQL');
     calls++;
@@ -60,6 +61,7 @@ export async function source27Fixture(t:TestContext,upgrade=true) {
       try {
         before.get(kind)?.(); const gate=pauses.get(kind);if(gate)await gate.promise;
         const value=await effect();p.completed=true;p.outcome='success';if(!resourceHolds.has(kind))p.resourcesEnded=true;journal();p.done.resolve();result.resolve(value);
+        const completed=afterCompletion.get(kind);afterCompletion.delete(kind);completed?.();
       } catch(e) {p.completed=true;p.outcome='rejection';if(!resourceHolds.has(kind))p.resourcesEnded=true;journal();p.done.resolve();result.reject(e);}
     })();
     return result.promise;
@@ -151,6 +153,8 @@ export async function source27Fixture(t:TestContext,upgrade=true) {
     signedTransaction:(p:unknown)=>signed(proofs,p),signedRenewal:(r:unknown)=>signed(renewals,r),signedNotification:(n:unknown)=>signed(notifications,n),
     pause:(kind:SourceStatusProducerKind)=>{const gate=deferred<void>();pauses.set(kind,gate);return ()=>{pauses.delete(kind);gate.resolve();};},
     before:(kind:SourceStatusProducerKind,f:()=>void)=>{before.set(kind,f);},calls:()=>calls,
+    afterCompletionOnce:(kind:SourceStatusProducerKind,f:()=>void)=>{afterCompletion.set(kind,f);},
+    producerStates:()=>entries.map(p=>({kind:p.kind,completed:p.completed,resourcesEnded:p.resourcesEnded,cancelRequested:p.cancelRequested,cancelComplete:p.cancelComplete})),
     holdResources:(kind:SourceStatusProducerKind)=>resourceHolds.add(kind),finishResources:()=>{for(const p of entries)p.finishResources();},
     loseCustody:()=>{lost=true;journal();},captureMissing:()=>{captureMissing=true;},throwStart:(kind:SourceStatusProducerKind)=>{throwStart=kind;},
     cancellation:(pending:boolean,rejected=false)=>{cancelPending=pending;cancelRejected=rejected;},barrier,restore,fixtureBytes,

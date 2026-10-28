@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, unlinkSync, renameSync } from 'node:fs';
-import { A, B, apple, owner, source27Fixture, upgrade27, configuration } from './status-source-fixture.js';
+import { A, B, apple, owner, source27Fixture,deferred, upgrade27, configuration } from './status-source-fixture.js';
 import { ApplePurchaseService } from '../../src/purchases/service.js';
 import { createSourceAppleSubscriptionStatus } from '../../src/purchases/status-source.js';
 import { readSourceSubscriptionStatusContinuity,consumeSourceSubscriptionStatusContinuity,
@@ -108,6 +108,82 @@ test('original result completion without resource settlement retains claim; expl
   f.finishResources();const result=facade.reconcileStatusRequest('resources');assert.equal(result.status,'unknown');assert.equal(f.calls(),calls);
   assert.equal((f.base.db.prepare('SELECT active_request_id FROM apple_purchase_status_projection').get() as {active_request_id:null}).active_request_id,null);
   assert.equal(count(f.base.db,'apple_purchase_grants'),0);
+});
+
+
+for(const drift of ['principal','native-currentness'] as const)test(`fenced fully settled no-provider reconciliation retains ${drift} guard`,async t=>{
+  const f=await source27Fixture(t),source=f.compose().source,facade=source.forOwner(A),db=f.base.db;
+  f.holdResources('status-transport');await assert.rejects(()=>facade.refreshStatus('10000','guarded-settlement'));
+  assert.throws(()=>facade.reconcileStatusRequest('guarded-settlement'),'closed admission still requires resources to settle');
+  f.finishResources();f.barrier();
+  const rows=db.prepare('SELECT * FROM apple_purchase_status_observations').all(),claim=db.prepare('SELECT * FROM apple_purchase_status_projection').get(),calls=f.calls();
+  if(drift==='principal'){
+    assert.throws(()=>source.forOwner(B).reconcileStatusRequest('guarded-settlement'));
+    db.prepare('INSERT INTO session(id,expiresAt,token,createdAt,updatedAt,userId) VALUES(?,?,?,?,?,?)').run('reconcile-session',f.base.now()+86400000,'reconcile-session-token',f.base.now(),f.base.now(),A.authUserId);
+    assert.throws(()=>source.forOwner({...A,sessionId:'reconcile-session'}).reconcileStatusRequest('guarded-settlement'));
+  } else {
+    f.writeNative({...f.nativeRecord(),databaseGeneration:'different-generation',revision:2});
+    assert.throws(()=>facade.reconcileStatusRequest('guarded-settlement'));
+  }
+  assert.deepEqual(db.prepare('SELECT * FROM apple_purchase_status_observations').all(),rows);
+  assert.deepEqual(db.prepare('SELECT * FROM apple_purchase_status_projection').get(),claim);
+  assert.equal(f.calls(),calls);assert.equal(count(db,'apple_purchase_grants'),0);
+  if(drift==='principal'){
+    assert.equal(facade.reconcileStatusRequest('guarded-settlement').status,'unknown');assert.equal(f.calls(),calls);
+    assert.equal((db.prepare('SELECT active_request_id FROM apple_purchase_status_projection').get() as {active_request_id:null}).active_request_id,null);
+  }
+});
+
+test('live unfenced transport completion cannot reconcile away account exclusion before original verifier admission',async t=>{
+  const f=await source27Fixture(t),facade=f.compose().source.forOwner(A),other=f.compose(f.base.openOther()).source.forOwner(A);
+  f.response(f.envelope([f.item(2,f.tx({expiresDate:f.base.now()-1}))]));
+  const resumeTransport=f.pause('status-transport'),resumeVerifier=f.pause('transaction-verifier');
+  const verifierStarted=deferred<void>();f.before('transaction-verifier',()=>verifierStarted.resolve());
+  const db=f.base.db,rows=()=>db.prepare('SELECT * FROM apple_purchase_status_observations ORDER BY observation_id').all();
+  const claim=()=>db.prepare('SELECT * FROM apple_purchase_status_projection').get();
+  const original=facade.refreshStatus('10000','completion-gap');
+  const originalResult=original.then(value=>({value,error:null}),error=>({value:null,error}));
+  const dispatchedRows=rows(),dispatchedClaim=claim(),started=f.base.now();
+  let reconciliationRejected=false,secondRejected=false;
+  let secondResult:Promise<unknown>|undefined,resumeSecond=()=>{};
+  let gapStates:ReturnType<typeof f.producerStates>=[],overlapStates:ReturnType<typeof f.producerStates>=[];
+  let gapRows:unknown,gapClaim:unknown;
+  f.afterCompletionOnce('status-transport',()=>{
+    f.base.advance(5000);gapStates=f.producerStates();
+    try {facade.reconcileStatusRequest('completion-gap');} catch {reconciliationRejected=true;}
+    gapRows=rows();gapClaim=claim();
+    // The second real transport, if incorrectly admitted, remains live while
+    // the original verifier is held. Neither request can create a grant.
+    f.response(f.envelope([]));resumeSecond=f.pause('status-transport');
+    secondResult=other.refreshStatus('10000','completion-gap-second').then(()=>{},()=>{secondRejected=true;});
+  });
+  resumeTransport();
+  let outcome:Awaited<typeof originalResult>;
+  try {
+    await verifierStarted.promise;
+    await new Promise<void>(resolve=>setImmediate(resolve));
+    overlapStates=f.producerStates();
+  } finally {
+    resumeVerifier();resumeSecond();
+    outcome=await originalResult;await secondResult;
+    f.barrier();
+    t.diagnostic(JSON.stringify({gapStates,overlapStates,reconciliationRejected,secondRejected,
+      originalObserved:outcome.value?.status==='observed',grants:count(db,'apple_purchase_grants'),
+      finalRows:rows().length,finalClaim:claim(),settled:f.producerStates()}));
+  }
+  assert.ok(f.base.now()-started>=5000&&f.base.now()-started<9500,'independent owner clock is in the dispatch-to-fence gap');
+  assert.deepEqual(gapStates.map(p=>[p.kind,p.completed,p.resourcesEnded]),[['status-transport',true,true]],'actual original transport and resources have settled before any verifier starts');
+  assert.equal(reconciliationRejected,true,'unfenced original must retain its durable claim');
+  assert.deepEqual(gapRows,dispatchedRows,'no terminal SQL during the live completion gap');
+  assert.deepEqual(gapClaim,dispatchedClaim,'account exclusion and revision survive reconciliation');
+  assert.equal(secondRejected,true,'second native handle cannot overlap original verifier work');
+  assert.deepEqual(overlapStates.map(p=>p.kind),['status-transport','transaction-verifier']);
+  assert.equal(overlapStates[1]?.resourcesEnded,false,'original verifier resources are actually held');
+  assert.equal(outcome!.value?.status,'observed','original unfenced request may complete normally');
+  assert.equal(count(db,'apple_purchase_grants'),0,'expired evidence creates no grant');
+  const finalRows=rows(),finalClaim=claim();
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.deepEqual(rows(),finalRows,'settled original continuations perform no late SQL');assert.deepEqual(claim(),finalClaim);
 });
 
 test('global background native capture precedes first verifier; mapping loss during proof prevents notification writes',async t=>{

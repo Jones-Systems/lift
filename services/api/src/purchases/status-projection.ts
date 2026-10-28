@@ -599,7 +599,8 @@ export function createSourceStatusProjection(input:Readonly<{db:Sqlite;authority
   }
   function reconcile(inv:Invocation,key:string):SourceStatusResult {
     if (!inv.actor) held(); const request=requestId(inv.actor.accountId,key),original=retained.get(request);
-    if (!original || !original.claim || !same(original.actor,inv.actor)) held();
+    // Close producer admission before treating the retained handle set as complete.
+    if (!original || !original.fenced || !original.claim || !same(original.actor,inv.actor)) held();
     const owner=installed(original.claim.original_transaction_id); principal(inv,owner);
     const replay=terminal(inv,owner,request); if (replay) return replay;
     const producerSettlement=settled(original);
