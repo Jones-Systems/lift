@@ -89,6 +89,10 @@ type ProjectionRow={original_transaction_id:string;account_id:string;owner_bindi
   request_deadline_ms:number|null;last_seen_at_ms:number};
 type LedgerRow={transaction_id:string;original_transaction_id:string;account_id:string;product_id:string;product_type:string;app_account_token:string;
   purchase_date_ms:number;signed_date_ms:number;expires_date_ms:number|null;revocation_date_ms:number|null;is_upgraded:number;proof_hash:string};
+type HistoryCause=Readonly<{kind:'history';handle:string;pageIndex:number;pageDigest:string;transactionProofHashes:readonly string[]}>;
+type NotificationCause=Readonly<{kind:'notification';notificationId:string;payloadDigest:string;transactionProofHashes:readonly string[];
+  renewalProofHashes:readonly string[];reason:'notification_changed'|'refund_reversed'}>;
+type DeliveryCause=Readonly<{kind:'outcome';requestId:string;producerSettlement:StatusOutcomeV1['producerSettlement']}>;
 const observationColumns=['observation_id','account_id','original_transaction_id','owner_binding_digest','event_kind','event_key','request_id',
   'lifecycle_epoch','database_generation','schema_digest','continuity_digest','binding_json','evidence_json','observed_at_ms'] as const;
 const rowDigest=(r:Omit<ObservationRow,'content_digest'>)=>digest('source-status-row/v1',observationColumns.map(k=>r[k]));
@@ -233,6 +237,32 @@ export function createSourceStatusProjection(input:Readonly<{db:Sqlite;authority
   function projection(owner:PurchaseOwner):ProjectionRow|undefined {
     return db.prepare('SELECT * FROM apple_purchase_status_projection WHERE original_transaction_id=? AND account_id=?').get(owner.originalTransactionId,owner.accountId) as ProjectionRow|undefined;
   }
+  function invalidationRequest(owner:PurchaseOwner,cause:HistoryCause|NotificationCause,resultingRevision:number):string {
+    return cause.kind==='history'
+      ? digest('source-status-history/v2',[owner.accountId,cause.handle,cause.pageIndex,cause.pageDigest,resultingRevision])
+      : digest('source-status-notification/v2',[owner.accountId,cause.notificationId,cause.payloadDigest,resultingRevision]);
+  }
+  function decodeInvalidationAuthor(row:ProjectionRow,p:StatusProjectionV1,inv:Invocation,owner:PurchaseOwner):void {
+    if (row.projection_state!=='held' || p.observationId!==null || p.validUntilMs!==null) held();
+    const kind=p.reason==='history_changed'?'history':p.reason==='ledger_changed'?'outcome':'notification';
+    const rows=db.prepare(`SELECT * FROM apple_purchase_status_observations WHERE account_id=? AND original_transaction_id=? AND event_kind=?
+      AND lifecycle_epoch=? AND database_generation=? AND schema_digest=? AND continuity_digest=? AND observed_at_ms<=?
+      AND json_extract(evidence_json,'$.bindingId')=? ORDER BY observed_at_ms DESC LIMIT 1025`)
+      .all(owner.accountId,owner.originalTransactionId,kind,row.lifecycle_epoch,row.database_generation,row.schema_digest,row.continuity_digest,
+        row.last_seen_at_ms,p.bindingId) as ObservationRow[];
+    if (rows.length>1024) held();
+    const candidates=rows.map(r=>decode(r,inv,owner).e);
+    const authors=candidates.filter(e=>{
+      if (e.kind==='dispatch' || e.kind==='status' || e.bindingId!==p.bindingId || e.reason!==p.reason) return false;
+      if (e.kind==='history') return p.reason==='history_changed' && e.requestId===invalidationRequest(owner,{kind:'history',
+        ...e.page,transactionProofHashes:e.transactionProofHashes},p.revision);
+      if (e.kind==='notification') return (p.reason==='notification_changed'||p.reason==='refund_reversed') &&
+        e.requestId===invalidationRequest(owner,{...e,reason:p.reason},p.revision);
+      return e.kind==='outcome' && p.reason==='ledger_changed' && e.outcome==='unavailable' && e.observationIds.length===0 &&
+        e.producerSettlement!=='unproven' && e.resultingRevision===p.revision;
+    });
+    if (authors.length!==1) held();
+  }
   function decodeProjection(row:ProjectionRow,inv:Invocation,owner:PurchaseOwner):StatusProjectionV1 {
     const p=parseStatusProjectionV1(JSON.parse(row.projection_json)); statusProjectionIdV1(p);
     if (serializeStatusProjectionV1(p)!==row.projection_json || row.account_id!==owner.accountId || row.original_transaction_id!==owner.originalTransactionId ||
@@ -252,7 +282,9 @@ export function createSourceStatusProjection(input:Readonly<{db:Sqlite;authority
       if (id===row.active_request_id && e.kind==='dispatch' && row.request_deadline_ms!==e.deadlineAtMs) held();
       if (e.bindingId===p.bindingId) bound=true;
     }
-    if (!bound && p.bindingId!==statusBindingIdV1(current)) {
+    if (p.result==='held' && ['history_changed','notification_changed','refund_reversed','ledger_changed'].includes(p.reason)) {
+      decodeInvalidationAuthor(row,p,inv,owner);
+    } else if (!bound && p.bindingId!==statusBindingIdV1(current)) {
       const rows=db.prepare('SELECT * FROM apple_purchase_status_observations WHERE account_id=? AND original_transaction_id=? AND event_kind=\'outcome\' ORDER BY observed_at_ms DESC LIMIT 101')
         .all(owner.accountId,owner.originalTransactionId) as ObservationRow[];
       if (rows.length>100) held();
@@ -327,7 +359,7 @@ export function createSourceStatusProjection(input:Readonly<{db:Sqlite;authority
       notification:async jws=>track(inv,'notification-verifier',()=>input.verifier.notification(jws),240000),
     };
   }
-  function correlate(inv:Invocation,owner:PurchaseOwner,observation:AppleSubscriptionStatusObservation):{capture:SourceStatusCapturedProof;renewal:Readonly<Record<string,unknown>>;renewalHash:string} {
+  function correlate(inv:Invocation,owner:PurchaseOwner,observation:AppleSubscriptionStatusObservation):{capture:SourceStatusCapturedProof;renewal:Readonly<Record<string,unknown>>;renewalHash:string;providerResponseDigest:string} {
     const response=inv.response as {data:{subscriptionGroupIdentifier:string;lastTransactions:{originalTransactionId:string;status:number;signedTransactionInfo:string;signedRenewalInfo:string}[]}[]};
     const matches=response.data.flatMap(g=>g.lastTransactions.filter(t=>t.originalTransactionId===owner.originalTransactionId).map(t=>({g,t})));
     if (matches.length!==1) held(); const {g,t}=matches[0]!;
@@ -344,7 +376,10 @@ export function createSourceStatusProjection(input:Readonly<{db:Sqlite;authority
       p.appAccountToken!==owner.appAccountToken || p.bundleId!==owner.bundleId || p.environment!==owner.environment ||
       renewal.originalTransactionId!==owner.originalTransactionId || renewal.appAccountToken!==owner.appAccountToken || renewal.environment!==owner.environment) held();
     if (time(p.purchaseDate)>now() || time(p.signedDate)>add(now(),60000) || time(renewal.signedDate as number)>add(now(),60000)) held();
-    return {capture,renewal,renewalHash:sha(t.signedRenewalInfo)};
+    const renewalHash=sha(t.signedRenewalInfo);
+    return Object.freeze({capture,renewal,renewalHash,providerResponseDigest:digest('source-status-target-response/v1',{
+      appAppleId:input.appAppleId,owner,subscriptionGroupIdentifier:g.subscriptionGroupIdentifier,status:observation.status,
+      transactionProofHash:capture.proofHash,renewalProofHash:renewalHash})});
   }
   const batches=new WeakMap<VerifiedSourceStatusBatch,{inv:Invocation;owner:PurchaseOwner;binding:StatusBindingV1;observation:AppleSubscriptionStatusObservation;
     captured:ReturnType<typeof correlate>;dispatch:string;revision:number;used:boolean}>();
@@ -431,7 +466,7 @@ export function createSourceStatusProjection(input:Readonly<{db:Sqlite;authority
           const {observation:o,captured:c}=seal;
           const evidence=parseStatusEvidenceV1({...base(b,inv.requestId,now()),kind:'status',status:o.status,subscriptionGroupIdentifier:o.subscriptionGroupIdentifier,
             transaction:o.transaction,renewal:o.renewal,transactionProofHash:c.capture.proofHash,renewalProofHash:c.renewalHash,
-            providerResponseDigest:digest('source-status-provider-response/v1',inv.response),normalizedClaimDigest:digest('source-status-normalized/v1',o)});
+            providerResponseDigest:c.providerResponseDigest,normalizedClaimDigest:digest('source-status-normalized/v1',o)});
           if (evidence.kind!=='status') held();
           let permit:SourceStatusGracePermit|undefined;
           if (o.status==='billing_grace_period' && o.renewal.gracePeriodExpiresDate!==null && o.renewal.gracePeriodExpiresDate>now()) {
@@ -463,15 +498,27 @@ export function createSourceStatusProjection(input:Readonly<{db:Sqlite;authority
       } finally { inv.finalizing=false; }
     });
   }
-  function invalidate(inv:Invocation,owner:PurchaseOwner,e:StatusEvidenceV1,eventKey:string):void {
+  function invalidate(inv:Invocation,owner:PurchaseOwner,cause:HistoryCause|NotificationCause|DeliveryCause):void {
     assertFrame(inv,owner); settled(inv);
-    const b=binding(inv,owner),old=projection(owner);
+    const old=projection(owner);
+    if (old) decodeProjection(old,inv,owner);
+    const revision=old?old.revision+1:0;
+    if (!Number.isSafeInteger(revision) || old && revision<=0) held();
+    const b=binding(inv,owner),request=cause.kind==='outcome'?cause.requestId:invalidationRequest(owner,cause,revision);
+    const fields=cause.kind==='history'?{kind:cause.kind,page:{handle:cause.handle,pageIndex:cause.pageIndex,pageDigest:cause.pageDigest},
+      transactionProofHashes:cause.transactionProofHashes,renewalProofHashes:[],reason:'history_changed'}:
+      cause.kind==='notification'?{kind:cause.kind,notificationId:cause.notificationId,payloadDigest:cause.payloadDigest,
+        transactionProofHashes:cause.transactionProofHashes,renewalProofHashes:cause.renewalProofHashes,reason:cause.reason}:
+      {kind:cause.kind,outcome:'unavailable',reason:'ledger_changed',producerSettlement:cause.producerSettlement,observationIds:[],resultingRevision:revision};
+    if (cause.kind==='outcome' && cause.producerSettlement==='unproven') held();
+    const e=parseStatusEvidenceV1({...base(b,request,now()),...fields});
+    const eventKey=digest(cause.kind==='history'?'source-status-history-event/v1':cause.kind==='notification'?
+      'source-status-notification-event/v1':'source-status-delivery-event/v1',request);
     const exists=db.prepare('SELECT * FROM apple_purchase_status_observations WHERE account_id=? AND event_kind=? AND event_key=?').get(owner.accountId,e.kind,eventKey) as ObservationRow|undefined;
     if (exists) { decode(exists,inv,owner); return; }
     append(inv,owner,b,e,eventKey);
     if (old) {
-      decodeProjection(old,inv,owner);
-      const p=heldProjection(b,owner,old.revision+1,old.active_request_id,e.kind==='history'?'history_changed':e.kind==='notification'?e.reason:'ledger_changed');
+      const p=heldProjection(b,owner,revision,old.active_request_id,cause.kind==='history'?'history_changed':cause.kind==='notification'?cause.reason:'ledger_changed');
       saveProjection(inv,owner,b,p,old,'held',old.dispatch_state,old.request_deadline_ms);
     }
   }
@@ -499,9 +546,7 @@ export function createSourceStatusProjection(input:Readonly<{db:Sqlite;authority
           const p=decodeProjection(old,inv,owner); if (p.ledgerFingerprintDigest===head(owner).fingerprint) return;
           if (!deliveryKey) held();
           const request=digest('source-status-delivery-command/v1',[owner.accountId,deliveryKey,change.transactionId,change.proofHash]);
-          const b=binding(inv,owner);
-          invalidate(inv,owner,parseStatusEvidenceV1({...base(b,request,now()),kind:'outcome',outcome:'unavailable',reason:'ledger_changed',
-            producerSettlement:settled(inv),observationIds:[],resultingRevision:old.revision+1}),digest('source-status-delivery-event/v1',request));
+          invalidate(inv,owner,{kind:'outcome',requestId:request,producerSettlement:settled(inv)});
         },
         entitlement:grant=>{
           if (!inv.actor || inv.actor.accountId!==grant.accountId) held();
@@ -527,16 +572,10 @@ export function createSourceStatusProjection(input:Readonly<{db:Sqlite;authority
         },
       },
       afterHistoryPage:page=>{
-        const b=binding(inv,page.owner),request=digest('source-status-history/v1',[page.owner.accountId,page.handle,page.pageIndex]);
-        invalidate(inv,page.owner,parseStatusEvidenceV1({...base(b,request,now()),kind:'history',
-          page:{handle:page.handle,pageIndex:page.pageIndex,pageDigest:page.pageDigest},transactionProofHashes:page.transactionProofHashes,
-          renewalProofHashes:[],reason:'history_changed'}),digest('source-status-history-event/v1',request));
+        invalidate(inv,page.owner,{kind:'history',...page});
       },
       afterNotification:notification=>{
-        const b=binding(inv,notification.owner),request=digest('source-status-notification/v1',[notification.owner.accountId,notification.notificationId]);
-        invalidate(inv,notification.owner,parseStatusEvidenceV1({...base(b,request,now()),kind:'notification',notificationId:notification.notificationId,
-          payloadDigest:notification.payloadDigest,transactionProofHashes:notification.transactionProofHashes,renewalProofHashes:notification.renewalProofHashes,
-          reason:notification.reason}),digest('source-status-notification-event/v1',request));
+        invalidate(inv,notification.owner,{kind:'notification',...notification});
       },
     };
   }
