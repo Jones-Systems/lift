@@ -148,25 +148,35 @@ export type SourceManualRetentionSelection = 'selected-migration-23';
 export type SourceLifecycleEvidenceSelection = 'selected-lifecycle-evidence-24';
 export type SourceProviderRevocationSelection = 'selected-provider-revocation-25';
 export type SourceActionReauthenticationSelection = 'selected-action-reauthentication-26';
+export type { SourceSubscriptionStatusSelection } from './purchases/status-source-migrations.js';
+import type { SourceSubscriptionStatusSelection } from './purchases/status-source-migrations.js';
 export async function migrate(db: Sqlite, dbPath: string, selected: readonly Migration[] = migrations,
   sourceReportedLoad?: SourceReportedLoadSelection, sourceManualRetention?: SourceManualRetentionSelection,
   sourceLifecycleEvidence?: SourceLifecycleEvidenceSelection, sourceProviderRevocation?: SourceProviderRevocationSelection,
-  sourceActionReauthentication?: SourceActionReauthenticationSelection): Promise<string[]> {
+  sourceActionReauthentication?: SourceActionReauthenticationSelection,
+  sourceSubscriptionStatus?: SourceSubscriptionStatusSelection): Promise<string[]> {
   // Each explicit source selection owns its finite coordinated history.
   if ((sourceReportedLoad !== undefined && sourceReportedLoad !== 'selected-migration-22') ||
     (sourceManualRetention !== undefined && sourceManualRetention !== 'selected-migration-23') ||
     (sourceLifecycleEvidence !== undefined && sourceLifecycleEvidence !== 'selected-lifecycle-evidence-24') ||
     (sourceProviderRevocation !== undefined && sourceProviderRevocation !== 'selected-provider-revocation-25') ||
-    (sourceActionReauthentication !== undefined && sourceActionReauthentication !== 'selected-action-reauthentication-26'))
+    (sourceActionReauthentication !== undefined && sourceActionReauthentication !== 'selected-action-reauthentication-26') ||
+    (sourceSubscriptionStatus !== undefined && sourceSubscriptionStatus !== 'selected-subscription-status-27'))
     throw new Error('Invalid source migration selection');
   if (db.inTransaction) throw new Error('Migration requires an outer transaction boundary');
+  const statusValidation = await import('./purchases/status-source-migrations.js');
+  if (sourceSubscriptionStatus) {
+    if (sourceSubscriptionStatus !== 'selected-subscription-status-27' || !sourceActionReauthentication) throw new Error('Invalid source migration selection');
+    statusValidation.assertSourceSubscriptionStatusSelection(selected);
+  } else if (selected.some(entry => entry.version >= 27)) throw new Error('Explicit subscription-status selection required');
   const actionValidation = await import('./lifecycle/reauthentication-source-migrations.js');
   if (sourceActionReauthentication) {
     if (!sourceReportedLoad || !sourceManualRetention || !sourceLifecycleEvidence || !sourceProviderRevocation)
       throw new Error('Explicit source22 through source25 selections required');
-    actionValidation.assertSourceActionReauthenticationSelection(selected);
+    actionValidation.assertSourceActionReauthenticationSelection(sourceSubscriptionStatus ? selected.slice(0, 26) : selected);
   } else if (selected.some(entry => entry.version >= 26)) throw new Error('Explicit action-reauthentication selection required');
-  actionValidation.assertActionReauthenticationPreflight(db, !!sourceActionReauthentication);
+  if (sourceSubscriptionStatus) statusValidation.assertSubscriptionStatusPreflight(db, true);
+  else { statusValidation.assertSubscriptionStatusPreflight(db, false); actionValidation.assertActionReauthenticationPreflight(db, !!sourceActionReauthentication); }
   const actionSchemaValidation = await import('./lifecycle/reauthentication-migration.js');
   const providerValidation = sourceProviderRevocation ? await import('./lifecycle/providers/source-migrations.js') : undefined;
   if (providerValidation) {
@@ -194,7 +204,8 @@ export async function migrate(db: Sqlite, dbPath: string, selected: readonly Mig
     const source = selected.find(x => x.version === record.version);
     if (!source || record.checksum !== hash(source.sql)) throw new Error('Unknown or modified migration history');
   }
-  if (sourceActionReauthentication) actionValidation.assertSourceActionReauthenticationHistory(applied);
+  if (sourceSubscriptionStatus) statusValidation.assertSourceSubscriptionStatusHistory(applied);
+  else if (sourceActionReauthentication) actionValidation.assertSourceActionReauthenticationHistory(applied);
   else if (providerValidation) providerValidation.assertSourceProviderRevocationHistory(applied);
   else if (evidenceValidation) evidenceValidation.assertSourceLifecycleEvidenceHistory(applied);
   else if (sourceManualRetention) sourceValidation!.assertSourceManualRetentionHistory(applied);
@@ -211,20 +222,27 @@ export async function migrate(db: Sqlite, dbPath: string, selected: readonly Mig
   }
   const backups: string[] = [];
   for (const migration of pending) {
+    if (migration.version === 27) statusValidation.assertSubscriptionStatusPreflight(db, true);
     if (migration.version === 26) actionValidation.assertActionReauthenticationPreflight(db, true);
     const hasTables = !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' LIMIT 1").get();
     if (hasTables) {
       const path = join(dirname(dbPath), 'backups', `before-${migration.version}-${randomUUID()}.sqlite`);
       await backupAndVerify(db, path); backups.push(path);
     }
+    if (migration.version === 27) statusValidation.assertSubscriptionStatusPreflight(db, true);
     db.transaction(() => {
-      if (migration.version === 26) actionValidation.assertActionReauthenticationPreflight(db, true);
+      if (migration.version === 27) statusValidation.assertSubscriptionStatusPreflight(db, true);
+    if (migration.version === 26) actionValidation.assertActionReauthenticationPreflight(db, true);
       db.exec('CREATE TABLE IF NOT EXISTS form_migrations (version INTEGER PRIMARY KEY, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)');
       db.exec(migration.sql);
       if (migration.version === 24) evidenceSchemaValidation!.assertLifecycleEvidenceSchema(db, true);
       if (migration.version === 25) providerSchemaValidation!.assertProviderRevocationSchema(db, true);
       if (migration.version === 26) actionSchemaValidation.assertActionReauthenticationSchema(db, true);
       db.prepare('INSERT INTO form_migrations VALUES (?,?,?)').run(migration.version, hash(migration.sql), new Date().toISOString());
+      if (migration.version === 27) {
+        statusValidation.assertSourceSubscriptionStatusHistory(db.prepare('SELECT version,checksum FROM form_migrations ORDER BY version').all() as {version:number;checksum:string}[], true);
+        statusValidation.assertSubscriptionStatusPreflight(db, true);
+      }
       integrity(db);
     }).immediate();
   }
@@ -232,7 +250,7 @@ export async function migrate(db: Sqlite, dbPath: string, selected: readonly Mig
   if (evidenceValidation) {
     if (providerValidation) {
       if (sourceActionReauthentication) {
-        actionValidation.assertSourceActionReauthenticationHistory(finalHistory, true);
+        actionValidation.assertSourceActionReauthenticationHistory(sourceSubscriptionStatus ? finalHistory.slice(0, 26) : finalHistory, true);
         actionSchemaValidation.assertActionReauthenticationSchema(db, true);
       }
       providerValidation.assertSourceProviderRevocationHistory(sourceActionReauthentication ? finalHistory.slice(0, 25) : finalHistory, true);
@@ -245,6 +263,7 @@ export async function migrate(db: Sqlite, dbPath: string, selected: readonly Mig
     if (sourceManualRetention) sourceValidation!.assertSourceManualRetentionHistory(finalHistory, true);
     if (sourceReportedLoad) sourceValidation!.assertSourceReportedLoadHistory(finalHistory, true);
   }
+  if (sourceSubscriptionStatus) statusValidation.assertSubscriptionStatusPreflight(db, true);
   integrity(db);
   return backups;
 }
@@ -252,12 +271,18 @@ export async function migrate(db: Sqlite, dbPath: string, selected: readonly Mig
 export async function openStorage(dbPath: string, selected: readonly Migration[] = migrations,
   sourceReportedLoad?: SourceReportedLoadSelection, sourceManualRetention?: SourceManualRetentionSelection,
   sourceLifecycleEvidence?: SourceLifecycleEvidenceSelection, sourceProviderRevocation?: SourceProviderRevocationSelection,
-  sourceActionReauthentication?: SourceActionReauthenticationSelection): Promise<{ db: Sqlite; migrationBackups: string[] }> {
+  sourceActionReauthentication?: SourceActionReauthenticationSelection,
+  sourceSubscriptionStatus?: SourceSubscriptionStatusSelection): Promise<{ db: Sqlite; migrationBackups: string[] }> {
+  const statusValidation = await import('./purchases/status-source-migrations.js');
+  if (sourceSubscriptionStatus) {
+    if (sourceSubscriptionStatus !== 'selected-subscription-status-27' || !sourceActionReauthentication) throw new Error('Invalid source migration selection');
+    statusValidation.assertSourceSubscriptionStatusSelection(selected);
+  } else if (selected.some(entry => entry.version >= 27)) throw new Error('Explicit subscription-status selection required');
   const actionValidation = await import('./lifecycle/reauthentication-source-migrations.js');
   if (sourceActionReauthentication !== undefined || selected.some(entry => entry.version >= 26)) {
     if (sourceActionReauthentication !== 'selected-action-reauthentication-26' || sourceProviderRevocation !== 'selected-provider-revocation-25')
       throw new Error('Invalid source migration selection');
-    actionValidation.assertSourceActionReauthenticationSelection(selected);
+    actionValidation.assertSourceActionReauthenticationSelection(sourceSubscriptionStatus ? selected.slice(0, 26) : selected);
   }
   if (sourceProviderRevocation !== undefined || selected.some(entry => entry.version >= 25)) {
     if (sourceProviderRevocation !== 'selected-provider-revocation-25' || sourceLifecycleEvidence !== 'selected-lifecycle-evidence-24' ||
@@ -277,12 +302,13 @@ export async function openStorage(dbPath: string, selected: readonly Migration[]
     throw new Error('Database must be a regular non-symlink file');
   if (existsSync(dbPath)) {
     const probe = new Database(dbPath, { readonly: true, fileMustExist: true });
-    try { actionValidation.assertActionReauthenticationPreflight(probe, !!sourceActionReauthentication); } finally { probe.close(); }
+    try { if (sourceSubscriptionStatus) statusValidation.assertSubscriptionStatusPreflight(probe, true);
+      else { statusValidation.assertSubscriptionStatusPreflight(probe, false); actionValidation.assertActionReauthenticationPreflight(probe, !!sourceActionReauthentication); } } finally { probe.close(); }
   }
   const db = new Database(dbPath);
   try {
     chmodSync(dbPath, 0o600); configure(db);
-    const migrationBackups = await migrate(db, dbPath, selected, sourceReportedLoad, sourceManualRetention, sourceLifecycleEvidence, sourceProviderRevocation, sourceActionReauthentication);
+    const migrationBackups = await migrate(db, dbPath, selected, sourceReportedLoad, sourceManualRetention, sourceLifecycleEvidence, sourceProviderRevocation, sourceActionReauthentication, sourceSubscriptionStatus);
     db.transaction(() => {
       for (const entry of catalogSeed)
         db.prepare('INSERT INTO exercises(id,data) VALUES (?,?) ON CONFLICT(id) DO NOTHING').run(entry.id, JSON.stringify(entry));

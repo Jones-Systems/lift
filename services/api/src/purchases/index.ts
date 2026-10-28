@@ -64,3 +64,6 @@ export function createAppleSandboxReconciliation(db: Sqlite, configuration: Appl
   const service = new ApplePurchaseReconciliation(db, configuration, createAppleSandboxReconciliationVerifier(configuration), ports);
   return { forOwner: actor => service.forOwner(actor), ingestNotification: payload => service.ingestNotification(payload) };
 }
+
+export { createSourceAppleSubscriptionStatus } from './status-source.js';
+export type { SourceStatusFacade, SourceStatusOwnerFacade, SourceStatusResult, SourceStatusProducerCustody, SourceStatusOriginalProducer, SourceStatusProducerSettlement, SourceStatusProducerKind } from './status-source.js';

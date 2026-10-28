@@ -73,3 +73,5 @@ export type OwnerReconciliation = Readonly<{
   reconcileOwner(owner: PurchaseOwner, checkpoint: ReconciliationCheckpoint): Promise<ReconciliationOutcome>;
   readReconciliation(handle: string): ReconciliationOutcome | null;
 }>;
+
+export type { SourceStatusReconciliationHooks, SourceStatusLedgerHooks } from './status-projection.js';
