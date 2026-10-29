@@ -67,7 +67,7 @@ function bind(registration: Registration) {
     return catalog.bindRegisteredDomainExercise({ nativeId: native.exercise_id, exerciseId: entry.exerciseId,
       active: { exerciseId: record.id, embeddedId: record.id, retired: record.retired,
         recordDigest: createHash('sha256').update(canonical(record)).digest('hex'),
-        registration: pin, sourceIdentity: record.provenance.sourceIdentity,
+        registration: { id: pin.id, revision: pin.revision, digest: pin.digest }, sourceIdentity: record.provenance.sourceIdentity,
         catalogRevision: pin.revision, currentness: 'current' } });
   });
   if (bindings.some(value => !value || value.status !== 'bound')) return null;
