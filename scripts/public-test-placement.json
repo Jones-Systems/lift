@@ -228,6 +228,7 @@
         "apps/form/src/features/bug-intake/tests/controller.test.cjs",
         "apps/form/src/features/bug-intake/tests/flow.test.cjs",
         "apps/form/src/features/bug-intake/tests/outcome.test.cjs",
+        "apps/form/src/features/credentials/tests/consumer.test.cjs",
         "apps/form/src/features/onboarding/__tests__/lifecycle.test.cjs",
         "apps/form/src/features/plans/__tests__/plan-write.test.cjs",
         "apps/form/src/features/training/__tests__/source-model.test.cjs",
