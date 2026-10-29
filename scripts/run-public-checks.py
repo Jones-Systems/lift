@@ -22,7 +22,7 @@ HELPER = "scripts/run-public-checks.py"
 HARNESS_TEST = "scripts/run-public-checks.test.py"
 SOURCE_HOOK = "scripts/integration/source-hook.mjs"
 SOURCE_RESOLVER = "scripts/integration/source-resolution.mjs"
-GROUP_IDS = ("runner-contract", "api-compile", "app-static", "form104-139", "form196", "form203", "form208", "simulator-portable", "native-e2e-backend", "native-e2e-app", "lifecycle-runtime", "lifecycle-wire-v2")
+GROUP_IDS = ("runner-contract", "api-compile", "app-static", "form104-139", "form196", "form203", "form208", "simulator-portable", "native-e2e-backend", "native-e2e-app", "lifecycle-runtime", "lifecycle-wire-v2", "plan-revision")
 BASELINE_HEALTH = (
     "tests/wearables/app.test.mjs", "tests/wearables/ingestion.test.mjs",
     "tests/wearables/providers.test.mjs", "tests/wearables/suggestions.test.mjs",
@@ -46,6 +46,7 @@ APP_TESTS = {
     "form208": ("src/voice-coaching/standard/tests/wire-codec.test.cjs",),
 }
 API_TESTS = {
+    "plan-revision": ("tests/planning/plan-revision-port.test.ts", "tests/backend.test.ts"),
     "lifecycle-wire-v2": ("tests/lifecycle-wire-v2.test.ts",),
     "lifecycle-runtime": (
         "tests/bug-intake/lifecycle-chain.test.ts",
@@ -102,7 +103,7 @@ def selection(root, requested):
     if chosen - set(GROUP_IDS):
         raise ValueError("Unknown public check group")
     # Interop, native E2E smoke tests and board workers load fresh emitted API JavaScript.
-    if chosen & {"form196", "form208", "native-e2e-backend", "native-e2e-app", "lifecycle-runtime", "lifecycle-wire-v2"}:
+    if chosen & {"form196", "form208", "native-e2e-backend", "native-e2e-app", "lifecycle-runtime", "lifecycle-wire-v2", "plan-revision"}:
         chosen.add("api-compile")
     groups = [group for group in GROUP_IDS if group in chosen]
     health = sorted(str(path.relative_to(root / API)) for directory in
