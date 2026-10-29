@@ -5,18 +5,39 @@
  */
 import type { AnalysisResult } from '../../integration/account-modules/index.js';
 import type { FeedbackComparisonLineage, FeedbackCurrentView } from '../../training-feedback/ledger-types.js';
+import type { JsonValue } from '../../training-feedback/index.js';
 import type { FreshComparisonWitness } from '../../progress-comparison/persistence-types.js';
 import type {
   AcceptedInputDispositionsV1, AttemptV1, Decode, Digest, EmbeddedSchema,
   EvidenceBlobV1, ExactText, NonEmpty, RecipeManifestV1, SourceRevision,
 } from './types.js';
 
-// Branded scalars also satisfy object; preserve their primitive and callable semantics.
-export type EmbeddedReadonly<T> = T extends string | number | boolean | null | undefined
-  ? T
-  : T extends object
-    ? { readonly [K in keyof T]: EmbeddedReadonly<T[K]> }
-    : T;
+type EmbeddedReadonlyJsonValue =
+  | null | boolean | number | string
+  | readonly EmbeddedReadonlyJsonValue[]
+  | { readonly [key: string]: EmbeddedReadonlyJsonValue };
+
+type SameEmbeddedType<A, B> =
+  (<V>() => V extends A ? 1 : 2) extends
+  (<V>() => V extends B ? 1 : 2)
+    ? (<V>() => V extends B ? 1 : 2) extends
+      (<V>() => V extends A ? 1 : 2)
+      ? true
+      : false
+    : false;
+
+// Recognize the complete recursive JSON leaf before distributing its union.
+export type EmbeddedReadonly<T> =
+  SameEmbeddedType<T, JsonValue> extends true
+    ? EmbeddedReadonlyJsonValue
+    : SameEmbeddedType<T, EmbeddedReadonlyJsonValue> extends true
+      ? T
+      // Branded scalars also satisfy object; preserve their primitive and callable semantics.
+      : T extends string | number | boolean | null | undefined
+        ? T
+        : T extends object
+          ? { readonly [K in keyof T]: EmbeddedReadonly<T[K]> }
+          : T;
 
 // The constraint makes a new EmbeddedSchema arm require an explicit full payload.
 type ExhaustivePayloads<P extends { [S in EmbeddedSchema]: object }> = {

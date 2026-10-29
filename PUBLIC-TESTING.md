@@ -59,6 +59,10 @@ receipt; it does not qualify a later branch's new behavior. Other groups have
 explicit module lists in `scripts/run-public-checks.py`; add new test modules to
 their owning group when extending that contract.
 
+`services/api/tests/planning/synthetic-lineage/embedded-readonly.typecheck.ts`
+is a compile-only regression input selected by the existing `api-compile`
+`tests/**/*.ts` inclusion. It is not a runtime test module.
+
 The two Source26 action-reauthentication suites run from fresh API emissions in
 `lifecycle-runtime` and belong to core API discovery and existing hosted placement
 exactly once. Their shared `lifecycle-reauthentication-fixture.ts` is a required,
