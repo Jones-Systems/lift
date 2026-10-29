@@ -551,6 +551,7 @@ test('HTTP fixture success and setup failures retain exact resource ownership', 
       dbPath = f.dbPath;
       originalDb = f.backend.db;
       assert.equal(originalDb.name, dbPath, 'database name retains the exact fixture path');
+      assert.equal(originalDb.readonly, false, 'the original database is writable');
       const restart = f.restart();
       restartResult = restart.then(() => { restartedDb = f.backend.db; }, error => error);
     });
@@ -558,14 +559,27 @@ test('HTTP fixture success and setup failures retain exact resource ownership', 
     assert.ok(result instanceof Error);
     assert.match(result.message, /HTTP fixture is disposing/);
     assert.equal(restartedDb, undefined, 'disposed fixture must not publish the late backend');
-    const durableCloses = closedDatabases.filter(db => db.name === dbPath);
-    const durableHandles = new Set(durableCloses);
-    assert.equal(durableHandles.size, 2, 'initial and late restart durable handles both close');
-    assert.ok(originalDb && durableHandles.has(originalDb), 'the original durable handle closes');
-    for (const db of durableHandles) {
-      assert.equal(durableCloses.filter(closed => closed === db).length, 1, 'each durable handle closes exactly once');
+    const samePathCloses = closedDatabases.filter(db => db.name === dbPath);
+    const writableHandles = new Set(samePathCloses.filter(db => db.readonly === false));
+    const readonlyHandles = new Set(samePathCloses.filter(db => db.readonly === true));
+    assert.equal(writableHandles.size, 2, 'initial and late restart writable handles both close');
+    assert.ok(originalDb && writableHandles.has(originalDb), 'the original writable handle closes');
+    const lateHandles = [...writableHandles].filter(db => db !== originalDb);
+    assert.equal(lateHandles.length, 1, 'exactly one other writable handle closes');
+    const lateDb = lateHandles[0];
+    assert.ok(lateDb);
+    assert.notEqual(lateDb, originalDb);
+    assert.equal(readonlyHandles.size, 1, 'the existing-file readonly preflight handle closes');
+    const [preflightDb] = readonlyHandles;
+    assert.ok(preflightDb);
+    assert.notEqual(preflightDb, originalDb);
+    assert.notEqual(preflightDb, lateDb);
+    for (const db of [originalDb, preflightDb, lateDb]) {
+      assert.equal(samePathCloses.filter(closed => closed === db).length, 1, 'each same-path handle closes exactly once');
       assert.equal(db.open, false);
     }
+    assert.ok(samePathCloses.indexOf(originalDb) < samePathCloses.indexOf(preflightDb), 'the original closes before preflight');
+    assert.ok(samePathCloses.indexOf(preflightDb) < samePathCloses.indexOf(lateDb), 'preflight closes before the late writable handle');
     assert.equal(existsSync(root), false);
   });
 });

@@ -29,6 +29,7 @@ contract also needs Node 24, without installed npm dependencies.
 | `runner-contract` | `python3 -B scripts/run-public-checks.test.py` | Group selection, baseline enforcement, actual API/app source-import resolution, subprocess status, evidence and scratch cleanup, SIGINT/SIGTERM cancellation |
 | `lifecycle-runtime` | API lifecycle, runtime modules, canonical account composition, request-factory, provider-revocation, action-reauthentication purchase/reconciliation/status, codec and Source27 tests (36 modules) | Synthetic generation-bound scoped evidence, purge authority, rollback/residuals, relocated restore admission, closed runtime boundaries and bounded canonical codec/ordering; source-only dedicated email/phone action proof, intent-free Source26 upgrades and quiescent synthetic restores; fresh unmounted Source27 cohort with verified synthetic status-to-ledger consumption, conservative projection, atomic History/notification/delivery invalidation and original-producer fencing; injected synthetic Apple material only; no live provider, real purge or restore qualification |
 | `lifecycle-wire-v2` | New API wire-v2 suite; APP contracts-v2 interop and existing v1 lifecycle suites | Unmounted v2 syntax, bounds, subject/evidence consistency, actual backend encoder to independent client parser and v1 compatibility; no producer, transport or evidence-authority qualification |
+| `plan-revision` | API `tests/planning/plan-revision-port.test.ts` and `tests/backend.test.ts` after compilation | Legacy unmounted PLAN16 transactional revision, receipt/replay/undo and test-only backend disposal role/identity assertions; no arbitrary asynchronous-hook safety or mounted product acceptance |
 | `api-compile` | `node node_modules/typescript/bin/tsc -p tsconfig.json` in `services/api` | TypeScript compilation and fresh emitted API/test modules |
 | `app-static` | `npm run typecheck`; `npm run check:tokens` in `apps/form` | App TypeScript and token-style checks |
 | `form104-139` | Every `*.test.mjs` recursively in API `tests/wearables/` and `tests/direct-provider-transport/` | Synthetic wearable ingestion/providers/suggestions, persistence/checkpoints, upload/purge, canonical consumer and provider transport/auth coverage present at this SHA |
@@ -40,7 +41,7 @@ contract also needs Node 24, without installed npm dependencies.
 | `native-e2e-app` | APP integration `account-switch-session`, `settings-mode-http`, `manual-progress-session`, `runtime-lifecycle-composition`; renderer `tests/renderer/onboarding-save.test.tsx` | App authentication, settings/manual-session lifecycle and injury save/navigation concurrency regressions affected by native journeys |
 
 To run a group, use `--group GROUP_ID` (repeatable). Board, Standard interop and
-both native E2E groups, `lifecycle-runtime` and `lifecycle-wire-v2` automatically include `api-compile` first: workers and app tests load
+both native E2E groups, `lifecycle-runtime`, `lifecycle-wire-v2` and `plan-revision` automatically include `api-compile` first: workers and app tests load
 fresh emitted JavaScript. Tests execute serially; intentional worker races
 remain intact. The exact argv and selected source paths are available through
 `--list` and each run's receipt. API source tests use the existing integration
@@ -77,8 +78,21 @@ in `lifecycle-runtime`. The codec's 18 synthetic cases cover bounded canonical
 parsing, identities and conservative ordering; the projection and source suites
 cover 57 and 52 synthetic cases respectively. `status-source-fixture.ts` is a
 required, digested and compiled input, excluded from discovery, test invocation
-and module counts. API discovery registers 104 ordinary modules and discovers
-174 total files, including both new suites exactly once in purchases.
+and module counts. API discovery registers 105 ordinary modules and discovers
+175 total files, including both new suites exactly once in purchases.
+
+The default `plan-revision` group requires both named source inputs and runs their
+fresh emitted JavaScript serially after the full strict API compile. Its planning
+suite registers exactly once in ordinary API discovery. Synthetic tests exercise
+transactional legacy plan revision, immutable history, receipt failure/rollback,
+replay and compensating undo. Rejecting-Promise probes cover their selected
+triggers only; arbitrary asynchronous callbacks and custom thenables remain
+unqualified. The backend disposal oracle distinguishes original writable,
+readonly preflight and late writable handles by identity, exactly-once closure
+and order. This is a test-oracle correction on unchanged storage behavior.
+The revision port remains unmounted; source/plan/Activity denial and default16,
+v1 and default-off behavior remain. Full backend and authenticated product
+acceptance, real providers and private Form qualification remain separate.
 
 Source27 qualification is limited to a fresh, repaired, unmounted source-only
 `subscription-status-v1` cohort selected explicitly by
