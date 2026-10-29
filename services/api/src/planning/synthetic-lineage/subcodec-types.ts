@@ -11,9 +11,12 @@ import type {
   EvidenceBlobV1, ExactText, NonEmpty, RecipeManifestV1, SourceRevision,
 } from './types.js';
 
-export type EmbeddedReadonly<T> = T extends object
-  ? { readonly [K in keyof T]: EmbeddedReadonly<T[K]> }
-  : T;
+// Branded scalars also satisfy object; preserve their primitive and callable semantics.
+export type EmbeddedReadonly<T> = T extends string | number | boolean | null | undefined
+  ? T
+  : T extends object
+    ? { readonly [K in keyof T]: EmbeddedReadonly<T[K]> }
+    : T;
 
 // The constraint makes a new EmbeddedSchema arm require an explicit full payload.
 type ExhaustivePayloads<P extends { [S in EmbeddedSchema]: object }> = {
