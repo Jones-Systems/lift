@@ -1,6 +1,7 @@
 import { bindFormNativeModule, FormNativeError } from './runtime';
 import type { NativeBinding, NativeSubscription } from './runtime';
 import { isStoreKitAccountBinding, StoreKitDeliveryCoordinator } from './storeKitDelivery';
+import { copyStoreKitProductIds, decodeStoreKitProducts } from './storeKitProducts';
 import type { AuthenticatedStoreKitDelivery, FormStoreKitNative, StoreKitAvailability, StoreKitProof, StoreKitPurchaseResult } from './storeKit.types';
 
 export type * from './storeKit.types';
@@ -21,6 +22,8 @@ export class FormStoreKitAdapter {
   private updateSubscription: NativeSubscription | null = null;
   private disposed = false;
   private purchasing = false;
+  private productLookup = 0;
+  private productConfiguration = 0;
 
   constructor(delivery: AuthenticatedStoreKitDelivery, binding = bindFormNativeModule<FormStoreKitNative>('FormStoreKit')) {
     this.delivery = delivery;
@@ -29,16 +32,26 @@ export class FormStoreKitAdapter {
 
   async configure(allowedProductIds: readonly string[]): Promise<void> {
     if (this.coordinator) throw new FormNativeError('already_configured', 'Create one adapter per authenticated session and allowlist.');
-    if (!allowedProductIds.length || allowedProductIds.length > 32 || new Set(allowedProductIds).size !== allowedProductIds.length
-      || allowedProductIds.some(id => !id || id.length > 200 || /\s/.test(id))) {
-      throw new FormNativeError('invalid_products', 'Configure 1–32 unique product identifiers.');
-    }
-    await this.native().configure([...allowedProductIds]);
-    this.allowedProducts = new Set(allowedProductIds);
-    this.coordinator = new StoreKitDeliveryCoordinator(this.native(), this.delivery, allowedProductIds);
+    const ids = copyStoreKitProductIds(allowedProductIds);
+    const configuration = ++this.productConfiguration;
+    ++this.productLookup;
+    const native = this.native();
+    await native.configure([...ids]);
+    if (this.disposed || configuration !== this.productConfiguration || native !== this.binding.module)
+      throw new FormNativeError('products_stale', 'StoreKit product configuration changed.');
+    this.allowedProducts = new Set(ids);
+    this.coordinator = new StoreKitDeliveryCoordinator(native, this.delivery, ids);
   }
 
-  products() { this.configured(); return this.native().products([...this.allowedProducts]); }
+  async products() {
+    this.configured();
+    const native = this.native(), ids = [...this.allowedProducts];
+    const lookup = ++this.productLookup, configuration = this.productConfiguration;
+    const result = await native.products([...ids]);
+    if (this.disposed || lookup !== this.productLookup || configuration !== this.productConfiguration || native !== this.binding.module)
+      throw new FormNativeError('products_stale', 'StoreKit product lookup was superseded.');
+    return decodeStoreKitProducts(result, ids);
+  }
   currentEntitlements() { this.configured(); return this.native().currentEntitlements(); }
   unfinishedTransactions() { this.configured(); return this.native().unfinishedTransactions(); }
   restore() { this.configured(); return this.native().restore(); }
@@ -77,6 +90,7 @@ export class FormStoreKitAdapter {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    ++this.productLookup;
     this.updateSubscription?.remove();
     this.updateSubscription = null;
     if (this.binding.module) await this.binding.module.stopObserving();

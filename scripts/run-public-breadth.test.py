@@ -61,7 +61,8 @@ class BreadthTests(unittest.TestCase):
     def test_commands_preserve_nested_voice_transport_and_adapter_selection(self):
         commands = breadth.selection(ROOT)["commands"]
         selected = {c["group"]: c for c in commands}
-        self.assertEqual(len(selected["app-breadth"]["test_sources"]), 81)
+        self.assertEqual(len(selected["app-breadth"]["test_sources"]), 82)
+        self.assertIn("src/native/__tests__/storeKitProducts.test.cjs", selected["app-breadth"]["argv"])
         self.assertIn("src/api/tests/phone-signin.test.cjs", selected["app-breadth"]["argv"])
         self.assertNotIn("scripts/test-api-transport.cjs", selected["app-breadth"]["argv"])
         self.assertIn("tests/voice/portable-session.test.mjs", selected["website"]["argv"])

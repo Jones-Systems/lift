@@ -13,7 +13,30 @@ export type StoreKitProduct = {
   price: string; // Decimal text; never convert prices to binary floating point for billing.
   currencyCode: string;
   type: string;
+  subscriptionMetadata?: StoreKitSubscriptionMetadataV1;
 };
+export type StoreKitPeriod = Readonly<{ unit: 'day' | 'week' | 'month' | 'year'; value: number }>;
+export type IntroOfferEligibility = 'eligible' | 'ineligible' | 'unknown' | 'unavailable';
+export type StoreKitIntroductoryOffer =
+  | Readonly<{ status: 'none' }>
+  | Readonly<{ status: 'available'; paymentMode: 'free_trial' | 'pay_as_you_go' | 'pay_up_front';
+      displayPrice: string; price: string; period: StoreKitPeriod; periodCount: number }>
+  | Readonly<{ status: 'unavailable'; reason: 'unsupported_offer_type' | 'unsupported_payment_mode'
+      | 'unsupported_period' | 'invalid_metadata' }>;
+export type StoreKitSubscriptionMetadataV1 = Readonly<{ version: 1 }> & (
+  | Readonly<{ status: 'available'; subscriptionGroupId: string; period: StoreKitPeriod;
+      introductoryOffer: StoreKitIntroductoryOffer; introductoryOfferEligibility: IntroOfferEligibility }>
+  | Readonly<{ status: 'not_applicable'; productKind: 'consumable' | 'non_consumable' | 'non_renewing_subscription' }>
+  | Readonly<{ status: 'unavailable'; reason: 'legacy_bridge' | 'unsupported_version' | 'unsupported_product_type'
+      | 'subscription_missing' | 'unsupported_period' | 'invalid_metadata' }>
+);
+export type StoreKitProductSnapshot = Readonly<Omit<StoreKitProduct, 'subscriptionMetadata'> & {
+  subscriptionMetadata: StoreKitSubscriptionMetadataV1;
+}>;
+export type StoreKitProductsSnapshot = Readonly<{
+  products: readonly StoreKitProductSnapshot[];
+  missingProductIds: readonly string[];
+}>;
 export type StoreKitProof = {
   transactionId: string;
   originalTransactionId: string;

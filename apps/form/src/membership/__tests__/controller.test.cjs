@@ -1,6 +1,16 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { MembershipController } = require('../controller.ts');
+const { registerHooks } = require('node:module');
+const { pathToFileURL } = require('node:url');
+const { resolve } = require('node:path');
+const controllerURL = pathToFileURL(resolve(__dirname, '../controller.ts')).href;
+const hook = registerHooks({ resolve(specifier, context, nextResolve) {
+  return nextResolve(context.parentURL === controllerURL && specifier === '../native/storeKitProducts'
+    ? `${specifier}.ts` : specifier, context);
+} });
+let MembershipController;
+try { ({ MembershipController } = require('../controller.ts')); }
+finally { hook.deregister(); }
 
 const ACCOUNT = { accountId: 'synthetic-account', appAccountToken: '11111111-1111-4111-8111-111111111111' };
 const PRODUCT = { id: 'synthetic.membership', displayName: 'Synthetic membership', description: 'Synthetic fixture',
@@ -76,7 +86,7 @@ test('product display values come from native StoreKit and state snapshots canno
   const f = fixture();
   await f.controller.load();
   assert.equal(f.controller.getState().status, 'products');
-  assert.deepEqual(f.controller.getState().products, [PRODUCT]);
+  assert.deepEqual(f.controller.getState().products, [{ ...PRODUCT, subscriptionMetadata: { version: 1, status: 'unavailable', reason: 'legacy_bridge' } }]);
   f.controller.getState().products[0].displayPrice = 'wrong';
   assert.equal(f.controller.getState().products[0].displayPrice, PRODUCT.displayPrice);
   await f.controller.purchase('not-returned-by-storekit');
@@ -310,4 +320,73 @@ test('dispose suppresses updates while preserving unknown late receipts for the 
   assert.equal(notifications, 0);
   assert.equal(f.controller.getState().reason, 'disposed');
   assert.equal(f.controller.getRecovery().deliveries[0].proof.jwsRepresentation, PROOF.jwsRepresentation);
+});
+
+const subscriptionProduct = () => ({ ...PRODUCT, subscriptionMetadata: { version: 1, status: 'available',
+  subscriptionGroupId: 'synthetic-group', period: { unit: 'year', value: 1 },
+  introductoryOffer: { status: 'available', paymentMode: 'pay_as_you_go', displayPrice: 'CHF\u00a01,00',
+    price: '1.00', period: { unit: 'month', value: 1 }, periodCount: 3 }, introductoryOfferEligibility: 'eligible' } });
+
+test('catalog ingestion and every state exposure isolate nested metadata without activating membership', async () => {
+  const f = fixture(), input = subscriptionProduct();
+  f.ports.native.products = async () => { f.calls.push(['products']); return { products: [input], missingProductIds: [] }; };
+  await f.controller.load();
+  input.subscriptionMetadata.period.unit = 'day';
+  input.subscriptionMetadata.introductoryOffer.period.value = 99;
+  const state = f.controller.getState();
+  assert.deepEqual(state.products[0].subscriptionMetadata.period, { unit: 'year', value: 1 });
+  assert.equal(state.products[0].subscriptionMetadata.introductoryOffer.period.value, 1);
+  state.products[0].subscriptionMetadata.period.value = 55;
+  state.products[0].subscriptionMetadata.introductoryOffer.period.unit = 'year';
+  assert.equal(f.controller.getState().products[0].subscriptionMetadata.period.value, 1);
+  assert.equal(f.controller.getState().products[0].subscriptionMetadata.introductoryOffer.period.unit, 'month');
+  assert.deepEqual(f.controller.getState().entitlements.active, []);
+  assert.deepEqual(f.calls.map(call => call[0]), ['read', 'products']);
+  assert.equal(f.controller.getRecovery().purchase, null);
+});
+
+test('refresh clears the whole prior catalog immediately and keeps it cleared after native or entitlement failure', async () => {
+  for (const failure of ['native', 'entitlements']) {
+    const f = fixture(); await f.controller.load();
+    const pending = deferred(), entered = deferred();
+    if (failure === 'native') f.ports.native.products = () => { entered.resolve(); return pending.promise; };
+    else f.session.readEntitlements = () => { entered.resolve(); return pending.promise; };
+    const operation = f.controller.load();
+    assert.deepEqual(f.controller.getState().products, []);
+    assert.equal(f.controller.getState().canPurchase, false);
+    await entered.promise; pending.reject(new Error('synthetic refresh failure')); await operation;
+    assert.equal(f.controller.getState().status, 'failed');
+    assert.deepEqual(f.controller.getState().products, []);
+    assert.equal(f.controller.getState().canPurchase, false);
+    await f.controller.purchase(PRODUCT.id);
+    assert.equal(f.calls.filter(call => call[0] === 'purchase').length, 0);
+  }
+});
+
+test('late product results are not adopted after dispose, account or same-account session replacement', async () => {
+  for (const action of ['dispose', 'account', 'same-account']) {
+    const f = fixture(), pending = deferred(), entered = deferred();
+    f.ports.native.products = () => { entered.resolve(); return pending.promise; };
+    const operation = f.controller.load(); await entered.promise;
+    if (action === 'dispose') f.controller.dispose();
+    else if (action === 'account') f.switchAccount();
+    else f.ports.captureSession = () => ({ ...f.session, generation: 'new-auth-same-account' });
+    pending.resolve({ products: [subscriptionProduct()], missingProductIds: [] }); await operation;
+    assert.deepEqual(f.controller.getState().products, []);
+    assert.equal(f.controller.getState().canPurchase, false);
+    assert.equal(f.calls.filter(call => ['purchase', 'restore', 'deliver'].includes(call[0])).length, 0);
+  }
+});
+
+test('loads remain serialized and a later whole catalog replaces metadata instead of merging prior facts', async () => {
+  const f = fixture(), pending = deferred(), entered = deferred();
+  let lookups = 0;
+  f.ports.native.products = () => { lookups++; entered.resolve(); return pending.promise; };
+  const operation = f.controller.load(); await entered.promise;
+  await f.controller.load(); assert.equal(lookups, 1);
+  pending.resolve({ products: [subscriptionProduct()], missingProductIds: [] }); await operation;
+  f.ports.native.products = async () => ({ products: [PRODUCT], missingProductIds: [] });
+  await f.controller.load();
+  assert.deepEqual(f.controller.getState().products[0].subscriptionMetadata,
+    { version: 1, status: 'unavailable', reason: 'legacy_bridge' });
 });

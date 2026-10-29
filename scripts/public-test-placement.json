@@ -268,6 +268,7 @@
         "apps/form/src/native/__tests__/healthKitQuery.test.cjs",
         "apps/form/src/native/__tests__/speech.test.cjs",
         "apps/form/src/native/__tests__/storeKitDelivery.test.cjs",
+        "apps/form/src/native/__tests__/storeKitProducts.test.cjs",
         "apps/form/src/settings/__tests__/model.test.cjs",
         "apps/form/src/voice-coaching/native/tests/dictation-driver.test.cjs",
         "apps/form/src/voice-coaching/native/tests/driver.test.cjs",
