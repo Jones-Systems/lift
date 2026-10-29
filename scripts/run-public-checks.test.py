@@ -46,6 +46,39 @@ class PublicChecksTests(unittest.TestCase):
         self.assertTrue(any("dist/tests/community/board/persistence-races.test.js" in c["argv"] for c in contract["commands"]))
         self.assertEqual(contract, checks.selection(ROOT, ["form208", "form196"]))
 
+    def test_plan_revision_compiles_first_and_requires_both_fresh_modules(self):
+        contract = checks.selection(ROOT, ["plan-revision"])
+        self.assertEqual(contract["groups"], ["api-compile", "plan-revision"])
+        sources = ("tests/planning/plan-revision-port.test.ts", "tests/backend.test.ts")
+        self.assertEqual(checks.API_TESTS["plan-revision"], sources)
+        self.assertEqual(contract["commands"][0]["argv"],
+                         ["node", "node_modules/typescript/bin/tsc", "-p", "tsconfig.json"])
+        command = contract["commands"][1]
+        self.assertEqual(command["argv"], ["node", "--test", "--test-concurrency=1",
+                                          "dist/tests/planning/plan-revision-port.test.js",
+                                          "dist/tests/backend.test.js"])
+        self.assertEqual(command["test_sources"], ["services/api/" + source for source in sources])
+        default = checks.selection(ROOT, [])
+        self.assertEqual(default["commands"].count(command), 1)
+        for selected in contract["commands"]:
+            for source in selected["test_sources"]:
+                path = self.root / source
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes((ROOT / source).read_bytes())
+        output = self.parent / "plan-revision-evidence"
+        with patch.object(checks.subprocess, "check_output", return_value="a" * 40), \
+             patch.object(checks, "run_command", return_value={"returncode": 0}):
+            self.assertEqual(checks.execute(self.root, output, contract), 0)
+        receipt = json.loads((output / "receipt.json").read_text())
+        for source in sources:
+            relative = "services/api/" + source
+            self.assertEqual(receipt["input_sha256"][relative], checks.digest(ROOT / relative))
+            path = self.root / relative
+            path.unlink()
+            with self.assertRaises(FileNotFoundError):
+                checks.selection(self.root, ["plan-revision"])
+            path.write_bytes((ROOT / relative).read_bytes())
+
     def test_lifecycle_runtime_compiles_first_and_requires_candidate_coverage(self):
         contract = checks.selection(ROOT, ["lifecycle-runtime"])
         self.assertEqual(contract["groups"], ["api-compile", "lifecycle-runtime"])

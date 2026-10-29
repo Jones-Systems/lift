@@ -152,6 +152,9 @@
     ],
     "native-smoke": [
       "tests/native-settings-smoke.test.mjs"
+    ],
+    "planning": [
+      "tests/planning/plan-revision-port.test.ts"
     ]
   }
 }
