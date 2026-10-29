@@ -1,0 +1,73 @@
+import type { Digest, EmbeddedSchema } from '../../planning/synthetic-lineage/types.js';
+import type { EmbeddedCodecIdentityV1, EmbeddedSourcePinsV1, SyntheticImplementationPinV1 } from '../../planning/synthetic-lineage/subcodec-types.js';
+import { detach, type Json } from './strict-json.js';
+import { digest, implementation } from './schema.js';
+
+// Metadata checkpoint: these implementation files are byte-identical to the source commit below.
+// The set digest hashes actual source bytes with length framing in the listed order; this metadata and test/fixture builders are excluded.
+export const implementationSourceRevision = '807100868ad94008d923abecc970f4984be6aea7';
+export const sourceFiles = [
+  {
+    "path": "attempt-shape.ts",
+    "sha256": "cf3d36fd23b937d647dd7d39ecb9110d4a0c9891502ebb9f32e3e248d6269353"
+  },
+  {
+    "path": "bindings.ts",
+    "sha256": "f7051bc7f964f1a2b2da62a3082ecb4ece567355e4f6693713cd933e4f88ebbb"
+  },
+  {
+    "path": "codecs.ts",
+    "sha256": "a242065132f92dc6c098035bf1e121a116a816c3c6b3206d5dd21c1b4244a9bb"
+  },
+  {
+    "path": "fixture-recipe.ts",
+    "sha256": "1720025b479c6db120efc738650e7ffb2ac3f7ecfa3dab5e03c5f9235f99d341"
+  },
+  {
+    "path": "guard.ts",
+    "sha256": "e81f7e8804d255e8dea1f0ff37e3463d3f567fc314ce6b8ee6a5ad77f2053f6e"
+  },
+  {
+    "path": "meaning.ts",
+    "sha256": "9f5c497f8b336b55be4215312be22455c0b4073007499e4dfeaf46f691fc261d"
+  },
+  {
+    "path": "schema.ts",
+    "sha256": "f49861a3ae1a002c9da57026f6a074a765d84f2d789d5f566d1872333f413dfb"
+  },
+  {
+    "path": "strict-json.ts",
+    "sha256": "ecaba9d8abe47c6a20678f5e7e76ac5e15fede2fb791b2a1b72342cdf67eab18"
+  }
+] as const;
+function checkedDigest(value: string): Digest { digest(value); return value as Digest; }
+export const implementationManifestDigest = checkedDigest('ce604f7b58367c2e0a54e74826b9bb06b1a0035d684ed2f2f9e274eb6d9538b1');
+function pin(path: typeof sourceFiles[number]['path']): SyntheticImplementationPinV1 {
+  const file = sourceFiles.find(file => file.path === path)!;
+  const value = detach({ repository: 'Jones-Systems/lift', revision: implementationSourceRevision,
+    path: `services/api/src/training-feedback/synthetic-lineage/${path}`, sha256: file.sha256 });
+  implementation(value); return value as Json & SyntheticImplementationPinV1;
+}
+export const implementationPins = Object.freeze({ codecs: pin('codecs.ts'), guard: pin('guard.ts'), recipe: pin('fixture-recipe.ts') });
+function checkpoint<P extends string, B extends string>(path: P, gitBlob: B) {
+  return Object.freeze({ repository: 'Jones-Systems/lift' as const, revision: 'c203aadd49592011a39c1344b0016ca191a3f007' as const, path, gitBlob });
+}
+const sources: EmbeddedSourcePinsV1 = Object.freeze({
+  clientDecoder: checkpoint('apps/form/src/api/training-feedback.ts', '82d76013a16face4f8ea8d9b4ec672edce8038b1'),
+  analysis: checkpoint('services/api/src/integration/account-modules/index.ts', '94cad393f631eaedb06f5b4c2155e0432faf6781'),
+  feedback: checkpoint('services/api/src/training-feedback/index.ts', '34595d826c39c0f742022f861cfb988fd4c67892'),
+  ledger: checkpoint('services/api/src/training-feedback/ledger-types.ts', '087e0ebd27f38f525fa965cf4d0f1854c18edcba'),
+  comparisonInputs: checkpoint('services/api/src/training-feedback/comparison-inputs.ts', '3e03c9ad4a3879de14613c23a4888dc21482993f'),
+  witness: checkpoint('services/api/src/progress-comparison/persistence-types.ts', '7ccb97b83b2d407e64c9602e4a46fa67dd747d02'),
+  comparison: checkpoint('services/api/src/progress-comparison/index.ts', '608aa113379c6beb4caed9f945d9ff375a08d2ff'),
+});
+function identity<S extends EmbeddedSchema>(schema: S): EmbeddedCodecIdentityV1<S> {
+  return Object.freeze({ schema, implementation: implementationPins.codecs, subcodecDigest: implementationManifestDigest, sources });
+}
+export const identities: { readonly [S in EmbeddedSchema]: EmbeddedCodecIdentityV1<S> } = Object.freeze({
+  'synthetic.training-feedback-analysis.pinned-v1': identity('synthetic.training-feedback-analysis.pinned-v1'),
+  'synthetic.feedback-comparison-lineage.pinned-v1': identity('synthetic.feedback-comparison-lineage.pinned-v1'),
+  'synthetic.comparison-witness.pinned-v2': identity('synthetic.comparison-witness.pinned-v2'),
+  'synthetic.registration-manifest/v1': identity('synthetic.registration-manifest/v1'),
+  'synthetic.accepted-input-dispositions/v1': identity('synthetic.accepted-input-dispositions/v1'),
+});

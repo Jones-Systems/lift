@@ -178,6 +178,8 @@
         "services/api/tests/training-feedback/ledger.test.mjs",
         "services/api/tests/training-feedback/replay.test.mjs",
         "services/api/tests/training-feedback/session-source.test.mjs",
+        "services/api/tests/training-synthetic-lineage/codecs.test.ts",
+        "services/api/tests/training-synthetic-lineage/guard.test.ts",
         "services/api/tests/usage-limits/ledger.test.ts",
         "services/api/tests/usage-limits/live-allocation.test.ts",
         "services/api/tests/usage-limits/provider-evidence.test.ts",
