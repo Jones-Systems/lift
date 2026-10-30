@@ -1,0 +1,53 @@
+{
+  "form_pr": 104,
+  "form_head": "93e3440974142eb5b407156006f308518c73b20f",
+  "merge_base": "c8bc5e5cadacdebdc6e18ce39c57d8048da6a311",
+  "files": [
+    {
+      "path": "services/api/src/wearables/index.ts",
+      "mode": "100644",
+      "sha256": "ad1f4aa87ea8e6a8f93da3e80f58493cef82e609dcba82154835d64387621655",
+      "already_in_form_snapshot": false
+    },
+    {
+      "path": "services/api/src/wearables/persistence/store.ts",
+      "mode": "100644",
+      "sha256": "4ef5313ea5fe7358200c3aa693280f0e8472a010ee38d865f186321a9c69bcdf",
+      "already_in_form_snapshot": false
+    },
+    {
+      "path": "services/api/src/wearables/service.ts",
+      "mode": "100644",
+      "sha256": "441bef2d7f1f93f2b9d2ff4cfca435523472018e45cd1d54b195d069d1a7f1df",
+      "already_in_form_snapshot": false
+    },
+    {
+      "path": "services/api/src/wearables/types.ts",
+      "mode": "100644",
+      "sha256": "a5793fb6662096381bf55540f5d591fdb96aa3b4cb83ec6719a80cd793b21395",
+      "already_in_form_snapshot": false
+    },
+    {
+      "path": "services/api/tests/wearables/direct-connections/checks.json",
+      "mode": "100644",
+      "sha256": "5c5da10f2666e77789c91d36dc490599ee80693530df2b824736b1872ad2b68c",
+      "already_in_form_snapshot": false
+    },
+    {
+      "path": "services/api/tests/wearables/direct-connections/direct-connections.test.mjs",
+      "mode": "100644",
+      "sha256": "6c501ad3f8096aac3a595ed9dd952a1fce3f32c2560d94e9a273dab0060fa2f9",
+      "already_in_form_snapshot": false
+    },
+    {
+      "path": "services/api/tests/wearables/direct-connections/fixture.mjs",
+      "mode": "100644",
+      "sha256": "f543370f9a34d16ddaa063bc54413b105a2b126cad1b5047898b01d80104cbfa",
+      "already_in_form_snapshot": false
+    }
+  ],
+  "schema": "lift.form-code-pair/v1",
+  "integration_baseline": "e1c877a7f7fd1dfcf951328b1f3593d1ac015b5a",
+  "claim": "Changed product file after-states match the stated Form head; private docs and source history are excluded.",
+  "transition": "product patch"
+}

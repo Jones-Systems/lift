@@ -1,6 +1,13 @@
 import type { AccountContext } from '../lifecycle/types.js';
 export type { AccountContext };
 export type Provider = 'healthkit' | 'oura' | 'garmin';
+export type DirectProvider = Exclude<Provider, 'healthkit'>;
+export type DirectConnectionBinding = Readonly<{ provider: DirectProvider; connectionId: string; generation: number }>;
+export type DirectProviderCommitProof = Readonly<{ operationId: string; version: number }>;
+export type PrepareDirectConnection = Readonly<{
+  provider: DirectProvider; connectionId: string; expectedGeneration: number | null;
+  types: Metric[]; consentVersion: string; retentionConsent: true;
+}>;
 export type Metric = 'steps' | 'active_energy' | 'resting_hr' | 'hrv_sdnn' | 'hrv_rmssd' |
   'sleep_asleep' | 'sleep_in_bed' | 'body_mass' | 'workout_duration' | 'workout_energy' | 'workout_distance' | 'vendor_score';
 export type Measure = Readonly<{
@@ -24,7 +31,10 @@ export type ImportPage = Readonly<{
 export type Connection = Readonly<{
   id: string; provider: Provider; generation: number; connected: boolean;
   types: Metric[]; consentVersion: string; retentionConsent: boolean; lastImportAt: string | null;
+  // Private operational binding only; never project it into public connections or account export.
+  pendingAuthorization?: Readonly<{ sessionId: string; epoch: number }>;
 }>;
+export type PublicConnection = Omit<Connection, 'pendingAuthorization'>;
 export type ReceiptScope = Readonly<{ connectionId: string; generation: number }>;
 export type Receipt = Readonly<
   { fingerprint: string; scope: ReceiptScope | null; purged?: false; result: unknown } |
@@ -69,6 +79,10 @@ export interface RootPorts {
   withActiveWrite<T>(ctx: AccountContext, effect: () => T): T;
   assertActive(ctx: AccountContext): void;
   assertImportAllowed(ctx: AccountContext, provider: Provider): void;
+  // Required for direct activation, including receipt replay. Verify the current root writer and actual
+  // same-database unsuppressed original-scope committed CODE operation; live token version may be newer.
+  // Proof metadata alone grants nothing. Throwing must roll back the outer vault/connection transaction.
+  assertProviderCommittedWithinWrite?(ctx: AccountContext, binding: DirectConnectionBinding, proof: DirectProviderCommitProof): void;
   store: WearableStore;
   enabled?(): boolean;
   now(): string;

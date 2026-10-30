@@ -45,6 +45,12 @@ export function createWearablePersistence(deps: WearablePersistenceDependencies)
     putConnection(ctx,value) { write(ctx,()=>{
       text(value.id); integer(value.generation);
       if (!['healthkit','oura','garmin'].includes(value.provider)) fail('health_invalid_provider');
+      if(value.pendingAuthorization){
+        const pending=value.pendingAuthorization;
+        if(value.provider==='healthkit'||value.connected||value.retentionConsent!==true||pending.sessionId!==ctx.sessionId||pending.epoch!==ctx.epoch||
+          Object.keys(pending).some(key=>!['sessionId','epoch'].includes(key)))fail('health_authorization_changed',409);
+        text(pending.sessionId);integer(pending.epoch);
+      }
       const old=store.connection(ctx,value.id);
       if (old && (old.provider!==value.provider || value.generation<old.generation)) fail('health_connection_changed',409);
       db.prepare('INSERT INTO wearable_connections VALUES(?,?,?,?) ON CONFLICT(account_id,connection_id) DO UPDATE SET generation=excluded.generation,data=excluded.data')
@@ -86,7 +92,10 @@ export function createWearablePersistence(deps: WearablePersistenceDependencies)
       let stored=value;
       if(!value.purged && value.scope) {
         const connection=owned(ctx,value.scope.connectionId);
-        if(!connection.connected || connection.generation!==value.scope.generation)
+        const pending=connection.pendingAuthorization;
+        const pendingHere=connection.provider!=='healthkit'&&!connection.connected&&connection.retentionConsent===true&&
+          pending?.sessionId===ctx.sessionId&&pending?.epoch===ctx.epoch;
+        if((!connection.connected&&!pendingHere) || connection.generation!==value.scope.generation)
           stored={fingerprint:value.fingerprint,scope:null,purged:true};
       }
       const prior=receipt(ctx,key);

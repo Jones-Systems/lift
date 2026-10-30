@@ -1,8 +1,15 @@
-import type { AccountContext, Connection, ImportChannel, ImportResult, Measure, ReceiptScope, RootPorts, StoredMeasure } from './types.js';
+import type { AccountContext, Connection, DirectConnectionBinding, DirectProvider, DirectProviderCommitProof, ImportChannel, ImportResult, Measure, PrepareDirectConnection, PublicConnection, ReceiptScope, RootPorts, StoredMeasure } from './types.js';
 import { day, digest, fail, integer, metric, object, page, stable, text } from './validation.js';
 import { suggestionCommand } from './suggestions.js';
 
 export function createWearablesService(root: RootPorts) {
+  function publicConnection(c:Connection):PublicConnection {
+    return {id:c.id,provider:c.provider,generation:c.generation,connected:c.connected,types:[...c.types],
+      consentVersion:c.consentVersion,retentionConsent:c.retentionConsent,lastImportAt:c.lastImportAt};
+  }
+  function directProvider(value:unknown):DirectProvider {
+    if(value!=='oura'&&value!=='garmin')return fail('health_invalid_provider');return value;
+  }
   function active(ctx:AccountContext) { root.assertActive(ctx); if(!root.enabled?.()) fail('health_not_configured',503); }
   function connection(ctx:AccountContext,id:string,generation?:number):Connection {
     const c=root.store.connection(ctx,id); if(!c) return fail('health_not_found',404);
@@ -25,6 +32,53 @@ export function createWearablesService(root: RootPorts) {
   return {
     capabilities() { return {status:root.enabled?.()?'configured_unverified':'not_configured', aiUse:'excluded',
       google:{status:'unavailable',reason:'iphone_route_and_new_cloud_project_unavailable'}, suggestions:root.plans&&root.assertSuggestionAllowed?root.plans.capability:'unavailable'} as const; },
+    prepareDirectProviderConnection(ctx:AccountContext,key:string,input:PrepareDirectConnection):DirectConnectionBinding {
+      active(ctx);
+      const v=object(input,['provider','connectionId','expectedGeneration','types','consentVersion','retentionConsent']);
+      const provider=directProvider(v.provider);root.assertImportAllowed(ctx,provider);
+      if(v.retentionConsent!==true||!Array.isArray(v.types)||!v.types.length||v.types.length>12)fail('health_consent_required',403);
+      const id=text(v.connectionId),expected=v.expectedGeneration===null?null:integer(v.expectedGeneration);
+      const types=[...new Set(v.types.map(metric))],consentVersion=text(v.consentVersion),generation=integer((expected??0)+1);
+      const binding={provider,connectionId:id,generation};
+      return root.withActiveWrite(ctx,()=>{
+        active(ctx);root.assertImportAllowed(ctx,provider);
+        const result=receipt(ctx,key,{op:'direct_prepare',sessionId:ctx.sessionId,epoch:ctx.epoch,provider,id,expected,types,consentVersion},()=>{
+          const old=root.store.connection(ctx,id);
+          if(old&&old.provider!==provider)fail('health_route_mismatch',403);
+          if((old?.generation??null)!==expected)fail('health_connection_changed',409);
+          if(old?.connected||old?.pendingAuthorization)fail('health_authorization_pending',409);
+          root.store.putConnection(ctx,{id,provider,generation,connected:false,types,consentVersion,retentionConsent:true,lastImportAt:null,
+            pendingAuthorization:{sessionId:ctx.sessionId,epoch:ctx.epoch}});
+          return binding;
+        },{connectionId:id,generation});
+        active(ctx);root.assertImportAllowed(ctx,provider);return result;
+      });
+    },
+    activateDirectProviderConnectionWithinWrite(ctx:AccountContext,key:string,input:DirectConnectionBinding,committed:DirectProviderCommitProof):DirectConnectionBinding {
+      active(ctx);
+      if(!root.assertProviderCommittedWithinWrite)fail('health_provider_activation_unavailable',503);
+      const v=object(input,['provider','connectionId','generation']),p=object(committed,['operationId','version']);
+      const binding={provider:directProvider(v.provider),connectionId:text(v.connectionId),generation:integer(v.generation)};
+      const proof={operationId:text(p.operationId),version:integer(p.version)};
+      if(proof.version<1)fail('health_invalid_input');
+      const check=()=>{
+        active(ctx);root.assertImportAllowed(ctx,binding.provider);
+        root.assertProviderCommittedWithinWrite!(ctx,{...binding},{...proof});
+        const c=connection(ctx,binding.connectionId,binding.generation);
+        if(c.provider!==binding.provider)fail('health_route_mismatch',403);
+        if(!c.retentionConsent)fail('health_consent_required',403);
+        if(c.connected?!!c.pendingAuthorization:c.pendingAuthorization?.sessionId!==ctx.sessionId||c.pendingAuthorization?.epoch!==ctx.epoch)
+          fail('health_authorization_changed',409);
+        return c;
+      };
+      check();
+      // WS19 owns the enclosing vault commit/activation rollback boundary; never open a nested writer here.
+      const result=receipt(ctx,key,{op:'direct_activate',sessionId:ctx.sessionId,epoch:ctx.epoch,binding,proof},()=>{
+        const c=check();if(c.connected)fail('health_already_connected',409);
+        root.store.putConnection(ctx,{...publicConnection(c),connected:true});return binding;
+      },{connectionId:binding.connectionId,generation:binding.generation});
+      check();return result;
+    },
     connectHealthKit(ctx:AccountContext,key:string,input:unknown) {
       active(ctx); root.assertImportAllowed(ctx,'healthkit');
       const v=object(input,['connectionId','types','consentVersion','retentionConsent']);
@@ -35,7 +89,7 @@ export function createWearablesService(root: RootPorts) {
           const old=root.store.connection(ctx,id); if(old && old.provider!=='healthkit') fail('health_not_found',404);
           if(old?.connected) fail('health_already_connected',409);
           const c:Connection={id,provider:'healthkit',generation:(old?.generation??0)+1,connected:true,types,consentVersion,retentionConsent:true,lastImportAt:null};
-          root.store.putConnection(ctx,c); return c;
+          root.store.putConnection(ctx,c); return publicConnection(c);
         },{connectionId:id,generation:(root.store.connection(ctx,id)?.generation??0)+1});
       });
     },
@@ -90,7 +144,7 @@ export function createWearablesService(root: RootPorts) {
       if(c.provider!==provider)fail('health_route_mismatch',403);
       if(!c.connected||!c.retentionConsent)fail('health_consent_required',403);
     },
-    connections(ctx:AccountContext) { active(ctx); return root.store.connections(ctx); },
+    connections(ctx:AccountContext) { active(ctx); return root.store.connections(ctx).map(publicConnection); },
     summary(ctx:AccountContext,from:string,to:string) {
       active(ctx); day(from);day(to);if(from>to) fail('health_invalid_window');
       const rows=root.store.measures(ctx,from,to,1001);if(rows.length>1000) fail('health_summary_limit',413);
@@ -117,7 +171,7 @@ export function createWearablesService(root: RootPorts) {
       return root.withActiveWrite(ctx,()=>{active(ctx);
         return receipt(ctx,key,{op:'disconnect',id,gen},()=>{
           const c=connection(ctx,id,gen);
-          root.store.putConnection(ctx,{...c,generation:c.generation+1,connected:false,retentionConsent:false});
+          root.store.putConnection(ctx,{...publicConnection(c),generation:c.generation+1,connected:false,retentionConsent:false});
           root.store.purgeConnection(ctx,id);
           for(const s of root.store.suggestions(ctx)) if(s.state==='pending'&&s.evidenceRefs.some(r=>r.connectionId===id)) root.store.putSuggestion(ctx,{...s,state:'invalidated'});
           return {disconnected:true,purged:true,remoteRevocation:c.provider==='healthkit'?'not_applicable':'pending'};
