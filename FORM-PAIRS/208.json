@@ -1,0 +1,59 @@
+{
+  "form_pr": 208,
+  "form_head": "b0e17e2e300985914ce562140e2243e5ccce590f",
+  "merge_base": "9b8d5559964c426a39c6a0e20f0795d579aed354",
+  "files": [
+    {
+      "path": "apps/form/src/voice-coaching/standard/tests/wire-codec.test.cjs",
+      "mode": "100644",
+      "sha256": "d30a1f73b5b92272ddbacdc3c5a602a724bfdab3ac1da5d7805e1f14678a3c6d",
+      "already_in_form_snapshot": true
+    },
+    {
+      "path": "apps/form/src/voice-coaching/standard/wire-codec.ts",
+      "mode": "100644",
+      "sha256": "828b7054ac169bd2c0c8598c13207de03471093f5432941f9f54b10b1b07429d",
+      "already_in_form_snapshot": true
+    },
+    {
+      "path": "apps/form/src/voice-coaching/standard/wire-turn.ts",
+      "mode": "100644",
+      "sha256": "3852784163a188f6d859e70a8329ad4b1e87cc5d181f3719cc83f9393dee8d36",
+      "already_in_form_snapshot": true
+    },
+    {
+      "path": "services/api/src/usage-limits/dev-live-composition.ts",
+      "mode": "100644",
+      "sha256": "bf6f706056f5e79e2971a5f151ef26cc8b1441d84fd86afcf8b34f2e4e8aa4de",
+      "already_in_form_snapshot": true
+    },
+    {
+      "path": "services/api/src/voice-coaching/standard/wire-codec.ts",
+      "mode": "100644",
+      "sha256": "828b7054ac169bd2c0c8598c13207de03471093f5432941f9f54b10b1b07429d",
+      "already_in_form_snapshot": true
+    },
+    {
+      "path": "services/api/src/voice-coaching/standard/wire-turn.ts",
+      "mode": "100644",
+      "sha256": "5158177489ddc068da0341632ab71d6cd3f7a747d124f16c97038f11ee2e282d",
+      "already_in_form_snapshot": true
+    },
+    {
+      "path": "services/api/tests/usage-limits/live-composition.test.ts",
+      "mode": "100644",
+      "sha256": "03048a0c0644b5f71a43ed2f8bedbd3557feecab5079e56212947a81c30471cd",
+      "already_in_form_snapshot": true
+    },
+    {
+      "path": "services/api/tests/voice-coaching/standard-wire.test.ts",
+      "mode": "100644",
+      "sha256": "0940dcf937f2382d12346c6f68618272d5971d2b90cd28507af69f881d6c0851",
+      "already_in_form_snapshot": true
+    }
+  ],
+  "schema": "lift.form-code-pair/v1",
+  "integration_baseline": "e1c877a7f7fd1dfcf951328b1f3593d1ac015b5a",
+  "claim": "Changed product file after-states match the stated Form head; private docs and source history are excluded.",
+  "transition": "product changes already present in initial public snapshot"
+}
