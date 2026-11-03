@@ -10,6 +10,7 @@ import { OpenMatArt } from '../../variants/a/art';
 import { MetaLine, Notice, PlainAction, PrimaryAction, Txt } from '../../variants/a/primitives';
 import { typeStyles, useEssentialOutline, useTextScale } from '../../variants/a/theme';
 import { Icon, type IconName } from './icons';
+import { FieldError } from './inline';
 import { L, t } from './tokens';
 
 export { MetaLine, Notice, PlainAction, PrimaryAction, Txt };
@@ -127,6 +128,8 @@ export type TextAnswerProps = {
   placeholder?: string;
   onMic?: () => void;
   error?: boolean;
+  /** Inline message under the field. Also applies the error styling; the typed value is never touched. */
+  errorMessage?: string | null;
   testID?: string;
   micTestID?: string;
   secure?: boolean;
@@ -143,11 +146,12 @@ export type TextAnswerProps = {
 export function TextAnswer(props: TextAnswerProps) {
   const [focused, setFocused] = useState(false);
   const outline = useEssentialOutline();
-  const { label, value, onChangeText, placeholder, onMic, error, testID, micTestID = 'a-mic' } = props;
+  const { label, value, onChangeText, placeholder, onMic, error, errorMessage, testID, micTestID = 'a-mic' } = props;
+  const invalid = !!error || !!errorMessage;
   return (
     <View>
       {label ? <Txt role="meta" tone="secondary">{label}</Txt> : null}
-      <View testID={testID} style={[s.answer, outline, !onMic && s.answerNoMic, focused && s.answerFocused, error && s.answerError, label ? s.answerLabelled : null]}>
+      <View testID={testID} style={[s.answer, outline, !onMic && s.answerNoMic, focused && s.answerFocused, invalid && s.answerError, label ? s.answerLabelled : null]}>
         <TextInput
           testID={testID ? `${testID}-input` : undefined}
           value={value}
@@ -155,6 +159,7 @@ export function TextAnswer(props: TextAnswerProps) {
           placeholder={placeholder}
           placeholderTextColor={t.color.secondary}
           accessibilityLabel={label ?? placeholder}
+          accessibilityHint={errorMessage || undefined}
           secureTextEntry={props.secure}
           keyboardType={props.keyboardType}
           autoComplete={props.autoComplete}
@@ -177,6 +182,7 @@ export function TextAnswer(props: TextAnswerProps) {
           </Pressable>
         ) : null}
       </View>
+      <FieldError message={errorMessage} testID={testID ? `${testID}-error` : undefined} />
     </View>
   );
 }
@@ -253,20 +259,32 @@ export function Segmented<T extends string>({ items, selected, onSelect, testID 
 
 /* ---------------- OB-11 NumericStepper ---------------- */
 
-export function StepperField({ label, value, onStep, testID, focused, error, full }: {
-  label: string; value: string; onStep: (delta: -1 | 1) => void; testID?: string; focused?: boolean; error?: boolean; full?: boolean;
+export function StepperField({ label, value, onStep, testID, focused, error, errorMessage, full }: {
+  label: string; value: string; onStep: (delta: -1 | 1) => void; testID?: string; focused?: boolean; error?: boolean;
+  /** Inline message under the field. Also applies the error styling. */
+  errorMessage?: string | null; full?: boolean;
 }) {
   const outline = useEssentialOutline();
   const { large } = useTextScale();
-  return (
-    <View testID={testID} accessibilityLabel={`${label}, ${value}`}
-      style={[s.field, outline, !large && !full && s.fieldFill, full && s.fieldFull, focused && s.fieldFocused, error && s.fieldError]}>
+  const withMessage = !!errorMessage;
+  // With a message the field sits in a wrapper that takes over the row sizing, so the message stays outside the box.
+  const sizing = [!large && !full && s.fieldFill, full && s.fieldFull];
+  const field = (
+    <View testID={testID} accessibilityLabel={`${label}, ${value}`} accessibilityHint={errorMessage || undefined}
+      style={[s.field, outline, ...(withMessage ? [] : sizing), focused && s.fieldFocused, (error || withMessage) && s.fieldError]}>
       <Txt role="meta" tone="secondary">{label}</Txt>
       <View style={s.fieldRow}>
         <StepButton icon="minus" label={`Decrease ${label}`} onPress={() => onStep(-1)} />
         <Txt role="value" style={s.fieldValue} numberOfLines={1} adjustsFontSizeToFit>{value}</Txt>
         <StepButton icon="plus" label={`Increase ${label}`} onPress={() => onStep(1)} />
       </View>
+    </View>
+  );
+  if (!withMessage) return field;
+  return (
+    <View style={sizing}>
+      {field}
+      <FieldError message={errorMessage} testID={testID ? `${testID}-error` : undefined} />
     </View>
   );
 }
