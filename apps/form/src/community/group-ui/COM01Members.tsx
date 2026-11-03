@@ -28,17 +28,18 @@ export function COM01Members(props: COM01MembersProps) {
       else if (raw.groupId !== null && raw.groupId !== props.selectedGroupId) reason = 'not_current';
       else if (raw.status === 'ready' || raw.status === 'empty') {
         const data = raw.data;
-        if (raw.groupId !== props.selectedGroupId || !validGroup(data) || data.id !== props.selectedGroupId
+        const group = data;
+        if (raw.groupId !== props.selectedGroupId || !validGroup(group) || group.id !== props.selectedGroupId
           || raw.error !== null || !object(data) || !Array.isArray(data.members)
           || !data.members.every(validMember) || data.members.length > 50
           || new Set(data.members.map(row => row.memberId)).size !== data.members.length) reason = 'invalid_fixture';
         else if (raw.status === 'empty') {
           if (data.members.length !== 0) reason = 'invalid_fixture';
         } else {
-          const own = data.members.filter(row => row.memberId === data.memberId);
-          if (data.members.length === 0 || own.length !== 1 || own[0].role !== data.role) reason = 'invalid_fixture';
+          const own = data.members.filter(row => row.memberId === group.memberId);
+          if (data.members.length === 0 || own.length !== 1 || own[0].role !== group.role) reason = 'invalid_fixture';
           else if (props.fence.scenario === 'com01-stale') reason = 'not_current';
-          else if (scenarioRole(props.fence.scenario) !== data.role) reason = 'invalid_fixture';
+          else if (scenarioRole(props.fence.scenario) !== group.role) reason = 'invalid_fixture';
           else if (props.detail.status === 'ready') detail = props.detail.data;
         }
       } else if (raw.data !== null || (raw.status === 'error' ? !error || error.malformed : raw.error !== null)) reason = 'invalid_fixture';
