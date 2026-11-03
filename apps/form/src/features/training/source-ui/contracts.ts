@@ -13,7 +13,7 @@ type OccurrenceIdentity = Pick<SourceWorkoutSession['occurrences'][number],
 export type RestWorkoutProjection = Frozen<{
   session: WorkoutIdentity;
   occurrence: OccurrenceIdentity;
-  prescription: NativePrescription;
+  prescription: Pick<NativePrescription, 'rest_seconds'>;
   prescribedLoad: SourceUnknownLoad;
 }>;
 
