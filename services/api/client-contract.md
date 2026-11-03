@@ -126,7 +126,10 @@ Client rules (REC unless marked):
      `transcription.ts:79`; 409 on replay) is final for that key.
    - Purchase decision `200 {status:"unknown",code}` (CURRENT `purchases.md`, "Decision"): keep the StoreKit transaction unfinished and resend later
      with the same `idempotencyKey`; finish only after `delivered`.
-   - `phone_outcome_unknown` (409, auth-shaped body, `phone/challenges.ts:168`): an SMS may have been sent; wait for `resendAfter`, never auto-resend.
+   - `phone_outcome_unknown` (409, auth-shaped `{code,message}`, `phone/challenges.ts:67,168`) carries no `challengeId` or `resendAfter`. On
+     challenge or resend an SMS may have been sent; on verify the code may have been consumed. The challenge is no longer usable (`:165`): resend or
+     verify with a new key returns `409 phone_challenge_unavailable` (`:107,137`), and a new challenge returns `429 phone_challenge_cooldown` until
+     10 minutes after the last send (`:7,85-86`). Never auto-resend; tell the user a code may still arrive and to try again later.
    - `deletion_effect_unknown`, `deletion_status_unknown` (503): re-read status; staged lifecycle only.
 7. The native transport already flags network loss and non-GET 5xx as `effectUnknown` (`apps/form/src/api/transport.ts:592-595,610`) but not
    `transcription_outcome_unknown` (409). It drops `details` (`transport.ts:605-610`), so `details.revision` and `details.attemptId` are unavailable
@@ -252,7 +255,7 @@ Server status: **CLI** = works in the default CLI server (`cli.ts:47`); **CLI-co
 | GET, PATCH | `/v1/me/profile`, `/v1/me/preferences`, `/v1/me/onboarding` | `api/resources.ts`, `api/settings.ts` | CLI | revision-guarded |
 | POST | `/v1/me/onboarding/complete` | `api/resources.ts` | CLI | receipted |
 | GET | `/v1/exercises`, `/v1/exercises/:id` | `api/resources.ts` | CLI | |
-| GET, PATCH | `/v1/exercises/:id/cue-preferences` | - | CLI | no native caller found |
+| GET, PATCH | `/v1/exercises/:id/cue-preferences` | `api/resources.ts` | CLI | revision-guarded |
 | GET, POST | `/v1/plans`; GET, PATCH `/v1/plans/:id`; POST `/v1/plans/:id/archive` | `api/resources.ts`, `api/sourceTrainingResources.ts` | CLI | |
 | POST | `/v1/plans/first` | `api/resources.ts` | Factory | 501 `first_plan_unavailable` |
 | POST, GET | `/v1/workout-sessions`, `/:id`, `/:id/sets`, `/sets/:setId` (PATCH), `/void`, `/complete` | `api/resources.ts`, `api/sourceTrainingResources.ts` | CLI | receipted |
