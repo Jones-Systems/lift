@@ -8,7 +8,7 @@ import { art } from './assets/generatedart';
 import { icons, type IconName } from './assets/generatedicons';
 import { colorAt, easeOut, L, numberAt, t } from './theme';
 
-type Element = { readonly tag: string; readonly [key: string]: string | number | undefined };
+export type Element = { readonly tag: string; readonly [key: string]: string | number | undefined };
 
 function paint(el: Element, key: 'fill' | 'stroke', current: string): string | undefined {
   const token = el[`${key}Token`];
@@ -18,7 +18,7 @@ function paint(el: Element, key: 'fill' | 'stroke', current: string): string | u
   return typeof raw === 'string' ? raw : undefined;
 }
 
-function shape(el: Element, index: number, current: string, defaults: { fill?: string; stroke?: string }) {
+export function shape(el: Element, index: number, current: string, defaults: { fill?: string; stroke?: string }) {
   const fill = paint(el, 'fill', current) ?? defaults.fill;
   const stroke = paint(el, 'stroke', current) ?? defaults.stroke;
   const common = {
