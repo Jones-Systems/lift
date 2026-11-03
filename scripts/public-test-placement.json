@@ -281,7 +281,13 @@
       "placement": "breadth",
       "reason": "The remaining React Native renderer suite runs with the existing Jest command.",
       "files": [
-        "apps/form/tests/renderer/runtime-auth.test.tsx"
+        "apps/form/tests/renderer/foundation-core.test.tsx",
+        "apps/form/tests/renderer/inline.test.tsx",
+        "apps/form/tests/renderer/light-contrast.test.tsx",
+        "apps/form/tests/renderer/motion-continuity.test.tsx",
+        "apps/form/tests/renderer/motion.test.tsx",
+        "apps/form/tests/renderer/runtime-auth.test.tsx",
+        "apps/form/tests/renderer/toast.test.tsx"
       ]
     },
     {

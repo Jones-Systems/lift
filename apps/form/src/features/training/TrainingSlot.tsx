@@ -10,7 +10,7 @@ import { TabBar } from '../../variants/a/frame';
 import type { ScreenId } from '../../types';
 import type { HomeSlotContext } from '../contract';
 import { useCommandKey } from '../shared/commands';
-import { Notice } from '../shared/ui';
+import { Notice, TabTransition } from '../shared/ui';
 import { t } from '../shared/tokens';
 import {
   activeFrom, commandStateFrom, ready, refreshFailed, refreshing, toServerError, type PendingCommand, type Remote, type ServerError,
@@ -365,7 +365,7 @@ function TrainingHome(ctx: HomeSlotContext) {
             stats={numericStats.status === 'ready' ? numericStats.value : null} onUnauthenticated={unauthenticated} onChanged={refreshAll}
             onLeave={leave} onCompleted={completedLegacy} /> : null}
     </View> : null}
-    {workoutShown ? null : <View style={s.fill}>{screen}</View>}
+    {workoutShown ? null : <TabTransition activeKey={tab} style={s.fill}>{screen}</TabTransition>}
     <TabBar current={tab} bottomInset={insets.bottom} onSelect={selectTab} register={false} />
   </View>;
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ComponentType } from 'react';
 import { Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FoundationGallery } from './features/shared/FoundationGallery';
 import type { DirectionId, ScreenId, VariantProps } from './types';
 import VariantA from './variants/a';
 import VariantB from './variants/b';
@@ -18,9 +19,10 @@ const SCREEN_LABELS: Record<ScreenId, string> = {
   progress: 'Progress',
 };
 
-export type Route = { direction: DirectionId | null; screen: ScreenId; showcase: boolean; state?: string };
+export type Route = { direction: DirectionId | null; screen: ScreenId; showcase: boolean; state?: string; foundation?: boolean };
 
 const HUB: Route = { direction: null, screen: 'today', showcase: false };
+const FOUNDATION: Route = { ...HUB, foundation: true };
 const IS_WEB = Platform.OS === 'web' && typeof window !== 'undefined';
 
 export function isDirectionId(value: unknown): value is DirectionId {
@@ -61,6 +63,8 @@ export function parseRoute(url: string | null | undefined): Route {
   const segment = (deepLink?.[2] ?? '').toLowerCase();
   const screen = (query.get('screen') ?? segment).toLowerCase();
   const showcaseFlag = (query.get('showcase') ?? '').toLowerCase();
+  const foundationFlag = (query.get('foundation') ?? '').toLowerCase();
+  if (foundationFlag === '1' || foundationFlag === 'true' || direction === 'foundation') return FOUNDATION;
   if (!isDirectionId(direction)) return HUB;
   return {
     direction,
@@ -71,6 +75,7 @@ export function parseRoute(url: string | null | undefined): Route {
 }
 
 export function routeQuery(route: Route): string {
+  if (route.foundation) return '?gallery=1&foundation=1';
   if (!route.direction) return '';
   const showcase = route.showcase ? '&showcase=1' : '';
   const state = route.state ? `&state=${encodeURIComponent(route.state)}` : '';
@@ -127,6 +132,7 @@ export function GalleryShell() {
   );
 
   if (!route) return <View style={styles.fill} />;
+  if (route.foundation) return <FoundationGallery />;
   if (!route.direction) return <Hub onOpen={open} />;
   const Variant = VARIANTS[route.direction];
   return (
@@ -170,6 +176,13 @@ function Hub({ onOpen }: { onOpen: (route: Route) => void }) {
             </View>
           </View>
         ))}
+        <View style={styles.direction}>
+          <Text accessibilityRole="header" style={styles.directionTitle}>Shared foundation</Text>
+          <Text style={styles.hubNote}>Motion, toasts, inline errors, light layers and icons shared by Form screens.</Text>
+          <View style={styles.choices}>
+            <Choice label="Foundation" onPress={() => onOpen(FOUNDATION)} />
+          </View>
+        </View>
         <View style={styles.direction}>
           <Text accessibilityRole="header" style={styles.directionTitle}>Original Form 2 resources</Text>
           <Text style={styles.hubNote}>The recovered UI system, component library and clickable app that informed these directions.</Text>

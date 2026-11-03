@@ -94,7 +94,7 @@ function fixture(startWorkout, accountId = 'account-1') {
     ...feedback,
     useSafeAreaInsets: () => ({ bottom: 0 }), View: 'View', TabBar: 'TabBar', TodayScreen: 'TodayScreen', WorkoutStartScreen,
     CoachUnavailable: 'CoachUnavailable', HistoryScreen: 'HistoryScreen', SessionDetailScreen: 'SessionDetailScreen',
-    StatsScreen: 'StatsScreen', Notice: 'Notice', ActiveSourceWorkout: 'ActiveSourceWorkout', ActiveWorkout: 'ActiveWorkout', s: { fill: {}, hidden: {} } });
+    StatsScreen: 'StatsScreen', Notice: 'Notice', TabTransition: 'TabTransition', ActiveSourceWorkout: 'ActiveSourceWorkout', ActiveWorkout: 'ActiveWorkout', s: { fill: {}, hidden: {} } });
   const read = () => { cursor = 0; return TrainingHome(ctx); };
   const start = () => find(read(), node => node.type === WorkoutStartScreen);
   return { calls, plans, ctx, read, start, writes: () => writes,

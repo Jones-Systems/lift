@@ -52,7 +52,7 @@ function loader(react, key, appState) {
       if (specifier === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ bottom: 0 }) };
       if (specifier.endsWith('/api/client') || (specifier === './client' && name.startsWith('api/'))) return { ...load('api/transport.ts'), commandKey: key, formApi: null };
       if (specifier.endsWith('/shared/tokens')) return { t: { color: { canvas: 'canvas' } } };
-      if (specifier.endsWith('/shared/ui')) return { Notice: 'Notice' };
+      if (specifier.endsWith('/shared/ui')) return { Notice: 'Notice', TabTransition: 'TabTransition' };
       if (specifier.endsWith('/variants/a/frame')) return { TabBar: 'TabBar' };
       if (specifier === './screens') return Object.fromEntries(['CoachUnavailable', 'HistoryScreen', 'SessionDetailScreen', 'StatsScreen', 'TodayScreen', 'WorkoutStartScreen'].map(name => [name, name]));
       if (specifier === './WorkoutScreen') return { WorkoutScreen: 'WorkoutScreen' };

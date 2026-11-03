@@ -31,7 +31,8 @@ import { asApiError, guardedSave } from '../shared/commands';
 import { COPY, errorCopy, movementWord, setWord } from '../shared/copy';
 import { L, t } from '../shared/tokens';
 import {
-  AccountRow, Art, Gutter, MetaLine, Nav, Notice, PrimaryAction, Screen, Section, Spinner, Subtitle, Title, Txt, Wordmark,
+  AccountRow, Art, FoundationProvider, Gutter, MetaLine, Nav, Notice, PrimaryAction, Screen, Section, ShellStack, Spinner, Subtitle, Title, Txt,
+  Wordmark,
 } from '../shared/ui';
 
 type Route =
@@ -542,20 +543,24 @@ export function FormAccountApp(props: FormAccountAppProps) {
 
   /* ---------------- render by phase ---------------- */
 
+  // Every phase renders the same foundation root, so one toast host survives sign-in, onboarding and routes;
+  // a new account session clears toasts that belonged to the previous one.
+  const frame = (node: ReactNode) => <FoundationProvider scopeKey={accountSession?.sessionGeneration ?? null}>{node}</FoundationProvider>;
+
   if (phase === 'restoring' || phase === 'loading') {
-    return <Screen testID="screen-loading"><Section><Spinner /></Section></Screen>;
+    return frame(<Screen testID="screen-loading"><Section><Spinner /></Section></Screen>);
   }
   if (phase === 'error') {
-    return (
+    return frame(
       <Screen testID="screen-error" nav={<Nav leading={<Wordmark />} />}>
         <Section><Notice kind="error" text={fatal ?? COPY.network} announce action={{ label: 'Try again', onPress: () => void restore() }} /></Section>
-      </Screen>
+      </Screen>,
     );
   }
   if (phase === 'signed-out' || !data.account || !accountSession) {
     const who = actor();
-    return <AuthFlow resources={resources} capabilities={capabilities} identity={props.identity} notice={notice}
-      onAuthenticated={bind(who, () => void loadAccount())} onRetryCapabilities={() => void loadCapabilities()} />;
+    return frame(<AuthFlow resources={resources} capabilities={capabilities} identity={props.identity} notice={notice}
+      onAuthenticated={bind(who, () => void loadAccount())} onRetryCapabilities={() => void loadCapabilities()} />);
   }
 
   const account = data.account;
@@ -577,12 +582,12 @@ export function FormAccountApp(props: FormAccountAppProps) {
   const commitAccount = (next: Account) => { if (currentView() && next.accountId === who.accountId) commitFor(who, (d) => ({ ...d, account: next })); };
 
   if (phase === 'onboarding') {
-    return (
+    return frame(
       <OnboardingFlow resources={scopedResources} account={account} speech={speech} firstPlan={props.firstPlan}
         firstPlanCommand={props.firstPlan ? undefined : scopedResources.createFirstPlan} isCurrentSession={currentView}
         notifications={props.notifications} onOpenSystemSettings={props.onOpenSystemSettings}
         onAccount={commitAccount} onUnauthenticated={unauthenticated}
-        onDone={() => { if (currentView()) { setPhase('ready'); transitionRoutes([{ name: 'home' }], currentView); void reload(); } }} />
+        onDone={() => { if (currentView()) { setPhase('ready'); transitionRoutes([{ name: 'home' }], currentView); void reload(); } }} />,
     );
   }
 
@@ -916,14 +921,16 @@ export function FormAccountApp(props: FormAccountAppProps) {
       screen = null;
   }
   const covered = screen !== null;
-  return (
+  return frame(
     <View style={s.fill}>
-      <View key={`home:${sessionKey}`} style={[s.fill, covered && s.hidden]}
-        accessibilityElementsHidden={covered} importantForAccessibility={covered ? 'no-hide-descendants' : 'auto'}>
-        {home}
-      </View>
-      {covered ? <View key={`feature:${sessionKey}:${route.name}`} style={s.layer}>{screen}</View> : null}
-    </View>
+      <ShellStack routeKey={`${routes.length}:${route.name}`} depth={routes.length} resetKey={sessionKey}>
+        <View key={`home:${sessionKey}`} style={[s.fill, covered && s.hidden]}
+          accessibilityElementsHidden={covered} importantForAccessibility={covered ? 'no-hide-descendants' : 'auto'}>
+          {home}
+        </View>
+        {covered ? <View key={`feature:${sessionKey}:${route.name}`} style={s.layer}>{screen}</View> : null}
+      </ShellStack>
+    </View>,
   );
 }
 
