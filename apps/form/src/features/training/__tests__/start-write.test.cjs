@@ -40,7 +40,7 @@ for (const name of ['isSourcePlan', 'isSourceSession', 'sourceUnavailable', 'leg
 }
 const ui = Object.fromEntries(['View', 'Screen', 'Nav', 'Txt', 'Gutter', 'Title', 'Section', 'ErrorNotice', 'LoadingSkeleton',
   'SessionSummary', 'PrimaryAction', 'PlainAction', 'Choices', 'ChoiceRow', 'Notice'].map(name => [name, name]));
-const WorkoutStartScreen = actualFunction('screens.tsx', 'WorkoutStartScreen', { ...ui, ...model, ...copy, s: { targets: {} } });
+const WorkoutStartScreen = actualFunction('WorkoutStartScreen.tsx', 'WorkoutStartScreen', { ...ui, ...model, ...copy, s: { targets: {} } });
 const drain = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => {
   let resolve, reject;

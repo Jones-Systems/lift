@@ -678,7 +678,7 @@ class JourneyContractTests(unittest.TestCase):
                     with self.subTest(flow=path.name, line=index + 1):
                         self.assertEqual(lines[index - 3], '- runFlow: helpers/today-settled.yaml')
         self.assertEqual(reached, 5)
-        today = (REPO / 'apps/form/src/features/training/screens.tsx').read_text()
+        today = (REPO / 'apps/form/src/features/training/TodayScreen.tsx').read_text()
         self.assertIn('<PrimaryAction label="Start" captureId="a-today-primary" onPress={onStart} />', today)
         self.assertIn('<PrimaryAction label="Create a plan" icon="plus" captureId="a-today-primary"', today)
 
