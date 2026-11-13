@@ -384,6 +384,8 @@ test('confirmation disables every own session and grant, denies receipt replay a
   assert.equal(result.phase, 'disabled_pending_purge'); assert.equal(result.disabled, true);
   assert.equal(result.complete, false); assert.equal(result.localPurged, false); assert.equal(result.backupExpiryAt, null);
   assert.equal(result.billingCancellation, 'not_performed');
+  assert.equal(lifecycle.evidenceProjection(request.requestId), null);
+  assert.equal(f.db.prepare("SELECT 1 FROM sqlite_master WHERE name='account_deletion_evidence_operations'").get(), undefined);
   assert.deepEqual(f.db.prepare('SELECT id,userId FROM session ORDER BY id').all(), [{ id: 'session-b', userId: 'auth-b' }]);
   assert.equal(count(f.db, 'account_action_grants'), 0);
   assert.equal(f.ledger.lookup(accountA)?.epoch, 1);

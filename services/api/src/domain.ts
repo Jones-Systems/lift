@@ -222,19 +222,34 @@ export class Domain {
       this.retainItems(accountId, id, value.items); return stored(savedSourcePlan, this.plan(accountId, id));
     }).immediate();
   }
-  patchPlan(accountId: string, id: string, patch: Patch<PlanFields> & { expectedRevision: number }) {
+  patchPlan(accountId: string, id: string, patch: Patch<PlanFields> & { expectedRevision: number },
+    afterPlanWriteWithinWrite: (plan: SavedPlan) => void = () => {}) {
+    return this.db.transaction(() => this.mutatePlanWithinWrite(accountId, id, patch, afterPlanWriteWithinWrite)).immediate();
+  }
+  mutatePlanWithinWrite(accountId: string, id: string, patch: Patch<PlanFields> & { expectedRevision: number },
+    afterPlanWriteWithinWrite: (plan: SavedPlan) => void) {
     assertAccountActive(this.db, accountId);
+    if (!this.db.inTransaction) throw new DomainError(503, 'plan_transaction_required');
     return this.db.transaction(() => {
       assertAccountActive(this.db, accountId);
       const current = this.plan(accountId, id); revision(current.revision, patch.expectedRevision);
       if ('schema' in current) throw new DomainError(409, 'source_plan_legacy_edit_denied');
       if (current.archived) throw new DomainError(409, 'plan_archived');
-      const next: PlanFields = { name: patch.name ?? current.name, minutes: patch.minutes ?? current.minutes, items: patch.items ?? current.items };
+      const next = planFields.parse({ name: patch.name ?? current.name, minutes: patch.minutes ?? current.minutes, items: patch.items ?? current.items });
       this.validateItems(accountId, id, next.items);
-      this.db.prepare('UPDATE plans SET data=?,revision=revision+1,updated_at=? WHERE account_id=? AND id=? AND revision=?')
+      const updated = this.db.prepare('UPDATE plans SET data=?,revision=revision+1,updated_at=? WHERE account_id=? AND id=? AND revision=?')
         .run(JSON.stringify(next), now(), accountId, id, current.revision);
+      if (updated.changes !== 1) throw new DomainError(409, 'stale_revision');
       this.db.prepare('INSERT INTO plan_revisions VALUES (?,?,?,?,?)').run(accountId, id, current.revision + 1, JSON.stringify({ ...next, archived: false }), now());
-      this.retainItems(accountId, id, next.items); return this.plan(accountId, id);
+      this.retainItems(accountId, id, next.items);
+      const result = this.plan(accountId, id);
+      const effect: unknown = afterPlanWriteWithinWrite(result);
+      if (effect && typeof (effect as { then?: unknown }).then === 'function') {
+        void Promise.resolve(effect).catch(() => {});
+        throw new DomainError(503, 'plan_callback_must_be_synchronous');
+      }
+      assertAccountActive(this.db, accountId);
+      return result;
     }).immediate();
   }
   archivePlan(accountId: string, id: string, expected: number) {

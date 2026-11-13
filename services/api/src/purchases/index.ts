@@ -9,6 +9,10 @@ import type { AppleSandboxConfiguration, AppleDeliveryDecision, AppleEntitlement
 export { applePurchaseMigrationSql } from './migration.js';
 export { applePurchaseReconciliationMigrationSql } from './reconciliation-migration.js';
 export { createAppleHistoryReader } from './history-adapter.js';
+export { createAppleStatusTransport } from './status-adapter.js';
+export { AppleSubscriptionStatusReader } from './status.js';
+export type { AppleStatusTransport, AppleStatusOwners, AppleSubscriptionStatus, AppleSubscriptionStatusObservation,
+  AppleSubscriptionStatusOutcome, AppleSubscriptionStatusPorts } from './reconciliation.types.js';
 export type { AppleReconciliationPorts } from './reconciliation.js';
 export type { PurchaseOwner, ReconciliationCheckpoint, ReconciliationOutcome, NotificationOutcome,
   PurchaseOwnerWriter, PurchaseBackgroundWriter, OwnerReconciliation, AppleHistoryReader } from './reconciliation.types.js';
@@ -60,3 +64,6 @@ export function createAppleSandboxReconciliation(db: Sqlite, configuration: Appl
   const service = new ApplePurchaseReconciliation(db, configuration, createAppleSandboxReconciliationVerifier(configuration), ports);
   return { forOwner: actor => service.forOwner(actor), ingestNotification: payload => service.ingestNotification(payload) };
 }
+
+export { createSourceAppleSubscriptionStatus } from './status-source.js';
+export type { SourceStatusFacade, SourceStatusOwnerFacade, SourceStatusResult, SourceStatusProducerCustody, SourceStatusOriginalProducer, SourceStatusProducerSettlement, SourceStatusProducerKind } from './status-source.js';

@@ -1,3 +1,4 @@
+import type { SourceStatusReconciliationHooks } from './status-projection.js';
 import { createHash } from 'node:crypto';
 import type { HistoryResponse, JWSRenewalInfoDecodedPayload } from '@apple/app-store-server-library';
 import { DomainError } from '../errors.js';
@@ -16,6 +17,7 @@ export type AppleReconciliationPorts = Readonly<{
   ownerWriter: PurchaseOwnerWriter;
   history?: AppleHistoryReader;
   backgroundWriter?: PurchaseBackgroundWriter;
+  sourceStatus?: SourceStatusReconciliationHooks;
 }>;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const sha = (s: string): string => createHash('sha256').update(s).digest('hex');
@@ -50,7 +52,7 @@ export class ApplePurchaseReconciliation {
     private readonly verifier: AppleReconciliationVerifier, private readonly ports: AppleReconciliationPorts,
     private readonly clock: () => number = Date.now) {
     this.config = validateAppleConfiguration(configuration);
-    this.ledger = new ApplePurchaseService(db, this.config, verifier, clock);
+    this.ledger = new ApplePurchaseService(db, this.config, verifier, clock, ports.sourceStatus?.ledgerHooks);
     db.prepare('SELECT handle FROM apple_purchase_reconciliations LIMIT 1').get();
     db.prepare('SELECT notification_id FROM apple_purchase_notifications LIMIT 1').get();
   }
@@ -157,7 +159,12 @@ export class ApplePurchaseReconciliation {
             let rejection = rejected;
             if (page) {
               // A rejected item rolls back the entire page savepoint; its durable outcome still commits with no ledger effects.
-              try { this.db.transaction(() => this.apply(owner, page.items, assertWriter))(); }
+              try { this.db.transaction(() => {
+                this.apply(owner, page.items, assertWriter);
+                this.ports.sourceStatus?.afterHistoryPage({owner,handle,pageIndex:expectedPage,pageDigest:page.hash,
+                  transactionProofHashes:page.items.map(item=>sha(item.jws))});
+                assertWriter();
+              })(); }
               catch (error) {
                 if (!(error instanceof AppleProofError) || error.uncertain) throw error;
                 rejection = error.code;
@@ -268,6 +275,9 @@ export class ApplePurchaseReconciliation {
           reason: policyHeld ? 'apple_refund_reversal_policy_unavailable' : item ? null : 'renewal_evidence_only' };
         this.db.prepare('INSERT INTO apple_purchase_notifications VALUES (?,?,?,?,?,?,?)')
           .run(notificationId, payloadHash, signedPayload, owner.accountId, owner.originalTransactionId, renewalJws ?? null, JSON.stringify(result));
+        this.ports.sourceStatus?.afterNotification({owner,notificationId:notificationId!,payloadDigest:payloadHash,
+          transactionProofHashes:item ? [sha(item.jws)] : [],renewalProofHashes:renewalJws ? [sha(renewalJws)] : [],
+          reason:policyHeld ? 'refund_reversed' : 'notification_changed'});
         assertWriter(); return result;
       });
     } catch (error) { const failure = reason(error); return { status: failure.status, notificationId, reason: failure.code }; }

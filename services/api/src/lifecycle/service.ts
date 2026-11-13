@@ -1,3 +1,4 @@
+import { assertSourceActionAuthority, recheckSourceActionProofUse, consumeSourceActionProof, type SourceActionAuthority } from './reauthentication-proof.js';
 import { bindLocalPurgeExecutor, withLocalPurgeAuthority, type LocalPurgeAuthority } from './purge-executor.js';
 import { createCanonicalAccountWriter } from '../integration/account-modules/canonical-writer.js';
 import { randomBytes } from 'node:crypto';
@@ -11,6 +12,8 @@ import { bugIntakeOwnedTables } from '../bug-intake/migration.js';
 import { progressComparisonOwnedTables } from '../progress-comparison/migration.js';
 import { manualRetentionOwnedTables } from '../body/manual-retention-migration.js';
 import { feedbackOwnedTables } from '../training-feedback/migration.js';
+import type { ProviderConfirmationHook } from './providers/types.js';
+import type { LifecycleEvidenceStore, LocalEvidenceProjection } from './evidence-store.js';
 
 export const lifecyclePolicy = 'form-account-lifecycle-v1';
 export const secretSchema = z.string().regex(/^[A-Za-z0-9_-]{43,128}$/);
@@ -23,10 +26,13 @@ export const exportRequest = z.object({ grant: secretSchema }).strict();
 type RequestRow = { id: string; account_id: string; command_key: string; intent_hash: string; phase: string;
  requested_at_ms: number; disabled_at_ms: number | null; local_purged_at_ms: number | null; status_token_hash: string; status_token_expires_at_ms: number };
 const categories = ['form_training_history', 'phone_challenges', 'purchase_proofs', 'auth_identity', 'backups', 'providers', 'activity', 'community'];
+const localCoreTables = ['command_receipts', 'transcription_attempts', 'set_revisions', 'performed_sets', 'session_occurrences',
+  'workout_sessions', 'plan_item_ids', 'plan_revisions', 'plans', 'document_revisions', 'documents', 'entitlement_grants'];
 
 export class AccountLifecycle {
   constructor(private readonly db: Sqlite, readonly adapters: readonly LifecycleAdapter[], ledger: SuppressionLedger,
-    private readonly clock: () => number = Date.now) {
+    private readonly clock: () => number = Date.now, private readonly evidenceStore?: LifecycleEvidenceStore, private readonly providerConfirmation?: ProviderConfirmationHook) {
+    evidenceStore?.assertDatabase(db);
     if (!hasLifecycleSchema(db)) throw new DomainError(503, 'lifecycle_migration_required');
     if (new Set(adapters.map(x => x.category)).size !== adapters.length) throw new Error('Duplicate lifecycle category');
     bindSuppressionAuthority(db, ledger);
@@ -45,9 +51,9 @@ export class AccountLifecycle {
   }
   assertActive(context: AccountContext): void { assertActive(this.db, context); }
   private grant(context: AccountContext, token: string, purpose: 'account_delete' | 'account_export'): void {
-    const row = this.db.prepare('SELECT epoch,purpose,expires_at_ms,consumed_at_ms FROM account_action_grants WHERE token_hash=? AND account_id=? AND session_id=?')
-      .get(hash(token), context.accountId, context.sessionId) as { epoch: number; purpose: string; expires_at_ms: number; consumed_at_ms: number | null } | undefined;
-    if (!row || row.epoch !== context.epoch || row.purpose !== purpose || row.expires_at_ms <= this.clock() || row.consumed_at_ms !== null)
+    const row = this.db.prepare('SELECT epoch,purpose,method,expires_at_ms,consumed_at_ms FROM account_action_grants WHERE token_hash=? AND account_id=? AND session_id=?')
+      .get(hash(token), context.accountId, context.sessionId) as { epoch: number; purpose: string; method: string; expires_at_ms: number; consumed_at_ms: number | null } | undefined;
+    if (!row || row.method !== 'password' || row.epoch !== context.epoch || row.purpose !== purpose || row.expires_at_ms <= this.clock() || row.consumed_at_ms !== null)
       throw new DomainError(403, 'action_grant_invalid');
   }
   async issueGrant(context: AccountContext, input: z.infer<typeof actionGrantRequest>, verifyPassword: () => Promise<boolean>) {
@@ -90,20 +96,33 @@ export class AccountLifecycle {
     });
   }
   confirm(context: AccountContext, requestId: string, input: z.infer<typeof deletionConfirmation>) {
+    return this.confirmWithProof(context, requestId, input);
+  }
+  confirmSourceAction(authority: SourceActionAuthority, context: AccountContext, requestId: string, token: string) {
+    if (this.db.inTransaction) throw new DomainError(503, 'action_reauthentication_held');
+    assertSourceActionAuthority(authority, this.db);
+    return this.confirmWithProof(context, requestId, { grant: token, policyVersion: lifecyclePolicy, confirmation: 'delete_whole_account' }, authority);
+  }
+  private confirmWithProof(context: AccountContext, requestId: string, input: z.infer<typeof deletionConfirmation>, authority?: SourceActionAuthority) {
     try {
       return this.db.transaction(() => {
         assertActive(this.db, context);
         const row = this.db.prepare('SELECT * FROM account_deletion_requests WHERE id=? AND account_id=?').get(requestId, context.accountId) as RequestRow | undefined;
         if (!row) throw new DomainError(404, 'not_found');
         if (row.phase !== 'awaiting_reauthentication') throw new DomainError(409, 'deletion_confirmation_unavailable');
-        this.grant(context, input.grant, 'account_delete');
-        const now = this.clock();
+        const verified = authority ? consumeSourceActionProof(authority, this.db, context, input.grant, 'account_delete', requestId) : null;
+        if (!authority) this.grant(context, input.grant, 'account_delete');
+        const now = verified?.usedAtMs ?? this.clock();
+        const providerCapture = this.providerConfirmation?.capture({ context, requestId, now });
+        if (authority) recheckSourceActionProofUse(authority, this.db, context, input.grant, requestId);
         // The independent ledger commits first. Main rollback must never undo that suppression.
         const evidence = suppressionAuthority(this.db).recordDisable({ accountId: context.accountId, authUserId: context.authUserId,
           epoch: context.epoch + 1, requestId, disabledAtMs: now });
         this.applyDisable(evidence);
-        this.db.prepare("UPDATE account_deletion_requests SET phase='disabled_pending_purge',verified_at_ms=?,verification_method='password',disabled_at_ms=? WHERE id=?")
-          .run(now, evidence.disabledAtMs, requestId);
+        this.db.prepare("UPDATE account_deletion_requests SET phase='disabled_pending_purge',verified_at_ms=?,verification_method=?,disabled_at_ms=? WHERE id=?")
+          .run(verified?.verifiedAtMs ?? now, verified?.method ?? 'password', evidence.disabledAtMs, requestId);
+        try { this.providerConfirmation?.persist(providerCapture, requestId); }
+        catch { throw new Error('provider_intent_persistence_unknown'); }
         for (const adapter of this.adapters) {
           let result;
           try { result = adapter.suppress(context.accountId, evidence.epoch); } catch { result = { status: 'unknown' as const }; }
@@ -149,6 +168,10 @@ export class AccountLifecycle {
       this.db.prepare('UPDATE account_action_grants SET consumed_at_ms=? WHERE token_hash=? AND consumed_at_ms IS NULL').run(this.clock(), hash(token));
     });
   }
+  consumeSourceActionExportGrant(authority: SourceActionAuthority, context: AccountContext, token: string) {
+    if (this.db.inTransaction) throw new DomainError(503, 'action_reauthentication_held');
+    return withActiveWrite(this.db, context, () => consumeSourceActionProof(authority, this.db, context, token, 'account_export'));
+  }
   // No public purge route. Root must separately authorize any non-synthetic execution.
   purgeLocal(capability: LocalPurgeAuthority) {
     return withLocalPurgeAuthority(this.db, capability, authority => {
@@ -156,8 +179,9 @@ export class AccountLifecycle {
       const row = this.db.prepare('SELECT * FROM account_deletion_requests WHERE id=?').get(requestId) as RequestRow | undefined;
       if (!row) throw new DomainError(404, 'not_found');
       const evidence = authority;
-      const core = ['command_receipts', 'transcription_attempts', 'set_revisions', 'performed_sets', 'session_occurrences',
-        'workout_sessions', 'plan_item_ids', 'plan_revisions', 'plans', 'document_revisions', 'documents', 'entitlement_grants'];
+      const attempt = this.evidenceStore?.begin(authority, this.evidenceCategories(), this.clock());
+      const results: { category: string; status: import('./types.js').LifecycleResult['status'] }[] = [];
+      const core = localCoreTables;
       for (const table of core) this.db.prepare(`DELETE FROM ${table} WHERE account_id=?`).run(row.account_id);
       this.db.prepare('DELETE FROM apple_purchase_grants WHERE account_id=?').run(row.account_id);
       // Phone-step completion covers only immutable attribution; unbound history remains unresolved.
@@ -178,6 +202,7 @@ export class AccountLifecycle {
       for (const adapter of this.adapters) {
         if (!authority.qualifiedCategories.includes(adapter.category)) {
           qualified = false;
+          results.push({ category: adapter.category, status: 'pending' });
           this.db.prepare("UPDATE account_deletion_steps SET status='pending',evidence_ref=NULL,updated_at_ms=? WHERE request_id=? AND category=?")
             .run(this.clock(), requestId, adapter.category);
           continue;
@@ -185,11 +210,13 @@ export class AccountLifecycle {
         const guarded = writer.guardLifecycleAdapter(adapter);
         const result = guarded.purge(requestId, row.account_id);
         const verified = guarded.verifySuppressed(row.account_id, evidence.epoch);
-        const complete = result.status === 'complete' && verified.status === 'complete';
-        qualified &&= complete;
         const residual = result.status === 'complete' ? verified.status : result.status;
+        const status = residual === 'complete' && this.evidenceStore && !this.evidenceStore.hasLocalAbsence(adapter.category)
+          ? 'unavailable' : residual;
+        qualified &&= status === 'complete';
+        results.push({ category: adapter.category, status });
         this.db.prepare('UPDATE account_deletion_steps SET status=?,evidence_ref=?,updated_at_ms=? WHERE request_id=? AND category=?')
-          .run(complete ? 'complete' : residual === 'unavailable' ? 'pending' : residual, operationId, this.clock(), requestId, adapter.category);
+          .run(status === 'unavailable' ? 'pending' : status, operationId, this.clock(), requestId, adapter.category);
       }
       for (const table of core) if (this.db.prepare(`SELECT 1 FROM ${table} WHERE account_id=? LIMIT 1`).get(row.account_id))
         throw new DomainError(503, 'local_purge_readback_failed');
@@ -201,8 +228,49 @@ export class AccountLifecycle {
         .run(this.clock(), requestId);
       this.db.prepare("UPDATE account_deletion_requests SET phase='pending_external',local_purged_at_ms=? WHERE id=?")
         .run(qualified ? this.clock() : null, requestId);
-      return this.view(this.db.prepare('SELECT * FROM account_deletion_requests WHERE id=?').get(requestId) as RequestRow);
+      if (attempt && this.evidenceStore) {
+        results.push({ category: 'form_training_history', status: 'complete' }, { category: 'phone_challenges', status: 'complete' });
+        const projection = this.evidenceStore.finish(attempt, results, this.clock(), category => this.evidenceReadback(authority.accountId, authority.authUserId, authority.epoch, category));
+        this.db.prepare('UPDATE account_deletion_requests SET local_purged_at_ms=? WHERE id=?')
+          .run(projection.localPurged ? projection.firstObservedAtMs : null, requestId);
+        for (const category of projection.completedCategories) this.db.prepare(`UPDATE account_deletion_steps SET updated_at_ms=
+          (SELECT min(observed_at_ms) FROM account_deletion_evidence WHERE request_id=? AND category=? AND database_generation=? AND result='qualifying')
+          WHERE request_id=? AND category=?`).run(requestId, category, projection.calculation.binding.databaseGeneration, requestId, category);
+      }
+      const response = this.view(this.db.prepare('SELECT * FROM account_deletion_requests WHERE id=?').get(requestId) as RequestRow);
+      if (attempt) this.evidenceStore!.finalCheck(attempt, category => this.evidenceLocalAbsent(authority.accountId, authority.authUserId, category));
+      return response;
     });
+  }
+  private evidenceCategories(): readonly string[] { return ['form_training_history', 'phone_challenges', ...this.adapters.map(adapter => adapter.category)]; }
+  private evidenceReadback(accountId: string, authUserId: string, epoch: number, category: string): boolean {
+    if (!['form_training_history', 'phone_challenges'].includes(category) &&
+      this.adapters.find(value => value.category === category)?.verifySuppressed(accountId, epoch).status !== 'complete') return false;
+    return this.evidenceLocalAbsent(accountId, authUserId, category);
+  }
+  private evidenceLocalAbsent(accountId: string, authUserId: string, category: string): boolean {
+    if (category === 'form_training_history') return !localCoreTables.some(table =>
+      this.db.prepare(`SELECT 1 FROM ${table} WHERE account_id=? LIMIT 1`).get(accountId)) &&
+      !this.db.prepare('SELECT 1 FROM apple_purchase_grants WHERE account_id=? LIMIT 1').get(accountId) &&
+      !this.db.prepare("SELECT 1 FROM account WHERE userId=? AND providerId='credential' LIMIT 1").get(authUserId) &&
+      !this.db.prepare('SELECT 1 FROM session WHERE userId=? LIMIT 1').get(authUserId);
+    if (category === 'phone_challenges') return !this.db.prepare('SELECT 1 FROM phone_challenges WHERE auth_user_id=? LIMIT 1').get(authUserId);
+    return this.evidenceStore?.localAbsent(accountId, category) === true;
+  }
+  evidenceProjection(requestId: string): LocalEvidenceProjection | null {
+    if (!this.evidenceStore) return null;
+    const read = () => {
+      const identity = this.db.prepare(`SELECT f.id accountId,f.auth_user_id authUserId,l.epoch FROM account_deletion_requests r
+        JOIN form_accounts f ON f.id=r.account_id JOIN account_lifecycle l ON l.account_id=f.id WHERE r.id=?`).get(requestId) as
+        { accountId: string; authUserId: string; epoch: number } | undefined;
+      const suppressed = new Set(['form_training_history', 'phone_challenges']);
+      if (identity) for (const adapter of this.adapters)
+        if (adapter.verifySuppressed(identity.accountId, identity.epoch).status === 'complete') suppressed.add(adapter.category);
+      // Complete all adapter callbacks before the final SQL-only absence pass.
+      return this.evidenceStore!.project(requestId, this.evidenceCategories(), category => !!identity && suppressed.has(category) &&
+        this.evidenceLocalAbsent(identity.accountId, identity.authUserId, category));
+    };
+    return this.db.inTransaction ? read() : this.db.transaction(read).immediate();
   }
   status(requestId: string, secret: string) {
     try {
@@ -220,8 +288,15 @@ export class AccountLifecycle {
   }
   private view(row: RequestRow, phase?: string) {
     const steps = this.db.prepare('SELECT category,status,retain_until_ms FROM account_deletion_steps WHERE request_id=? ORDER BY category').all(row.id) as { category: string; status: string; retain_until_ms: number | null }[];
+    let projection: LocalEvidenceProjection | null = null;
+    if (this.evidenceStore && row.disabled_at_ms !== null) {
+      try { projection = this.evidenceProjection(row.id); } catch { /* Unproved current evidence never exposes historical success. */ }
+      for (const step of steps) if (this.evidenceCategories().includes(step.category) && step.status === 'complete' &&
+        !projection?.completedCategories.includes(step.category)) step.status = 'pending';
+    }
     return { requestId: row.id, phase: phase ?? row.phase, initiated: true, disabled: !!row.disabled_at_ms || phase === 'disabled_pending_reconciliation',
-      localPurged: row.local_purged_at_ms !== null, complete: false, requestedAt: new Date(row.requested_at_ms).toISOString(),
+      localPurged: this.evidenceStore ? projection?.localPurged === true : row.local_purged_at_ms !== null,
+      complete: false, requestedAt: new Date(row.requested_at_ms).toISOString(),
       backupExpiryAt: null, billingCancellation: 'not_performed', reauthentication: 'password_only_qualified_source', steps };
   }
 }
