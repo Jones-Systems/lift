@@ -21,6 +21,7 @@ function load(name) {
   return module.exports;
 }
 const { createActivitySession } = load('integration/activitySession.ts');
+const { ActivityResources } = load('activity/resources.ts');
 const { activityPresentation, pendingChannels } = load('activity/presentation/presentation.ts');
 const editing = load('activity/presentation/draftEditing.ts');
 const model = load('activity/drafts/model.ts');
@@ -36,12 +37,12 @@ function entry(payload, changes = {}) {
     items: payload.items.map(item => ({ ...editing.clone(item), snapshot: editing.clone(exercise) })),
     createdAt: '2026-11-13T10:00:00Z', updatedAt: '2026-11-13T10:00:00Z', ...changes };
 }
-function existing() {
+function existing(changes = {}) {
   const context = model.freezeCaptureContext({ accountGeneration: 'session-one', draftId: 'original-draft',
     capturedAt: '2026-11-12T01:30:00Z', timeZone: calendar.timeZone, selectedDate: '2026-11-10' });
   let draft = model.manualActivityDraft(context, exercise);
   draft = model.setDraftLoad(draft, draft.candidate.items[0].id, { state: 'knownValue', value: 0, unit: 'lb', basis: 'assistance' });
-  return entry(draftToActivityWrite(model.confirmStructuredReview(draft)));
+  return entry(draftToActivityWrite(model.confirmStructuredReview(draft)), changes);
 }
 function fixture(options = {}) {
   let current = true, serial = 0;
@@ -85,7 +86,8 @@ function fixture(options = {}) {
   const actions = () => presentation.actions(view);
   return { context, presentation, actions, calls, stored, expire: () => { current = false; },
     detach: () => presentation.detach(view), attach: () => { view = presentation.attach(context); return view; },
-    state: () => presentation.getSnapshot(), writes: () => calls.filter(call => ['POST', 'PATCH'].includes(call.method)) };
+    state: () => presentation.getSnapshot(), keyCount: () => serial,
+    writes: () => calls.filter(call => ['POST', 'PATCH'].includes(call.method)) };
 }
 async function manual(f) {
   await f.actions().initialize();
@@ -95,8 +97,8 @@ async function manual(f) {
   await f.actions().chooseExercise(id, exercise.ref);
   await f.actions().edit(result => editing.changeLoad(result, id, { state: 'unknown', confirmed: true }));
 }
-async function detail(f) {
-  const value = existing(); f.stored.set(value.id, value);
+async function detail(f, value = existing()) {
+  f.stored.set(value.id, value);
   await f.actions().initialize(); await f.actions().loadDay('2026-11-10'); await f.actions().openEntry(value.id);
   return value;
 }
@@ -190,6 +192,73 @@ test('same binding retains one consumer and cached snapshot; detached handlers s
   assert.equal(f.state().route, 'editor'); assert.ok(f.state().consumer.draft.result);
   await f.actions().review(); assert.equal(f.state().route, 'review');
 });
+test('save A then open distinct B stays on B across reattachment without replaying A reads or old callbacks', async () => {
+  const f = fixture(); await manual(f); await f.actions().review(); await f.actions().save();
+  const b = existing({ id: 'entry-two', draftId: 'draft-two', revision: 7 }); f.stored.set(b.id, b);
+  await f.actions().back(); await f.actions().loadDay('2026-11-10'); await f.actions().openEntry(b.id);
+  const old = f.actions(), reads = f.calls.length;
+  f.detach(); f.attach(); await f.actions().initialize(); await f.actions().showReceipt();
+  assert.equal(f.state().route, 'detail'); assert.deepEqual(f.state().detail.value, b); assert.equal(f.state().receipt, null);
+  assert.equal(f.state().consumer.draft.saved.id, 'entry-one'); assert.equal(f.calls.length, reads);
+  await old.correction(); await old.back(); assert.equal(f.calls.length, reads);
+  await f.actions().correction();
+  assert.deepEqual(f.state().consumer.draft.editTarget, { id: b.id, expectedRevision: 7 });
+});
+test('reattachment during a saved entry void review preserves its fresh target and current confirmation', async () => {
+  const f = fixture(); await manual(f); await f.actions().review(); await f.actions().save();
+  await f.actions().beginVoid(); const target = editing.clone(f.state().consumer.voidIntent.entry), old = f.actions();
+  const reads = f.calls.length;
+  f.detach(); f.attach(); await f.actions().initialize(); await f.actions().showReceipt();
+  assert.equal(f.state().route, 'void'); assert.equal(f.state().consumer.voidIntent.phase, 'review');
+  assert.deepEqual(f.state().consumer.voidIntent.entry, target); assert.equal(f.calls.length, reads);
+  assert.equal(f.state().receipt, null); assert.equal(f.state().consumer.draft.saved.id, target.id);
+  await old.confirmVoid(); assert.equal(f.writes().length, 1);
+  await f.actions().confirmVoid(); assert.equal(f.writes().length, 2);
+  assert.equal(f.writes()[1].pathname, `/v1/activity/entries/${target.id}/void`);
+  assert.deepEqual(f.writes()[1].body, { expectedRevision: target.revision });
+  assert.equal(f.state().route, 'detail'); assert.equal(f.state().receipt.status, 'voided');
+});
+test('an old void receipt cannot replace a later distinct correction editor on reattachment', async () => {
+  const f = fixture(); await detail(f); await f.actions().beginVoid(); await f.actions().confirmVoid();
+  const b = existing({ id: 'entry-two', draftId: 'draft-two', revision: 7 }); f.stored.set(b.id, b);
+  await f.actions().back(); await f.actions().loadDay('2026-11-10'); await f.actions().openEntry(b.id); await f.actions().correction();
+  const draft = editing.clone(f.state().consumer.draft), old = f.actions();
+  f.detach(); f.attach(); await f.actions().initialize(); await f.actions().showReceipt();
+  assert.equal(f.state().route, 'editor'); assert.deepEqual(f.state().consumer.draft, draft);
+  assert.equal(f.state().consumer.voidIntent.phase, 'voided'); assert.equal(f.state().receipt, null);
+  await old.review(); assert.equal(f.state().route, 'editor');
+  await f.actions().review(); await f.actions().save();
+  assert.equal(f.writes().length, 2); assert.equal(f.writes()[1].pathname, '/v1/activity/entries/entry-two');
+  assert.equal(f.state().receipt.id, b.id); assert.equal(f.state().receipt.revision, 8);
+});
+test('a save or original unknown retry completed while detached restores only that operation receipt', async () => {
+  for (const retry of [false, true]) {
+    const pending = deferred(); let attempts = 0;
+    const f = fixture({ intercept: call => call.method === 'POST' && call.pathname.endsWith('/entries')
+      ? retry && ++attempts === 1 ? Promise.reject({ status: 503 }) : pending.promise : undefined });
+    await manual(f); await f.actions().review(); const old = f.actions();
+    let saving;
+    if (retry) { await old.save(); assert.equal(f.state().consumer.draft.phase, 'unknown'); saving = f.actions().retry('entry'); }
+    else saving = old.save();
+    const original = editing.clone(f.writes()[0]); f.detach();
+    const receipt = entry(original.body); f.stored.set(receipt.id, receipt); pending.resolve(receipt); await saving;
+    assert.notEqual(f.state().route, 'detail'); assert.deepEqual(f.state().receipt, receipt);
+    assert.equal(f.state().consumer.draft.phase, 'saved');
+    f.attach(); assert.equal(f.state().route, 'detail'); await f.actions().initialize();
+    assert.deepEqual(f.state().detail.value, receipt);
+    const reads = f.calls.length; await f.actions().showReceipt(); await old.back(); await old.save();
+    assert.equal(f.calls.length, reads); assert.equal(f.writes().length, retry ? 2 : 1);
+    if (retry) assert.deepEqual(f.writes()[1], original);
+    assert.equal(f.calls.some(call => call.method === 'CLOSE'), false);
+  }
+});
+test('root Back invokes the current close callback once; retained detached and expired callbacks stay inert', async () => {
+  const f = fixture(); await f.actions().initialize(); const old = f.actions();
+  f.detach(); f.attach(); await old.back(); assert.equal(f.calls.some(call => call.method === 'CLOSE'), false);
+  await f.actions().back(); assert.equal(f.calls.filter(call => call.method === 'CLOSE').length, 1);
+  const expired = f.actions(); f.expire(); await expired.back(); await old.back();
+  assert.equal(f.calls.filter(call => call.method === 'CLOSE').length, 1);
+});
 test('unknown command survives observed detach; completion under the original attachment cannot navigate a remount', async () => {
   const pending = deferred();
   const f = fixture({ intercept: call => call.method === 'POST' && call.pathname.endsWith('/entries') ? pending.promise : undefined });
@@ -218,19 +287,53 @@ test('root background exposes the volatile-custody limit and never fabricates a 
   await f.actions().retry('entry'); await f.actions().beginManual(); assert.equal(f.writes().length, 1);
   assert.match(f.state().notice, /lost its pending/);
 });
-test('create and edit receipt mismatch fail closed after controller clears pending; no success navigation or invented retry', async () => {
+test('malformed create/edit receipt stays unknown with immutable original custody; valid exact retry confirms once', async () => {
   for (const correction of [false, true]) for (const mutate of [value => ({ ...value, draftId: 'wrong-draft' }),
     value => ({ ...value, revision: 99 }),
     value => ({ ...value, items: value.items.map(item => ({ ...item, load: { state: 'knownValue', value: 123, unit: 'kg', basis: 'total' } })) }),
     ...(correction ? [value => ({ ...value, id: 'wrong-entry' })] : [])]) {
-    const f = fixture({ intercept: call => ['POST', 'PATCH'].includes(call.method) && !call.pathname.endsWith('/void')
-      ? Promise.resolve(mutate(entry(call.method === 'PATCH' ? (({ expectedRevision, ...payload }) => payload)(call.body) : call.body,
-        { revision: correction ? 2 : 1 }))) : undefined });
-    if (correction) { await detail(f); await f.actions().correction(); } else await manual(f);
+    let attempts = 0, malformed, originalReceipt;
+    const target = existing({ id: 'entry-to-correct', revision: 4 });
+    const f = fixture({ intercept: call => {
+      if (!['POST', 'PATCH'].includes(call.method) || call.pathname.endsWith('/void')) return undefined;
+      if (++attempts !== 1) return Promise.resolve(editing.clone(originalReceipt));
+      const { expectedRevision, ...payload } = call.body;
+      originalReceipt = entry(payload, correction ? { id: target.id, revision: expectedRevision + 1 } : {});
+      f.stored.set(originalReceipt.id, editing.clone(originalReceipt));
+      malformed = mutate(editing.clone(originalReceipt));
+      return Promise.resolve(malformed);
+    } });
+    let confirmations = 0, previousPhase;
+    const subscription = f.context.activity.controller.subscribe(state => {
+      if (state.phase === 'saved' && previousPhase !== 'saved') confirmations += 1;
+      previousPhase = state.phase;
+    });
+    if (correction) { await detail(f, target); await f.actions().correction(); } else await manual(f);
     await f.actions().review(); await f.actions().save();
-    assert.equal(f.state().integrityUnavailable, true); assert.notEqual(f.state().route, 'detail');
-    assert.equal(f.state().consumer.draft.pending, null); assert.equal(f.state().receipt, null);
-    await f.actions().retry('entry'); await f.actions().beginManual(); assert.equal(f.writes().length, 1);
+    const original = editing.clone(f.writes()[0]);
+    const { expectedRevision, ...payload } = original.body;
+    const pending = { key: original.key, payload, target: correction ? { id: target.id, expectedRevision: 4 } : null };
+    assert.equal(f.state().consumer.draft.phase, 'unknown');
+    assert.equal(f.state().consumer.draft.error.code, 'activity_receipt_unconfirmed');
+    assert.equal(f.state().consumer.draft.error.originalEffectUnknown, true);
+    assert.deepEqual(f.state().consumer.draft.pending, pending);
+    assert.equal(f.state().integrityUnavailable, false); assert.equal(f.state().route, 'review');
+    assert.equal(f.state().consumer.draft.saved, null); assert.equal(f.state().receipt, null); assert.equal(confirmations, 0);
+    malformed.date.localDate = '2026-01-01'; malformed.items[0].id = 'mutated-response-item';
+    await f.actions().back(); await f.actions().beginManual(); await f.actions().loadDay('2026-11-11');
+    await f.actions().openEntry(target.id); await f.actions().correction(); await f.actions().beginVoid(); await f.actions().save();
+    assert.equal(f.state().route, 'review'); assert.equal(f.state().selectedDate, '2026-11-10');
+    assert.deepEqual(f.state().consumer.draft.pending, pending);
+    assert.equal(f.writes().length, 1); assert.equal(f.calls.some(call => call.method === 'CLOSE'), false);
+    const issuedKeys = f.keyCount(); await f.actions().retry('entry'); assert.equal(f.keyCount(), issuedKeys);
+    assert.deepEqual(f.writes()[1], original); assert.equal(f.writes().length, 2);
+    assert.equal(f.state().consumer.draft.phase, 'saved'); assert.equal(f.state().consumer.draft.pending, null);
+    assert.equal(f.state().route, 'detail'); assert.equal(f.state().receipt.id, correction ? target.id : 'entry-one');
+    assert.equal(f.state().receipt.revision, correction ? 5 : 1); assert.equal(f.state().receipt.status, 'recorded');
+    assert.deepEqual(f.state().receipt, originalReceipt);
+    assert.equal(confirmations, 1);
+    await f.actions().retry('entry'); await f.actions().save();
+    assert.equal(confirmations, 1); assert.equal(f.writes().length, 2); subscription.remove();
   }
 });
 test('editing directly from review invalidates the old Save callback and preserves exact item identity', async () => {
@@ -311,6 +414,21 @@ test('detached void completion retains its validated receipt without navigating 
   await f.actions().showReceipt(); assert.equal(f.state().route, 'detail'); assert.equal(f.state().receipt.revision, 2);
   assert.equal(f.writes().length, 1);
 });
+test('an original unknown void retry completed while detached restores its own target receipt on reattachment', async () => {
+  const pending = deferred(); let attempts = 0;
+  const f = fixture({ intercept: call => call.pathname.endsWith('/void')
+    ? ++attempts === 1 ? Promise.reject({ status: 503 }) : pending.promise : undefined });
+  const originalEntry = await detail(f); await f.actions().beginVoid(); await f.actions().confirmVoid();
+  assert.equal(f.state().consumer.voidIntent.phase, 'unknown'); const original = editing.clone(f.writes()[0]);
+  const old = f.actions(), retry = old.retry('void'); f.detach();
+  const receipt = { ...originalEntry, status: 'voided', revision: 2 };
+  f.stored.set(receipt.id, receipt); pending.resolve(receipt); await retry;
+  assert.equal(f.state().route, 'void'); assert.deepEqual(f.state().receipt, receipt);
+  f.attach(); await f.actions().initialize();
+  assert.equal(f.state().route, 'detail'); assert.deepEqual(f.state().detail.value, receipt);
+  const reads = f.calls.length; await f.actions().showReceipt(); await old.retry('void'); await old.back();
+  assert.equal(f.calls.length, reads); assert.equal(f.writes().length, 2); assert.deepEqual(f.writes()[1], original);
+});
 test('a semantically different void receipt fails closed even after the consumer has cleared its command', async () => {
   const f = fixture({ intercept: call => call.pathname.endsWith('/void') ? Promise.resolve({ ...existing(), status: 'voided', revision: 2, kind: 'exerciseSnack' }) : undefined });
   await detail(f); await f.actions().beginVoid(); await f.actions().confirmVoid();
@@ -322,6 +440,24 @@ test('calendar field edits invalidate previously rendered confirmation handlers'
   await f.actions().initialize(); await f.actions().setupCalendar(); await f.actions().reviewCalendar(calendar.timeZone);
   const old = f.actions(); await f.actions().invalidateCalendarReview(); await old.confirmCalendar();
   assert.equal(f.writes().length, 0);
+});
+test('null calendar setup forwards the real prototype method through the root session only on explicit confirmation', async () => {
+  const f = fixture({ intercept: call => call.pathname.endsWith('/calendar')
+    ? Promise.resolve(call.method === 'GET' ? null : calendar) : undefined });
+  assert.ok(f.context.activity.resources instanceof ActivityResources);
+  assert.equal(Object.hasOwn(f.context.activity.resources, 'createCalendar'), false);
+  assert.equal(f.context.activity.resources.createCalendar, ActivityResources.prototype.createCalendar);
+  await f.actions().initialize();
+  assert.equal(f.state().consumer.calendar.status, 'ready'); assert.equal(f.state().consumer.calendar.value, null);
+  await f.actions().setupCalendar(); assert.equal(f.writes().length, 0);
+  await f.actions().reviewCalendar(calendar.timeZone); assert.equal(f.writes().length, 0);
+  const confirmation = f.actions(); await confirmation.confirmCalendar(); await confirmation.confirmCalendar();
+  assert.equal(f.writes().length, 1);
+  assert.deepEqual(f.writes()[0], { url: '/v1/activity/calendar', pathname: '/v1/activity/calendar', method: 'POST',
+    body: { timeZone: calendar.timeZone, confirmed: true }, key: 'secure-key-0000000000000001' });
+  assert.equal(f.state().consumer.calendarIntent.phase, 'configured'); assert.equal(f.state().route, 'list');
+  assert.deepEqual(f.state().consumer.calendar.value, calendar); assert.equal(f.keyCount(), 1);
+  await f.actions().beginManual(); assert.equal(f.state().route, 'editor'); assert.equal(f.writes().length, 1);
 });
 test('root disposal clears pending custody; a fresh root does not reconstruct or replay it', async () => {
   const f = fixture({ intercept: call => call.method === 'POST' && call.pathname.endsWith('/entries') ? Promise.reject({ status: 503 }) : undefined });
@@ -351,11 +487,20 @@ test('calendar null is setup, failure is unavailable, unknown calendar retries o
   let attempt = 0;
   const f = fixture({ intercept: call => call.pathname.endsWith('/calendar') ? call.method === 'GET' ? Promise.resolve(null)
     : ++attempt === 1 ? Promise.reject({ status: 503 }) : Promise.resolve(calendar) : undefined });
+  assert.ok(f.context.activity.resources instanceof ActivityResources);
+  assert.equal(Object.hasOwn(f.context.activity.resources, 'createCalendar'), false);
   await f.actions().initialize(); assert.equal(f.state().consumer.calendar.value, null);
   await f.actions().setupCalendar(); await f.actions().reviewCalendar(calendar.timeZone); assert.equal(f.writes().length, 0);
-  await f.actions().confirmCalendar(); const first = f.writes()[0]; const reads = f.calls.length;
+  await f.actions().confirmCalendar(); assert.equal(f.writes().length, 1);
+  assert.equal(f.state().consumer.calendarIntent.phase, 'unknown');
+  const first = editing.clone(f.writes()[0]); const reads = f.calls.length, issuedKeys = f.keyCount();
+  assert.equal(first.pathname, '/v1/activity/calendar'); assert.equal(first.method, 'POST');
+  assert.deepEqual(first.body, { timeZone: calendar.timeZone, confirmed: true }); assert.ok(first.key);
   await f.actions().reloadCalendar(); assert.equal(f.calls.length, reads);
   await f.actions().retry('calendar'); assert.deepEqual(f.writes()[1], first);
+  assert.equal(f.writes().length, 2); assert.equal(f.keyCount(), issuedKeys);
+  assert.equal(f.state().consumer.calendarIntent.phase, 'configured');
+  await f.actions().retry('calendar'); assert.equal(f.writes().length, 2);
   assert.equal(f.state().consumer.calendar.value.timeZone, calendar.timeZone);
   const failed = fixture({ intercept: call => call.pathname.endsWith('/calendar') ? Promise.reject({ status: 503 }) : undefined });
   await failed.actions().initialize(); assert.equal(failed.state().consumer.calendar.status, 'unavailable');

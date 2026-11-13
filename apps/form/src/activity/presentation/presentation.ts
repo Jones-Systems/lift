@@ -80,6 +80,7 @@ export class ActivityPresentation {
       return value;
     };
     const resources = { ...binding.activity.resources,
+      createCalendar: (timeZone: string, key: string) => binding.activity.resources.createCalendar(timeZone, key),
       calendar: () => read(async () => {
         const calendar = await binding.activity.resources.calendar();
         if (calendar !== null && (!calendar || !validTimeZone(calendar.timeZone) || !parseCivilDate(calendar.activationDate)
@@ -139,13 +140,13 @@ export class ActivityPresentation {
     this.view = Object.freeze({ context, attachment: ++this.attachment });
     this.viewEpoch += 1; this.review = null; this.calendarReviewZone = null;
     if (this.route === 'review') this.route = 'editor';
-    if (this.state.draft.phase === 'saved' && this.state.draft.saved && !this.integrityUnavailable) {
-      this.receipt = clone(this.state.draft.saved); this.detail = { status: 'ready', value: clone(this.state.draft.saved) };
-      this.route = 'detail'; this.receiptAwaitingView = true;
-    }
-    if (this.state.voidIntent.phase === 'voided' && !this.integrityUnavailable && this.validVoidReceipt(this.state.voidIntent.entry)) {
-      this.receipt = clone(this.state.voidIntent.entry); this.detail = { status: 'ready', value: clone(this.state.voidIntent.entry) };
-      this.route = 'detail'; this.receiptAwaitingView = true;
+    const entryCompleted = ['editor', 'review', 'speech'].includes(this.route) && this.state.draft.phase === 'saved'
+      && this.issued?.epoch === this.state.draft.epoch && sameValue(this.receipt, this.state.draft.saved);
+    const voidCompleted = this.route === 'void' && this.state.voidIntent.phase === 'voided'
+      && this.validVoidReceipt(this.state.voidIntent.entry) && sameValue(this.receipt, this.state.voidIntent.entry);
+    if (this.receiptAwaitingView && this.receipt && !this.integrityUnavailable && (entryCompleted || voidCompleted)) {
+      this.detail = { status: 'ready', value: clone(this.receipt) };
+      this.route = 'detail';
     }
     if (this.route === 'calendar' && this.state.calendarIntent.phase === 'configured') this.route = 'list';
     if (['structuredReview', 'rejected'].includes(this.state.draft.phase) && this.state.draft.result?.candidate.performedConfirmed)
@@ -211,7 +212,11 @@ export class ActivityPresentation {
   private blocked(): boolean {
     return this.busy || this.integrityUnavailable || this.custodyUnavailable || pendingChannels(this.state).length > 0;
   }
-  private navigate(route: ActivityRoute): void { this.route = route; this.viewEpoch += 1; this.review = null; this.notice = null; this.publish(); }
+  private navigate(route: ActivityRoute): void {
+    this.receiptAwaitingView = false;
+    if (route !== 'detail') this.receipt = null;
+    this.route = route; this.viewEpoch += 1; this.review = null; this.notice = null; this.publish();
+  }
   private async perform(stamp: ActionStamp, work: () => void | Promise<void>, draft = false): Promise<void> {
     if (!this.current()) { this.retire(); return; }
     if (!this.admit(stamp, draft) || this.blocked()) return;
