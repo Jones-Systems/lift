@@ -1,10 +1,12 @@
 import { ApiError, type AuthAttemptGuard, type FormTransport } from '../api/transport';
 import type { IdentityPorts, PhoneAuthPort } from '../features/contract';
+import { createPasswordRecoverySession, type PasswordRecoverySession } from './passwordRecoverySession';
 
 /** Root lifecycle fence; construction is inert and phone secrets exist only after an explicit action. */
 export function createAuthSession(api: FormTransport, identity: IdentityPorts = {}) {
   let active = false, epoch = 0;
   let attempt: (PhoneAuthPort & { dispose?: () => void }) | null = null;
+  let recovery: PasswordRecoverySession | null = null;
   const guard = (): AuthAttemptGuard => {
     const generation = epoch;
     return { isCurrent: () => active && generation === epoch };
@@ -13,6 +15,9 @@ export function createAuthSession(api: FormTransport, identity: IdentityPorts = 
     'This sign-in attempt ended. Reconcile any uncertain result before trying again.', false, unknown);
   const invalidate = () => {
     epoch++;
+    const previousRecovery = recovery;
+    recovery = null;
+    previousRecovery?.dispose();
     const previous = attempt;
     attempt = null;
     previous?.dispose?.();
@@ -46,6 +51,12 @@ export function createAuthSession(api: FormTransport, identity: IdentityPorts = 
     deactivate() { active = false; invalidate(); },
     invalidate,
     isActive: () => active,
+    openPasswordRecovery(onEnd: (notice: string | null) => void) {
+      if (!active) throw changed();
+      invalidate();
+      recovery = createPasswordRecoverySession(api, guard(), onEnd);
+      return recovery;
+    },
     phone: identity.phoneFactory || identity.phone ? phone : undefined,
     signIn: (email: string, password: string) => run(fence => api.signIn(email, password, fence)),
     signUp: (name: string, email: string, password: string) => run(fence => api.signUp(name, email, password, fence)),

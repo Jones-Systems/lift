@@ -66,3 +66,58 @@ test('unknown remote effects are preserved on stale phone callbacks and never au
  auth.activate();const pending=auth.phone.challenge('+12025550123','caller-key');auth.deactivate();
  wait.resolve({challengeId:'old'});await assert.rejects(pending,{code:'session_changed',originalEffectUnknown:true});assert.equal(count,1);
 });
+
+function recoveryFixture(){
+ const calls=[],responses=[],subscriptions=new Set(),events=[];
+ const storage={async load(){return null},async save(){events.push('save')},async clear(){events.push('clear')}};
+ const api=new FormTransport('https://auth-session.synthetic.invalid',storage,async(url,init)=>{
+  calls.push({path:new URL(url).pathname,body:JSON.parse(init.body)});
+  const response=deferred();responses.push(response);return response.promise;
+ });
+ const subscribe=api.subscribeAuthChanges.bind(api);
+ api.subscribeAuthChanges=listener=>{const original=subscribe(listener);const remove=()=>{original.remove();subscriptions.delete(remove)};subscriptions.add(remove);return{remove}};
+ return{api,calls,responses,subscriptions,events,finish(){responses.shift().resolve(new Response(JSON.stringify({success:true})))}};
+}
+test('recovery is lazy under the activated original epoch and confirmed reset never stores or authenticates',async()=>{
+ const f=recoveryFixture(),auth=createAuthSession(f.api),notices=[];
+ assert.throws(()=>auth.openPasswordRecovery(()=>{}),{code:'session_changed'});
+ assert.equal(f.calls.length,0);assert.equal(f.subscriptions.size,0);
+ auth.activate();assert.equal(f.subscriptions.size,0);
+ const recovery=auth.openPasswordRecovery(notice=>notices.push(notice));
+ assert.equal(f.calls.length,0);assert.ok(f.subscriptions.size>0);
+ const request=recovery.controller.requestCode(' Person@Example.test ');f.finish();await request;
+ const reset=recovery.controller.submit('12345678','synthetic-new-password');f.finish();await reset;
+ assert.deepEqual(f.calls,[
+  {path:'/api/auth/email-otp/request-password-reset',body:{email:'person@example.test'}},
+  {path:'/api/auth/email-otp/reset-password',body:{email:'person@example.test',otp:'12345678',password:'synthetic-new-password'}}
+ ]);
+ assert.deepEqual(recovery.controller.transition(),{destination:'sign-in',reason:'password-reset',emailPrefill:'person@example.test'});
+ assert.deepEqual(f.events,[]);auth.invalidate();
+ assert.equal(recovery.isCurrent(),false);assert.equal(f.subscriptions.size,0);
+ assert.deepEqual(notices,['Password reset was confirmed. Sign in with your new password.']);
+});
+for(const phase of ['request','reset'])test(`original recovery ${phase} is disposed on restart and never revived by activation`,async()=>{
+ const f=recoveryFixture(),auth=createAuthSession(f.api),notices=[];auth.activate();
+ const original=auth.openPasswordRecovery(notice=>notices.push(notice));
+ let pending=original.controller.requestCode('person@example.test');
+ if(phase==='reset'){f.finish();await pending;pending=original.controller.submit('12345678','synthetic-new-password')}
+ auth.deactivate();assert.equal(f.subscriptions.size,0);auth.activate();
+ const next=auth.openPasswordRecovery(()=>{}),count=f.calls.length;
+ await original.controller.requestCode('old@example.test');await original.controller.submit('12345678','synthetic-old-password');
+ assert.equal(f.calls.length,count);f.finish();await pending;
+ assert.equal(original.controller.snapshot().status,'disposed');assert.equal(original.controller.transition(),null);
+ assert.equal(next.controller.snapshot().status,'idle');assert.equal(next.controller.snapshot().step,'email');
+ assert.equal(notices.length,1);assert.match(notices[0],/couldn't confirm/);assert.deepEqual(f.events,[]);
+ auth.deactivate();assert.equal(f.subscriptions.size,0);
+});
+test('transport auth intent removes recovery subscriptions synchronously and fences retained commands',async()=>{
+ const f=recoveryFixture(),auth=createAuthSession(f.api),notices=[];auth.activate();
+ const recovery=auth.openPasswordRecovery(notice=>notices.push(notice));
+ const pending=recovery.controller.requestCode('person@example.test');
+ // restore advances the real transport auth intent before its storage await.
+ const replacement=f.api.restore();
+ assert.equal(f.subscriptions.size,0);assert.equal(recovery.controller.snapshot().status,'disposed');
+ await recovery.controller.requestCode('old@example.test');assert.equal(f.calls.length,1);
+ f.finish();await pending;assert.equal(await replacement,false);
+ assert.equal(recovery.controller.transition(),null);assert.match(notices[0],/couldn't confirm/);
+});

@@ -1,8 +1,11 @@
 // sign-in, email and phone (form-onboarding v1). Providers appear only when the server reports them configured
 // AND a client port exists; nothing is simulated. Every success comes from a stored server session.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AppState, View } from 'react-native';
 import { createAuthSession, type AuthSession } from '../../integration/authSession';
+import type { PasswordRecoverySession } from '../../integration/passwordRecoverySession';
+import { ForgotPasswordScreen } from '../credentials/forgot-password';
+import type { CredentialTransition } from '../credentials/model';
 import { ApiError } from '../../api/client';
 import type { Capabilities } from '../../api/domain';
 import type { FormResources } from '../../api/resources';
@@ -15,7 +18,9 @@ import {
 } from '../shared/ui';
 
 type Provider = 'apple' | 'google' | 'phone';
-type Route = { name: 'sign-in' } | { name: 'email'; mode: 'sign-in' | 'create' } | { name: 'phone' };
+type Route = { name: 'sign-in' } | { name: 'email'; mode: 'sign-in' | 'create'; emailPrefill?: string; notice?: string | null }
+  | { name: 'phone' } | { name: 'recovery'; auth: AuthSession; session: PasswordRecoverySession }
+  | { name: 'recovery-unavailable' };
 
 export function AuthFlow({ resources, capabilities, identity, notice, onAuthenticated, onRetryCapabilities }: {
   resources: FormResources;
@@ -27,8 +32,10 @@ export function AuthFlow({ resources, capabilities, identity, notice, onAuthenti
   onRetryCapabilities: () => void;
 }) {
   const [route, setRoute] = useState<Route>({ name: 'sign-in' });
-  const auth = useMemo(() => createAuthSession(resources.api, identity), [resources.api, identity]);
-  useEffect(() => {
+  const auth = useMemo(() => createAuthSession(resources.api, identity), [resources, resources.api, identity]);
+  const committed = useRef<{ auth: AuthSession; route: Route } | null>(null);
+  useLayoutEffect(() => { committed.current = { auth, route }; });
+  useLayoutEffect(() => {
     auth.activate();
     const listener = AppState.addEventListener('change', state => {
       if (state === 'background') auth.deactivate();
@@ -36,7 +43,22 @@ export function AuthFlow({ resources, capabilities, identity, notice, onAuthenti
     });
     return () => { listener.remove(); auth.deactivate(); };
   }, [auth]);
-  const navigate = (next: Route) => { auth.invalidate(); setRoute(next); };
+  const current = () => auth.isActive() && committed.current?.auth === auth && committed.current.route === route;
+  const navigate = (next: Route) => { if (current()) { auth.invalidate(); setRoute(next); } };
+  const recoveryConfigured = ['configured_unverified', 'verified'].includes(capabilities?.authentication?.emailPassword?.passwordRecovery ?? '');
+  useLayoutEffect(() => {
+    if (route.name === 'recovery' && route.auth === auth && !recoveryConfigured) auth.invalidate();
+  }, [auth, route, recoveryConfigured]);
+  const openRecovery = () => {
+    if (!current()) return;
+    if (!recoveryConfigured) { navigate({ name: 'recovery-unavailable' }); return; }
+    const session: PasswordRecoverySession = auth.openPasswordRecovery(endedNotice => {
+      setRoute(previous => previous.name === 'recovery' && previous.session === session
+        ? { name: 'email', mode: 'sign-in', notice: endedNotice ?? 'This password reset is no longer active. You can sign in or request a new code.' }
+        : previous);
+    });
+    setRoute({ name: 'recovery', auth, session });
+  };
   const ports = { apple: identity?.apple, google: identity?.google, phone: auth.phone };
   const available = useMemo(() => {
     const auth = capabilities?.authentication;
@@ -48,8 +70,37 @@ export function AuthFlow({ resources, capabilities, identity, notice, onAuthenti
     } satisfies Record<Provider, boolean>;
   }, [capabilities, identity?.apple, identity?.google, auth]);
 
-  if (route.name === 'email') {
-    return <EmailScreen auth={auth} capabilities={capabilities} mode={route.mode}
+  if (route.name === 'recovery' && recoveryConfigured && route.auth === auth && route.session.isCurrent()) {
+    const leave = (transition: CredentialTransition | null = null) => {
+      if (!current() || !route.session.isCurrent()) return;
+      const confirmed = route.session.controller.transition();
+      const saved = transition?.reason === 'password-reset' && confirmed?.reason === 'password-reset'
+        ? confirmed : null;
+      // Disposal carries uncertainty to the email route; only the original confirmed transition prefills it.
+      auth.invalidate();
+      if (saved) setRoute({ name: 'email', mode: 'sign-in', emailPrefill: saved.emailPrefill,
+        notice: "You've been signed out everywhere. Sign in with your new password." });
+    };
+    return <ForgotPasswordScreen controller={route.session.controller} onBack={() => leave()} onSignIn={leave} />;
+  }
+  if (route.name === 'recovery-unavailable') {
+    return <Screen testID="screen-recovery-unavailable" nav={<Nav back="Sign in" onBack={() => navigate({ name: 'email', mode: 'sign-in' })} />}>
+      <Gutter><Title text="Reset your password" /><Stack gap="s16">
+        <Notice kind="info" text="Password reset isn't available on this Form service yet." announce />
+        <View accessible accessibilityLabel="Send reset code is unavailable. Check availability or return to sign in.">
+          <PlainAction label="Send reset code" captureId="recovery-request" chevron={null} disabled />
+        </View>
+        <PlainAction label="Check availability" captureId="recovery-retry" chevron={null}
+          onPress={() => { if (current()) onRetryCapabilities(); }} />
+        {recoveryConfigured ? <PlainAction label="Continue to password reset" captureId="recovery-open" chevron={null} onPress={openRecovery} /> : null}
+        <PlainAction label="Return to sign in" captureId="recovery-sign-in" chevron={null} onPress={() => navigate({ name: 'email', mode: 'sign-in' })} />
+      </Stack></Gutter>
+    </Screen>;
+  }
+  if (route.name === 'email' || route.name === 'recovery') {
+    const emailRoute = route.name === 'email' ? route : { mode: 'sign-in' as const, notice: 'This password reset is no longer active. You can sign in or request a new code.', emailPrefill: '' };
+    return <EmailScreen key={route.name === 'recovery' ? 'ended-recovery' : undefined} auth={auth} capabilities={capabilities} mode={emailRoute.mode}
+      emailPrefill={emailRoute.emailPrefill} notice={emailRoute.notice} onForgotPassword={openRecovery}
       onMode={(mode) => navigate({ name: 'email', mode })} onBack={() => navigate({ name: 'sign-in' })} onAuthenticated={onAuthenticated} />;
   }
   if (route.name === 'phone' && ports.phone && available.phone) {
@@ -121,12 +172,13 @@ function SignInScreen({ available, capabilitiesLoaded, notice, onEmail, onPhone,
 
 /* ---------------- email ---------------- */
 
-function EmailScreen({ auth, capabilities, mode, onMode, onBack, onAuthenticated }: {
+function EmailScreen({ auth, capabilities, mode, emailPrefill = '', notice, onForgotPassword, onMode, onBack, onAuthenticated }: {
   auth: AuthSession; capabilities: Capabilities | null; mode: 'sign-in' | 'create';
+  emailPrefill?: string; notice?: string | null; onForgotPassword: () => void;
   onMode: (mode: 'sign-in' | 'create') => void; onBack: () => void; onAuthenticated: () => void;
 }) {
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(emailPrefill);
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -156,6 +208,7 @@ function EmailScreen({ auth, capabilities, mode, onMode, onBack, onAuthenticated
         <Subtitle text={create ? 'Form is invite-only for now. Use the email address you were invited with.' : 'Use the email and password for your Form account.'} />
       </Gutter>
       <Gutter style={{ marginTop: t.space.s32, gap: t.space.s20 }}>
+        {notice ? <Notice kind="info" text={notice} captureId="a-email-notice" announce /> : null}
         {error ? <Notice kind="error" text={error.text} captureId="a-email-error" announce /> : null}
         {create ? (
           <TextAnswer label="First name" value={name} onChangeText={setName} testID="a-name-field"
@@ -171,6 +224,7 @@ function EmailScreen({ auth, capabilities, mode, onMode, onBack, onAuthenticated
         {create ? <Txt role="meta" tone="secondary" testID="a-password-hint">At least 12 characters. A passphrase works well.</Txt> : null}
       </Gutter>
       <Gutter style={{ marginTop: t.space.s32, gap: t.space.s8 }}>
+        {!create ? <PlainAction label="Forgot password?" captureId="a-email-forgot" chevron={null} onPress={onForgotPassword} /> : null}
         <PrimaryAction label={create ? 'Create account' : 'Sign in'} captureId="a-email-submit" onPress={() => void submit()}
           disabled={!valid} loading={busy} />
         {registrationOpen || create ? (
