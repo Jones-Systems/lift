@@ -1,5 +1,5 @@
 // One account/session owner retains starts, workout queues and feedback across tabs and shell routes.
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AppState, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Exercise, History, Stats, WorkoutSession, SourcePlan, SourceWorkoutSession,
@@ -106,6 +106,21 @@ function TrainingHome(ctx: HomeSlotContext) {
   }
   const presentationEpoch = presentation.current.epoch;
   const canPresent = () => isCurrent() && !!ctx.renderSourceTraining && presentation.current.epoch === presentationEpoch;
+  const contextEntry = useRef({ open: ctx.openContextConfirmation, current: ctx.isCurrentSession });
+  if (contextEntry.current.open !== ctx.openContextConfirmation || contextEntry.current.current !== ctx.isCurrentSession) {
+    contextEntry.current = { open: ctx.openContextConfirmation, current: ctx.isCurrentSession };
+  }
+  const capturedEntry = contextEntry.current;
+  const [entryAttachment, setEntryAttachment] = useState<{ entry: typeof capturedEntry; live: boolean } | null>(null);
+  useLayoutEffect(() => {
+    const attachment = { entry: capturedEntry, live: true };
+    setEntryAttachment(attachment);
+    return () => { attachment.live = false; };
+  }, [capturedEntry]);
+  const openContext = () => {
+    if (!entryAttachment?.live || entryAttachment.entry !== capturedEntry || contextEntry.current !== capturedEntry) return;
+    try { if (isCurrent() && capturedEntry.current()) capturedEntry.open?.(); } catch { return; }
+  };
 
   const exercises = useMemo(() => Object.fromEntries(ctx.exercises.map((e) => [e.id, e])) as Record<string, Exercise>, [ctx.exercises]);
   const [tab, setTab] = useState<Tab>('today');
@@ -296,6 +311,7 @@ function TrainingHome(ctx: HomeSlotContext) {
   const activeRemote: Remote<WorkoutSession | null> = legacyPages.status === 'ready' ? ready(activeSession)
     : legacyPages.status === 'error' ? { status: 'error', error: legacyPages.error } : { status: 'loading' };
   const entries = [
+    ...(ctx.openContextConfirmation ? [{ label: 'Review training context', onPress: openContext, testID: 'a-entry-context-review' }] : []),
     ...(ctx.openActivity ? [{ label: 'Activity', onPress: ctx.openActivity, testID: 'a-entry-activity' }] : []),
     ...(ctx.openCommunity ? [{ label: 'Community', onPress: ctx.openCommunity, testID: 'a-entry-community' }] : []),
     ...(ctx.openBody ? [{ label: 'Body assessment', onPress: ctx.openBody, testID: 'a-entry-body' }] : []),
