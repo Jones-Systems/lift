@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { normalizeCredentialEmail, validCredentialEmail, validNewPassword } from '../../../api/credentials';
 import type { createForgotPasswordController } from '../model';
 import { t } from '../../shared/tokens';
@@ -26,8 +26,8 @@ function Presentation({ controller, onBack, onSignIn }: ForgotPasswordScreenProp
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
   const [now, setNow] = useState(Date.now());
-  const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const mounted = useRef(false);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
     if (!state.resendAt || state.step === 'done' || state.status === 'disposed') return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -51,15 +51,13 @@ function Presentation({ controller, onBack, onSignIn }: ForgotPasswordScreenProp
     void controller.submit(code, secret);
   };
   const signIn = () => {
-    if (!available()) return;
-    const current = controller.snapshot();
-    if (current.step === 'done') {
-      const transition = controller.transition();
-      if (transition) { clear(); onSignIn(transition); }
-    } else { clear(); onSignIn(null); }
+    if (!mounted.current) return;
+    const transition = controller.transition();
+    clear();
+    onSignIn(transition);
   };
   const seconds = Math.max(0, Math.ceil((state.resendAt - now) / 1000));
-  return <Screen testID={`screen-forgot-password-${state.step}`} nav={<Nav back="Sign in" onBack={() => { if (available()) { clear(); onBack(); } }} />}>
+  return <Screen testID={`screen-forgot-password-${state.step}`} nav={<Nav back="Sign in" onBack={() => { if (mounted.current) { clear(); onBack(); } }} />}>
     <Gutter>
       <Title text={state.step === 'email' ? 'Reset your password' : state.step === 'code' ? 'Enter your reset code' : 'Password reset'} />
       <Subtitle text={state.step === 'email' ? 'Enter the email for your Form password account.' : state.step === 'code' ? 'Use the 8-digit code and choose a new password between 12 and 128 characters.' : 'Return to sign in with your new password.'} />
@@ -81,9 +79,9 @@ function Presentation({ controller, onBack, onSignIn }: ForgotPasswordScreenProp
         <PlainAction label="Send a new code" captureId="recovery-resend" chevron={null} disabled={blocked || seconds > 0} onPress={request} />
       </> : null}
       {seconds > 0 && state.step !== 'done' ? <Notice kind="info" text={`You can request a new code in ${seconds} seconds.`} /> : null}
-      {state.status === 'pending' ? <Notice kind="info" text="Wait for this request to finish before taking another action." /> : null}
+      {state.status === 'pending' ? <Notice kind="info" text="A request is in progress. You can return to sign in, but leaving does not confirm whether it completed." /> : null}
       {state.step !== 'email' && state.step !== 'done' || state.status === 'unknown' ? <PlainAction label="Start over" captureId="recovery-start-over" chevron={null} disabled={blocked} onPress={() => { if (available()) { clear(); setEmail(''); controller.startOver(); } }} /> : null}
-      <PlainAction label="Return to sign in" captureId="recovery-sign-in" chevron={null} disabled={blocked} onPress={signIn} />
+      <PlainAction label="Return to sign in" captureId="recovery-sign-in" chevron={null} onPress={signIn} />
     </Stack></Gutter>
   </Screen>;
 }
