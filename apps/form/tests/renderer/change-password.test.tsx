@@ -4,6 +4,17 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react-
 import type { CredentialOutcome, CredentialsPort } from '../../src/api/credentials';
 import { createChangePasswordController } from '../../src/features/credentials/model';
 import { ChangePasswordScreen } from '../../src/features/credentials/change-password';
+import { Nav, PlainAction } from '../../src/features/shared/ui';
+
+jest.mock('../../src/features/shared/ui', () => {
+  const actual = jest.requireActual<typeof import('../../src/features/shared/ui')>('../../src/features/shared/ui');
+  const React = jest.requireActual<typeof import('react')>('react');
+  return {
+    ...actual,
+    Nav: jest.fn((props: React.ComponentProps<typeof actual.Nav>) => React.createElement(actual.Nav, props)),
+    PlainAction: jest.fn((props: React.ComponentProps<typeof actual.PlainAction>) => React.createElement(actual.PlainAction, props)),
+  };
+});
 
 const currentPassword = ' old password ';
 const newPassword = ' new password with spaces ';
@@ -26,10 +37,14 @@ function fixture() {
 const failure = (code: 'INVALID_PASSWORD' | 'unauthenticated' | 'session_changed'): CredentialOutcome => ({
   status: 'failed', issue: { code, status: code === 'unauthenticated' ? 401 : 409, effectUnknown: false },
 });
-afterEach(async () => { await cleanup(); });
-async function mount(f = fixture()) {
+afterEach(async () => {
+  await cleanup();
+  jest.mocked(Nav).mockClear(); jest.mocked(PlainAction).mockClear();
+});
+async function mount(f = fixture(), strict = false) {
   const onBack = jest.fn(), onContinue = jest.fn();
-  const view = await render(<ChangePasswordScreen controller={f.controller} onBack={onBack} onContinue={onContinue} />);
+  const leaf = <ChangePasswordScreen controller={f.controller} onBack={onBack} onContinue={onContinue} />;
+  const view = await render(strict ? <React.StrictMode>{leaf}</React.StrictMode> : leaf);
   return { ...f, onBack, onContinue, view };
 }
 async function fill(password = newPassword, confirmation = password) {
@@ -40,14 +55,64 @@ async function fill(password = newPassword, confirmation = password) {
 const submit = () => fireEvent.press(screen.getByRole('button', { name: 'Change password' }));
 const back = () => fireEvent.press(screen.getByRole('button', { name: 'Back to Settings' }));
 function pressHandler(name: string): () => void {
-  let node: ReturnType<typeof screen.getByRole> | null = screen.getByRole('button', { name });
-  while (node) {
-    if (typeof node.props.onPress === 'function') return node.props.onPress;
-    node = node.parent;
-  }
-  throw new Error(`Missing press handler for ${name}`);
+  const handler = name === 'Back to Settings'
+    ? jest.mocked(Nav).mock.calls.slice().reverse().find(([props]) => props.back === 'Settings')?.[0].onBack
+    : jest.mocked(PlainAction).mock.calls.slice().reverse().find(([props]) => props.label === name)?.[0].onPress;
+  if (!handler) throw new Error(`Missing action-boundary handler for ${name}`);
+  return handler;
 }
 const proceed = () => fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+
+const strictModeCases: { name: string; outcome: CredentialOutcome; notice: string }[] = [
+  { name: 'saved', outcome: { status: 'saved' }, notice: 'Password changed. Your other devices were signed out.' },
+  { name: 'failed', outcome: failure('INVALID_PASSWORD'), notice: "That isn't your current password." },
+  { name: 'unknown', outcome: { status: 'unknown', issue: { code: 'network_unavailable', status: 0, effectUnknown: true } },
+    notice: "We couldn't confirm the change. If signing in later fails, use your new password." },
+];
+test.each(strictModeCases)('StrictMode replay keeps pending and $name completion visible', async ({ outcome, notice }) => {
+  const didMount = jest.spyOn(ChangePasswordScreen.prototype, 'componentDidMount');
+  const willUnmount = jest.spyOn(ChangePasswordScreen.prototype, 'componentWillUnmount');
+  const f = await mount(fixture(), true);
+  expect(didMount).toHaveBeenCalledTimes(2);
+  expect(willUnmount).toHaveBeenCalledTimes(1);
+  expect(f.requests).toHaveLength(0);
+  await fill(); await submit();
+  expect(f.requests).toHaveLength(1);
+  expect(f.requests[0].input).toEqual({ currentPassword, newPassword });
+  expect(screen.getByText('Changing your password…')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+  for (const label of ['Current password', 'New password', 'Confirm new password']) {
+    expect(screen.getByLabelText(label).props.value).toBe('');
+  }
+  await f.finish(outcome);
+  expect(f.controller.snapshot().status).toBe(outcome.status);
+  expect(screen.queryByText('Changing your password…')).toBeNull();
+  expect(screen.getByText(notice)).toBeTruthy();
+  expect(f.onContinue).not.toHaveBeenCalled();
+  if (outcome.status === 'saved') {
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled();
+    const retainedContinue = pressHandler('Continue');
+    const transition = f.controller.transition();
+    expect(transition).not.toBeNull();
+    await proceed();
+    await act(async () => { retainedContinue(); });
+    expect(f.onContinue).toHaveBeenCalledTimes(1);
+    expect(f.onContinue).toHaveBeenCalledWith(transition);
+    await submit();
+  } else {
+    expect(f.controller.transition()).toBeNull();
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+    await proceed();
+    expect(f.onContinue).not.toHaveBeenCalled();
+    if (outcome.status === 'unknown') { await fill(); await submit(); }
+    else {
+      await fill();
+      expect(screen.getByLabelText('Current password').props.value).toBe(currentPassword);
+      expect(screen.getByRole('button', { name: 'Change password' })).toBeEnabled();
+    }
+  }
+  expect(f.requests).toHaveLength(1);
+});
 
 test('real validation rejects length and confirmation; exact untrimmed strings reach the port', async () => {
   const f = await mount();
@@ -139,9 +204,11 @@ test('replacement fences retained handlers and late old completion; unmount fenc
   await fill(); await submit();
   const retainedSubmit = screen.getByLabelText('Confirm new password').props.onSubmitEditing;
   const retainedBack = pressHandler('Back to Settings');
+  const retainedContinue = pressHandler('Continue');
   await f.view.unmount();
-  await act(async () => { retainedSubmit(); retainedBack(); });
+  await act(async () => { retainedSubmit(); retainedBack(); retainedContinue(); });
   await next.finish({ status: 'saved' });
+  await act(async () => { retainedContinue(); });
   expect(next.requests).toHaveLength(1); expect(nextBack).not.toHaveBeenCalled();
   expect(nextContinue).not.toHaveBeenCalled();
 });

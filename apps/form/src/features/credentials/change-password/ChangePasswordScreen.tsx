@@ -10,52 +10,60 @@ export type ChangePasswordScreenProps = {
 };
 const empty = () => ({ passwords: ['', '', ''], shown: [false, false, false] });
 const initial = (controller: ChangePasswordScreenProps['controller']) => ({
-  controller, lifetime: {}, continued: false, revision: 0, ...empty(),
+  controller, lifetime: {}, continued: false, revision: 0,
 });
 type State = ReturnType<typeof initial>;
 
 export class ChangePasswordScreen extends Component<ChangePasswordScreenProps, State> {
   state = initial(this.props.controller);
-  private mounted = false;
+  private mountedLifetime: object | null = null;
+  private fields = { lifetime: this.state.lifetime, ...empty() };
   private continuedLifetime: object | null = null;
   private unsubscribe: (() => void) | undefined;
 
   static getDerivedStateFromProps(props: ChangePasswordScreenProps, state: State) {
     return props.controller === state.controller ? null : initial(props.controller);
   }
-  componentDidMount() { this.mounted = true; this.listen(); }
+  componentDidMount() { this.mountedLifetime = {}; this.listen(); }
   componentDidUpdate(previous: ChangePasswordScreenProps) {
     if (previous.controller !== this.props.controller) { this.unsubscribe?.(); this.listen(); }
   }
   componentWillUnmount() {
-    this.mounted = false; this.unsubscribe?.(); this.state = initial(this.props.controller);
+    this.mountedLifetime = null; this.unsubscribe?.();
+    this.fields = { lifetime: this.state.lifetime, ...empty() };
   }
   private listen() {
     const { controller, lifetime } = this.state;
+    const mountedLifetime = this.mountedLifetime;
     this.unsubscribe = controller.subscribe(() => {
-      if (this.current(lifetime)) this.setState(state => ({ revision: state.revision + 1 }));
+      if (this.current(lifetime, mountedLifetime)) this.refresh();
     });
-    this.setState(state => ({ revision: state.revision + 1 }));
+    this.refresh();
   }
-  private current(lifetime: object) {
-    return this.mounted && this.state.lifetime === lifetime && this.state.controller === this.props.controller;
+  private refresh() { this.setState(state => ({ revision: state.revision + 1 })); }
+  private current(lifetime: object, mountedLifetime: object | null) {
+    return mountedLifetime !== null && this.mountedLifetime === mountedLifetime
+      && this.state.lifetime === lifetime && this.state.controller === this.props.controller;
   }
-  private editable(lifetime: object) {
-    return this.current(lifetime) && ['idle', 'failed'].includes(this.props.controller.snapshot().status);
+  private editable(lifetime: object, mountedLifetime: object | null) {
+    return this.current(lifetime, mountedLifetime) && ['idle', 'failed'].includes(this.props.controller.snapshot().status);
   }
-  private submit(lifetime: object) {
-    if (!this.editable(lifetime)) return;
-    const [current, password, confirmation] = this.state.passwords;
+  private submit(lifetime: object, mountedLifetime: object | null) {
+    if (!this.editable(lifetime, mountedLifetime)) return;
+    const [current, password, confirmation] = this.fields.passwords;
     if (current.length < 1 || current.length > 128) return;
-    this.setState(empty());
+    this.fields = { lifetime, ...empty() }; this.refresh();
     void this.props.controller.submit(current, password, confirmation);
   }
   render() {
     const presentation = this.props;
     const { controller, onBack, onContinue } = presentation;
-    const { lifetime, passwords, shown } = this.state;
-    const isCurrent = () => this.props === presentation && this.current(lifetime);
-    const submit = () => { if (isCurrent()) this.submit(lifetime); };
+    const { lifetime } = this.state;
+    if (this.fields.lifetime !== lifetime) this.fields = { lifetime, ...empty() };
+    const { passwords, shown } = this.fields;
+    const mountedLifetime = this.mountedLifetime;
+    const isCurrent = () => this.props === presentation && this.current(lifetime, mountedLifetime);
+    const submit = () => { if (isCurrent()) this.submit(lifetime, mountedLifetime); };
     const snapshot = controller.snapshot();
     const blocked = !['idle', 'failed'].includes(snapshot.status);
     const labels = ['Current password', 'New password', 'Confirm new password'];
@@ -75,12 +83,16 @@ export class ChangePasswordScreen extends Component<ChangePasswordScreenProps, S
               secure={!shown[index]} autoComplete={index === 0 ? 'current-password' : 'new-password'}
               textContentType={index === 0 ? 'password' : 'newPassword'} autoCapitalize="none" maxLength={128}
               onChangeText={value => {
-                if (isCurrent() && this.editable(lifetime)) this.setState(state => ({ passwords: state.passwords.map((old, i) => i === index ? value : old) }));
+                if (isCurrent() && this.editable(lifetime, mountedLifetime)) {
+                  this.fields.passwords = this.fields.passwords.map((old, i) => i === index ? value : old); this.refresh();
+                }
               }} onSubmitEditing={submit}
               trailing={<PlainAction label={shown[index] ? 'Hide' : 'Show'} chevron={null} disabled={blocked}
                 accessibilityLabel={`${shown[index] ? 'Hide' : 'Show'} ${label.toLowerCase()}`}
                 onPress={() => {
-                  if (isCurrent() && this.editable(lifetime)) this.setState(state => ({ shown: state.shown.map((old, i) => i === index ? !old : old) }));
+                  if (isCurrent() && this.editable(lifetime, mountedLifetime)) {
+                    this.fields.shown = this.fields.shown.map((old, i) => i === index ? !old : old); this.refresh();
+                  }
                 }} />} />)}
           </Stack>
         </Gutter>
