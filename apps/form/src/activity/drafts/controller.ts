@@ -6,6 +6,7 @@ import type { CaptureContext, DraftResult } from './model';
 import { draftFromEntry, manualActivityDraft, sameCaptureContext } from './model';
 import { parseReviewedActivity } from './parser';
 import { commandId, draftToActivityWrite, revision } from './validation';
+import { confirmActivityReceipt } from './confirmation';
 export type DraftPhase = 'idle' | 'capture' | 'transcriptReview' | 'structuredReview' | 'saving' | 'saved' | 'rejected' | 'stale' | 'unknown' | 'cancelled';
 export type EntryTarget = { id: string; expectedRevision: number };
 export type PendingActivityCommand = Readonly<{ key: string; payload: ActivityWrite; target: EntryTarget | null }>;
@@ -68,6 +69,7 @@ export class DraftController {
   private observers = new Set<(state: DraftState) => void>();
   private disposed = false;
   private requiresGenerationRefresh = false;
+  private readonly editBaselines = new WeakMap<object, ActivityEntry>();
   constructor(accountGeneration: string, private readonly resources: ActivityCommandPort, private readonly newKey: () => string, private readonly speech?: SpeechPort) {
     this.state = initialDraftState(accountGeneration);
   }
@@ -81,8 +83,10 @@ export class DraftController {
   }
   beginEntryEdit(entry: ActivityEntry): void {
     if (entry.status !== 'recorded') throw new Error('voided_entry_edit_unavailable');
-    const result = draftFromEntry(this.state.accountGeneration, entry); this.requireCanBegin(result.context); this.detachSpeech();
-    this.dispatch({ type: 'begin', accountGeneration: this.state.accountGeneration, context: result.context, manual: result, target: { id: entry.id, expectedRevision: entry.revision } });
+    const original = freeze(copy(entry)), result = draftFromEntry(this.state.accountGeneration, original); this.requireCanBegin(result.context); this.detachSpeech();
+    const target = { id: original.id, expectedRevision: original.revision };
+    this.editBaselines.set(target, original);
+    this.dispatch({ type: 'begin', accountGeneration: this.state.accountGeneration, context: result.context, manual: result, target });
   }
   async beginSpeech(context: CaptureContext, locale: string): Promise<void> {
     this.requireCanBegin(context);
@@ -124,8 +128,12 @@ export class DraftController {
   }
   async save(target: EntryTarget | null = this.state.editTarget): Promise<DraftState> {
     if (this.disposed || this.state.phase !== 'structuredReview' || !this.state.result) throw new Error('explicit_structured_save_required');
+    const originalState = this.state;
     const payload = draftToActivityWrite(this.state.result);
     const command = freeze({ key: commandId(this.newKey()), payload, target: target ? { id: target.id, expectedRevision: revision(target.expectedRevision) } : null });
+    if (this.disposed || this.state !== originalState) return this.getState();
+    const previous = this.state.editTarget && this.editBaselines.get(this.state.editTarget);
+    if (previous && command.target?.id === previous.id && command.target.expectedRevision === previous.revision) this.editBaselines.set(command, previous);
     return this.execute(command);
   }
   async retryUnknown(): Promise<DraftState> {
@@ -150,10 +158,20 @@ export class DraftController {
   }
   private async execute(command: PendingActivityCommand): Promise<DraftState> {
     const epoch = this.state.epoch, accountGeneration = this.state.accountGeneration;
+    const current = () => !this.disposed && epoch === this.state.epoch && accountGeneration === this.state.accountGeneration && this.state.phase === 'saving' && this.state.pending === command;
     this.dispatch({ type: 'saving', command });
+    if (!current()) return this.getState();
     try {
       const value = command.target ? await this.resources.editEntry(command.target.id, command.target.expectedRevision, command.payload, command.key) : await this.resources.createEntry(command.payload, command.key);
-      this.dispatch({ type: 'outcome', epoch, accountGeneration, status: 'saved', value });
+      if (!current()) return this.getState();
+      let confirmed: ActivityEntry;
+      try { confirmed = confirmActivityReceipt(value, command.payload, command.target, this.editBaselines.get(command)); }
+      catch {
+        // A malformed success cannot establish that the original write had no effect.
+        throw { code: 'activity_receipt_unconfirmed', status: 0, effectUnknown: true, originalEffectUnknown: true };
+      }
+      if (!current()) return this.getState();
+      this.dispatch({ type: 'outcome', epoch, accountGeneration, status: 'saved', value: confirmed });
     } catch (error) {
       const failure = error as { effectUnknown?: boolean; originalEffectUnknown?: boolean; status?: number; code?: string };
       if (epoch === this.state.epoch && accountGeneration === this.state.accountGeneration && (failure.code === 'session_changed' || failure.status === 401)) this.requiresGenerationRefresh = true;
