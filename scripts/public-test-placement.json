@@ -281,6 +281,7 @@
       "placement": "breadth",
       "reason": "The remaining React Native renderer suite runs with the existing Jest command.",
       "files": [
+        "apps/form/tests/renderer/change-password.test.tsx",
         "apps/form/tests/renderer/runtime-auth.test.tsx"
       ]
     },
