@@ -9,6 +9,18 @@ import { FormResources } from '../../src/api/resources';
 import type { Capabilities } from '../../src/api/domain';
 import type { IdentityPorts } from '../../src/features/contract';
 
+type RecoveryProps = React.ComponentProps<typeof ForgotPasswordScreen>;
+let mockObserveRecovery: ((props: RecoveryProps) => void) | undefined;
+jest.mock('../../src/features/credentials/forgot-password', () => {
+  const actual = jest.requireActual<typeof import('../../src/features/credentials/forgot-password')>('../../src/features/credentials/forgot-password');
+  const react = jest.requireActual<typeof import('react')>('react');
+  return { ...actual, ForgotPasswordScreen(props: import('../../src/features/credentials/forgot-password').ForgotPasswordScreenProps) {
+    // Observe identity and retained host callbacks; the unchanged real leaf receives every original prop.
+    mockObserveRecovery?.(props);
+    return react.createElement(actual.ForgotPasswordScreen, props);
+  } };
+});
+
 const requestPath = '/api/auth/email-otp/request-password-reset';
 const resetPath = '/api/auth/email-otp/reset-password';
 const origin = 'https://auth-recovery.renderer.invalid';
@@ -57,29 +69,46 @@ async function fixture(status: string | undefined = 'configured_unverified', str
     listeners.add(listener); return { remove() { listeners.delete(listener); } };
   });
   const onAuthenticated = jest.fn(), onRetryCapabilities = jest.fn();
+  let observedRecovery: RecoveryProps | undefined;
+  mockObserveRecovery = props => { observedRecovery = props; };
+  const recovery = () => {
+    expect(screen.getByTestId(/^screen-forgot-password-(email|code|done)$/)).toBeTruthy();
+    if (!observedRecovery) throw new Error('Recovery has not rendered');
+    return observedRecovery;
+  };
   let resources = f.resources, identity: IdentityPorts | undefined, caps: Capabilities | null = capabilities(status);
   let beforePassive = () => {};
   const element = () => {
-    const content = <><AuthFlow resources={resources} capabilities={caps} identity={identity} notice={null}
-      onAuthenticated={onAuthenticated} onRetryCapabilities={onRetryCapabilities} /><BeforePassive run={() => beforePassive()} /></>;
+    const content = <><BeforePassive run={() => {
+      const probe = beforePassive; beforePassive = () => {}; probe();
+    }} /><AuthFlow resources={resources} capabilities={caps} identity={identity} notice={null}
+      onAuthenticated={onAuthenticated} onRetryCapabilities={onRetryCapabilities} /></>;
     return strict ? <StrictMode>{content}</StrictMode> : content;
   };
   const view = await render(element());
   return { ...f, view, listeners, onAuthenticated, onRetryCapabilities,
-    controller: () => view.UNSAFE_getByType(ForgotPasswordScreen).props.controller as React.ComponentProps<typeof ForgotPasswordScreen>['controller'],
-    hostBack: () => view.UNSAFE_getByType(ForgotPasswordScreen).props.onBack as () => void,
+    controller: () => recovery().controller,
+    hostBack: () => recovery().onBack,
     async appState(state: AppStateStatus) { await act(async () => { for (const listener of [...listeners]) listener(state); }); },
     async replaceResources(next: FormResources, probe = () => {}) {
-      resources = next; beforePassive = probe; await view.rerender(element()); beforePassive = () => {};
+      resources = next; beforePassive = probe;
+      try { await view.rerender(element()); } finally { beforePassive = () => {}; }
     },
     async replaceIdentity() { identity = {}; await view.rerender(element()); },
-    async updateCapabilities(next: Capabilities | null) { caps = next; await view.rerender(element()); },
+    async updateCapabilities(next: Capabilities | null, probe = () => {}) {
+      caps = next; beforePassive = probe;
+      try { await view.rerender(element()); } finally { beforePassive = () => {}; }
+    },
   };
 }
 afterEach(async () => {
-  await cleanup();
-  await act(async () => { for (const finish of pendingCleanup.splice(0)) finish(); });
-  jest.useRealTimers();
+  try {
+    await cleanup();
+    await act(async () => { for (const finish of pendingCleanup.splice(0)) finish(); });
+  } finally {
+    mockObserveRecovery = undefined;
+    jest.useRealTimers();
+  }
 });
 const press = async (id: string) => { await fireEvent.press(screen.getByTestId(id)); };
 async function open() { await press('a-signin-email'); await press('a-email-forgot'); }
@@ -251,6 +280,54 @@ test('retained leaf reset handler is fenced in replacement layout before passive
   expect(observed).toBe('disposed'); expect(f.calls).toHaveLength(1); expect(next.calls).toHaveLength(0);
   expect(screen.getByLabelText('Password').props.value).toBe('');
   expect(f.onAuthenticated).not.toHaveBeenCalled();
+});
+
+test.each([
+  { name: 'unconfigured', next: capabilities('unconfigured') },
+  { name: 'unknown', next: capabilities('unknown') },
+  { name: 'missing recovery status', next: capabilities(undefined) },
+  { name: 'missing capabilities', next: null },
+])('capability loss ($name) fences the enabled leaf reset handler before earlier sibling layout', async ({ next }) => {
+  const f = await fixture('verified'); await open(); await request(); await f.finish(); await secrets();
+  const controller = f.controller();
+  const reset = screen.getByRole('button', { name: 'Reset password' });
+  expect(reset).toBeEnabled();
+  const submit: () => void = reset.props.onPress;
+  expect(controller.snapshot()).toMatchObject({ status: 'saved', step: 'code' });
+  expect(f.calls.map(call => call.path)).toEqual([requestPath]); expect(f.subscriptions.size).toBe(2);
+  let observed: { status: string; subscriptions: number; calls: number } | undefined;
+  await f.updateCapabilities(next, () => {
+    // Run before AuthFlow layout setup: leaf deletion cleanup must fence this still-enabled retained closure.
+    observed = { status: controller.snapshot().status, subscriptions: f.subscriptions.size, calls: f.calls.length };
+    submit();
+    expect(f.calls.map(call => call.path)).toEqual([requestPath]);
+  });
+  expect(observed).toEqual({ status: 'saved', subscriptions: 2, calls: 1 });
+  expect(controller.snapshot().status).toBe('disposed'); expect(controller.transition()).toBeNull();
+  expect(f.subscriptions.size).toBe(0); expect(f.calls.map(call => call.path)).toEqual([requestPath]);
+  expect(screen.getByTestId('screen-email')).toBeTruthy();
+  expect(screen.queryByTestId('screen-forgot-password-done')).toBeNull();
+  expect(screen.getByLabelText('Email').props.value).toBe('');
+  expect(screen.getByLabelText('Password').props.value).toBe('');
+  expect(screen.getByText('This password reset is no longer active. You can sign in or request a new code.')).toBeTruthy();
+  await f.appState('background'); await f.appState('active');
+  await f.updateCapabilities(capabilities('verified'));
+  expect(f.calls.map(call => call.path)).toEqual([requestPath]); expect(f.subscriptions.size).toBe(0);
+  await press('a-email-forgot'); const replacement = f.controller();
+  expect(replacement).not.toBe(controller);
+  await act(async () => {
+    submit(); await controller.submit('12345678', 'synthetic-stale-password');
+    await controller.requestCode('stale@example.test');
+  });
+  expect(f.controller()).toBe(replacement);
+  expect(replacement.snapshot()).toMatchObject({ status: 'idle', step: 'email' });
+  expect(screen.getByTestId('screen-forgot-password-email')).toBeTruthy();
+  expect(screen.getByLabelText('Email').props.value).toBe('');
+  expect(screen.queryByTestId('screen-forgot-password-done')).toBeNull();
+  expect(f.calls.map(call => call.path)).toEqual([requestPath]); expect(f.subscriptions.size).toBe(2);
+  expect(f.onAuthenticated).not.toHaveBeenCalled(); expect(f.storageEvents).toEqual([]);
+  await f.view.unmount(); expect(f.subscriptions.size).toBe(0);
+  expect(replacement.snapshot().status).toBe('disposed');
 });
 
 test('host-owned controller disposal leaves the frozen disposed leaf safely without a credential command', async () => {
