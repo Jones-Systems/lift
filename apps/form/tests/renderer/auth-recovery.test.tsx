@@ -84,12 +84,12 @@ afterEach(async () => {
 const press = async (id: string) => { await fireEvent.press(screen.getByTestId(id)); };
 async function open() { await press('a-signin-email'); await press('a-email-forgot'); }
 async function request() {
-  await fireEvent.changeText(screen.getByTestId('recovery-email-input'), ' Person@Example.test ');
+  await fireEvent.changeText(screen.getByLabelText('Email'), ' Person@Example.test ');
   await press('recovery-request');
 }
 async function secrets(code = '12345678', password = 'synthetic-new-password') {
-  await fireEvent.changeText(screen.getByTestId('recovery-code-input'), code);
-  await fireEvent.changeText(screen.getByTestId('recovery-password-input'), password);
+  await fireEvent.changeText(screen.getByLabelText('8-digit code'), code);
+  await fireEvent.changeText(screen.getByLabelText('New password'), password);
 }
 
 test('render and create mode are inert; ordinary email sign-in still uses its existing endpoint', async () => {
@@ -102,8 +102,8 @@ test('render and create mode are inert; ordinary email sign-in still uses its ex
   expect(screen.queryByTestId('a-email-forgot')).toBeNull();
   expect(f.calls).toHaveLength(0); expect(f.subscriptions.size).toBe(0);
   await press('a-email-mode');
-  await fireEvent.changeText(screen.getByTestId('a-email-field-input'), 'ordinary@example.test');
-  await fireEvent.changeText(screen.getByTestId('a-password-field-input'), 'synthetic-password');
+  await fireEvent.changeText(screen.getByLabelText('Email'), 'ordinary@example.test');
+  await fireEvent.changeText(screen.getByLabelText('Password'), 'synthetic-password');
   await press('a-email-submit');
   expect(f.calls.map(call => call.path)).toEqual(['/api/auth/sign-in/email']);
   expect(f.onAuthenticated).toHaveBeenCalledTimes(1);
@@ -142,13 +142,13 @@ test.each(['configured_unverified', 'verified'])('configured %s recovery crosses
   expect(f.calls[1]).toEqual({ path: resetPath, method: 'POST', body: {
     email: 'person@example.test', otp: '12345678', password: 'synthetic-new-password',
   }, authorization: null });
-  expect(screen.getByTestId('recovery-code-input').props.value).toBe('');
-  expect(screen.getByTestId('recovery-password-input').props.value).toBe('');
+  expect(screen.getByLabelText('8-digit code').props.value).toBe('');
+  expect(screen.getByLabelText('New password').props.value).toBe('');
   await f.finish(); expect(screen.getByTestId('screen-forgot-password-done')).toBeTruthy();
   expect(f.onAuthenticated).not.toHaveBeenCalled(); expect(f.storageEvents).toEqual([]);
   await press('recovery-sign-in');
-  expect(screen.getByTestId('a-email-field-input').props.value).toBe('person@example.test');
-  expect(screen.getByTestId('a-password-field-input').props.value).toBe('');
+  expect(screen.getByLabelText('Email').props.value).toBe('person@example.test');
+  expect(screen.getByLabelText('Password').props.value).toBe('');
   expect(screen.getByText("You've been signed out everywhere. Sign in with your new password.")).toBeTruthy();
   expect(controller.snapshot().status).toBe('disposed'); expect(f.subscriptions.size).toBe(0);
   expect(f.onAuthenticated).not.toHaveBeenCalled(); expect(f.storageEvents).toEqual([]);
@@ -160,8 +160,8 @@ test('unknown reset returns with honest notice, empty fields and no saved transi
   expect(controller.snapshot().status).toBe('unknown'); expect(controller.transition()).toBeNull();
   await press('recovery-submit'); expect(f.calls).toHaveLength(2);
   await press('recovery-sign-in');
-  expect(screen.getByTestId('a-email-field-input').props.value).toBe('');
-  expect(screen.getByTestId('a-password-field-input').props.value).toBe('');
+  expect(screen.getByLabelText('Email').props.value).toBe('');
+  expect(screen.getByLabelText('Password').props.value).toBe('');
   expect(screen.getByText("We couldn't confirm the reset. Try signing in with your new password; if that fails, request a new code.")).toBeTruthy();
   await f.appState('background'); await f.appState('active');
   expect(f.calls).toHaveLength(2); expect(f.onAuthenticated).not.toHaveBeenCalled(); expect(f.storageEvents).toEqual([]);
@@ -178,13 +178,14 @@ test('pending resend departure reports unconfirmed code delivery without claimin
   expect(f.calls).toHaveLength(2); expect(f.onAuthenticated).not.toHaveBeenCalled();
 });
 
-test.each(['request', 'reset'] as const)('late %s after host route departure cannot publish or dispatch through retained handlers', async operation => {
+test.each((['request', 'reset'] as const).flatMap(operation =>
+  (['a-back', 'recovery-sign-in'] as const).map(exit => ({ operation, exit }))))(
+  'late $operation after visible $exit departure cannot publish or dispatch through retained handlers', async ({ operation, exit }) => {
   const f = await fixture(); await open();
   const controller = f.controller(), depart = f.hostBack();
   if (operation === 'reset') { await request(); await f.finish(); await secrets(); await press('recovery-submit'); }
   else await request();
-  // The frozen leaf blocks its visible Back while pending. Exercise the actual host callback separately.
-  await act(async () => { depart(); });
+  await press(exit);
   expect(screen.getByTestId('screen-email')).toBeTruthy();
   expect(screen.getByTestId('a-email-notice')).toBeTruthy();
   await press('a-email-forgot'); const replacement = f.controller();
@@ -235,8 +236,8 @@ test('visible Back leaves idle recovery and never preserves password or code in 
   const f = await fixture(); await open(); await request(); await f.finish(); await secrets();
   const controller = f.controller();
   await press('a-back'); expect(screen.getByTestId('screen-email')).toBeTruthy();
-  expect(screen.getByTestId('a-email-field-input').props.value).toBe('');
-  expect(screen.getByTestId('a-password-field-input').props.value).toBe('');
+  expect(screen.getByLabelText('Email').props.value).toBe('');
+  expect(screen.getByLabelText('Password').props.value).toBe('');
   expect(controller.snapshot().status).toBe('disposed'); expect(f.subscriptions.size).toBe(0);
   expect(f.calls).toHaveLength(1); expect(f.onAuthenticated).not.toHaveBeenCalled();
 });
@@ -248,7 +249,7 @@ test('retained leaf reset handler is fenced in replacement layout before passive
   const next = transport(); let observed: string | undefined;
   await f.replaceResources(next.resources, () => { observed = controller.snapshot().status; submit(); });
   expect(observed).toBe('disposed'); expect(f.calls).toHaveLength(1); expect(next.calls).toHaveLength(0);
-  expect(screen.getByTestId('a-password-field-input').props.value).toBe('');
+  expect(screen.getByLabelText('Password').props.value).toBe('');
   expect(f.onAuthenticated).not.toHaveBeenCalled();
 });
 
