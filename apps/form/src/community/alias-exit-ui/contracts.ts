@@ -2,7 +2,10 @@ import type { CommunityGroupController } from '../../api/community';
 
 export type AliasExitMode = 'alias' | 'leave' | 'close';
 
-/** Caller owns the controller and must replace this binding when its session changes. */
+/**
+ * Caller owns controller lifetime; the leaf never disposes it. Replacing the UI context ends old callbacks.
+ * A controller is bound to its first leaf generation. Another generation requires a fresh controller or fails closed.
+ */
 export type AliasExitContext = Readonly<{
   controller: CommunityGroupController;
   groupId: string;
@@ -32,6 +35,7 @@ export type AliasExitView = Readonly<{
   unresolved: boolean;
   receipt: string | null;
   notice: AliasExitNotice | null;
+  guidance: AliasExitNotice | null;
 }>;
 
 export interface AliasExitPresentation {

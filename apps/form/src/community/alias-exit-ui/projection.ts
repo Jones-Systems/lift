@@ -30,20 +30,20 @@ export function semanticNotice(error: CommunityViewError | null): AliasExitNotic
   const code = error?.code;
   const messages: Record<string, string> = {
     community_text_rejected: 'This alias cannot be used in Form groups. Rephrase it and try again.',
-    community_text_moderation_unavailable: 'Alias review is unavailable. Refresh before trying a new change.',
-    stale_revision: 'The group or membership changed. Refresh and review before trying again.',
-    community_membership_changed: 'Your membership changed. Refresh and review your current membership.',
-    community_membership_reload_required: 'Refresh and review the current membership before continuing.',
+    community_text_moderation_unavailable: 'Alias review was unavailable for the previous change.',
+    stale_revision: 'The previous change was rejected because the group or membership changed.',
+    community_membership_changed: 'The previous change was rejected because your membership changed.',
+    community_membership_reload_required: 'The previous change required current membership details.',
     community_owner_must_close: 'The group owner cannot leave this group.',
-    community_forbidden: 'This action is not permitted for your current membership.',
-    community_not_found: 'This group is unavailable.',
+    community_forbidden: 'The previous change was not permitted for that membership.',
+    community_not_found: 'The group was unavailable for the previous change.',
     community_adult_eligibility_unavailable: 'Community eligibility could not be confirmed.',
-    community_rate_limited: 'This action is rate limited. A new change is unavailable right now.',
-    community_limiter_unavailable: 'This action is unavailable right now.',
-    community_unavailable: 'Community is unavailable right now.',
-    community_governed_action_required: 'This action requires a different group process.',
+    community_rate_limited: 'The previous change was rate limited.',
+    community_limiter_unavailable: 'The previous change was unavailable.',
+    community_unavailable: 'Community was unavailable for the previous change.',
+    community_governed_action_required: 'The previous change required a different group process.',
   };
-  return { kind: 'error', text: messages[code ?? ''] ?? 'The change was not confirmed. Refresh and review before a new change.' };
+  return { kind: 'error', text: messages[code ?? ''] ?? 'The previous change was not confirmed.' };
 }
 
 export function confirmedReceipt(command: CommunityGroupCommandState, groupId: string, mode: AliasExitMode): string | null {

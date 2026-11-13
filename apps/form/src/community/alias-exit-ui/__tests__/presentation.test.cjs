@@ -273,3 +273,75 @@ test('receipt projection rejects mismatched kind group member and false/empty va
   for (const value of [null, {}, { kind: 'leave', value: { left: false } }])
     assert.equal(confirmedReceipt({ ...c, kind: 'leave', memberId: null, intent: null, membershipResult: value }, G, 'leave'), null);
 });
+
+test('authoritative leave 429 reports the previous rejection while a new request remains available', async () => {
+  const f = await fixture('leave');
+  f.state.response = () => json({ error: { code: 'community_rate_limited', message: 'RAW quota' } }, 429);
+  await f.model.submit();
+  const view = f.model.getSnapshot();
+  assert.equal(view.unresolved, false); assert.equal(view.canSubmit, true); assert.equal(view.canRetry, false);
+  assert.equal(view.notice.text, 'The previous change was rate limited.');
+  assert.equal(view.guidance.text, 'You can submit a new leave request.');
+  assert.equal(view.receipt, null); assert.equal(f.controller.getSnapshot().detail.status, 'stale');
+  const original = writes(f)[0]; f.state.response = () => ({ left: true });
+  await f.model.submit();
+  assert.equal(writes(f).length, 2); assert.notEqual(writes(f)[1].key, original.key);
+  assert.equal(f.model.getSnapshot().receipt, 'You left the group.');
+});
+
+test('alias stale rejection keeps its history while current refresh and review guidance follows availability', async () => {
+  const f = await fixture(); f.model.setDraft('Rejected draft');
+  f.state.response = () => json({ error: { code: 'stale_revision', message: 'RAW revision' } }, 409);
+  await f.model.submit();
+  let view = f.model.getSnapshot();
+  assert.equal(view.canSubmit, false); assert.equal(view.canReview, false);
+  assert.equal(view.notice.text, 'The previous change was rejected because the group or membership changed.');
+  assert.equal(view.guidance.text, 'Group details are stale. Refresh to review the current membership.');
+  const waiting = deferred(); f.state.response = () => waiting.promise;
+  const refresh = f.model.refresh(); view = f.model.getSnapshot();
+  assert.equal(view.canSubmit, false); assert.equal(view.canReview, false);
+  assert.equal(view.guidance.text, 'Loading the current group…');
+  waiting.resolve({ ...detail(), revision: 5, members: [{ ...detail().members[0], alias: 'Current alias', revision: 11 }] });
+  await refresh; view = f.model.getSnapshot();
+  assert.equal(view.canSubmit, false); assert.equal(view.canReview, true); assert.equal(view.draft, 'Rejected draft');
+  assert.equal(view.guidance.text, 'Membership details changed or are missing. Review current details before continuing.');
+  f.model.review(); view = f.model.getSnapshot();
+  assert.equal(view.canSubmit, true); assert.equal(view.canReview, false); assert.equal(view.draft, 'Current alias');
+  assert.equal(view.guidance.text, 'You can edit and save a new alias.');
+  assert.equal(view.notice.text, 'The previous change was rejected because the group or membership changed.');
+  f.state.response = () => ({ ...detail().members[0], alias: 'Reviewed alias', revision: 12 });
+  f.model.setDraft('Reviewed alias'); await f.model.submit();
+  assert.deepEqual(writes(f)[1].body, { alias: 'Reviewed alias', expectedRevision: 11 });
+});
+
+test('reusing a live controller across generations permanently fences pending and confirmed results in every leaf mode', async () => {
+  for (const mode of ['alias', 'leave', 'close']) {
+    const f = await fixture(mode), waiting = deferred(); f.state.response = () => waiting.promise;
+    const retained = { submit: f.model.submit, close: f.model.close, edit: f.model.setDraft };
+    const command = f.model.submit(); assert.equal(writes(f).length, 1);
+    f.state.generation = 2;
+    const replacement = f.create(mode, { ...f.context, sessionGeneration: 2 }); replacement.attach();
+    let view = replacement.getSnapshot();
+    assert.equal(view.ended, true); assert.equal(view.pending, false); assert.equal(view.receipt, null);
+    assert.equal(view.groupName, null); assert.equal(view.draft, '');
+    await replacement.submit(); await replacement.retry(); await replacement.refresh(); replacement.close();
+    waiting.resolve(mode === 'alias' ? { ...detail().members[0], alias: 'Old alias', revision: 8 }
+      : mode === 'leave' ? { left: true } : { closed: true });
+    await command;
+    assert.equal(f.controller.getSnapshot().command.status, 'confirmed');
+    view = replacement.getSnapshot(); assert.equal(view.ended, true); assert.equal(view.receipt, null);
+    const afterCompletion = f.create(mode, { ...f.context, sessionGeneration: 2 }); afterCompletion.attach();
+    assert.equal(afterCompletion.getSnapshot().ended, true); assert.equal(afterCompletion.getSnapshot().receipt, null);
+    f.state.generation = 1;
+    const originalGeneration = f.create(mode); originalGeneration.attach();
+    assert.equal(originalGeneration.getSnapshot().ended, true);
+    retained.edit('Replayed'); await retained.submit(); retained.close();
+    assert.equal(f.model.getSnapshot().ended, true); assert.equal(writes(f).length, 1); assert.equal(f.state.closed, 0);
+    assert.equal(f.controller.getSnapshot().disposed, false);
+    const freshController = f.resources.createGroupController(); f.state.generation = 2; f.state.response = () => detail();
+    await freshController.loadDetail(G);
+    const fresh = f.create(mode, { ...f.context, controller: freshController, sessionGeneration: 2 }); fresh.attach();
+    assert.equal(fresh.getSnapshot().ended, false); assert.equal(fresh.getSnapshot().canSubmit, true);
+    assert.equal(fresh.getSnapshot().receipt, null); fresh.detach();
+  }
+});

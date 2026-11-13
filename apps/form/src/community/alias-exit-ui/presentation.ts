@@ -1,8 +1,10 @@
-import type { CommunityGroupDetail } from '../../api/community';
+import type { CommunityGroupController, CommunityGroupDetail } from '../../api/community';
 import type { AliasExitContext, AliasExitMode, AliasExitNotice, AliasExitPresentation, AliasExitView } from './contracts';
 import { aliasValidation, confirmedReceipt, currentDetail, matchingCommand, semanticNotice, unresolvedCommand } from './projection';
 
 type Review = Readonly<{ memberId: string; memberRevision: number; groupRevision: number; alias: string; role: string }>;
+// Retain the original generation across leaf remounts without owning controller disposal.
+const controllerSessions = new WeakMap<CommunityGroupController, { generation: number; ended: boolean }>();
 function identity(detail: CommunityGroupDetail | null): Review | null {
   const own = detail?.members.find(member => member.memberId === detail.memberId);
   return detail && own ? { memberId: own.memberId, memberRevision: own.revision, groupRevision: detail.revision,
@@ -16,6 +18,10 @@ function same(a: Review | null, b: Review | null): boolean {
 /** makeKey is the app's crypto-backed commandKey; injection avoids native client/storage imports here. */
 export function createAliasExitPresentation(context: AliasExitContext, mode: AliasExitMode, makeKey: () => string): AliasExitPresentation {
   const { controller, groupId, sessionGeneration, isCurrentSession, onClose } = context;
+  let session = controllerSessions.get(controller);
+  if (!session) { session = { generation: sessionGeneration, ended: false }; controllerSessions.set(controller, session); }
+  if (session.generation !== sessionGeneration) session.ended = true;
+  const controllerSession = session;
   const listeners = new Set<() => void>();
   let detached = false, attached = false, busy = false, reading = false;
   let subscription: { remove(): void } | null = null;
@@ -26,7 +32,9 @@ export function createAliasExitPresentation(context: AliasExitContext, mode: Ali
   const end = () => { detached = true; reviewed = null; draft = ''; localNotice = null; subscription?.remove(); subscription = null; };
   const current = () => {
     if (detached) return false;
-    if (!isCurrentSession(sessionGeneration) || controller.getSnapshot().disposed) { end(); return false; }
+    if (controllerSession.ended || !isCurrentSession(sessionGeneration) || controller.getSnapshot().disposed) {
+      controllerSession.ended = true; end(); return false;
+    }
     return true;
   };
   const capture = () => {
@@ -37,7 +45,7 @@ export function createAliasExitPresentation(context: AliasExitContext, mode: Ali
   const getSnapshot = (): AliasExitView => {
     const ended: AliasExitView = { ended: true, mode, detailStatus: 'idle', groupName: null, draft: '', canEdit: false,
       canSubmit: false, canRefresh: false, canReview: false, canClose: false, canRetry: false, pending: false,
-      unresolved: false, receipt: null, notice: { kind: 'info', text: 'This Community session ended.' } };
+      unresolved: false, receipt: null, notice: { kind: 'info', text: 'This Community session ended.' }, guidance: null };
     if (!current()) return ended;
     const snapshot = controller.getSnapshot(), command = snapshot.command, detail = currentDetail(snapshot, groupId);
     const unresolved = unresolvedCommand(command), pending = busy || command.status === 'pending' || command.intent?.state === 'pending';
@@ -46,23 +54,30 @@ export function createAliasExitPresentation(context: AliasExitContext, mode: Ali
     const fresh = same(reviewed, identity(detail));
     const blocked = unresolved || busy || reading;
     const validation = mode === 'alias' ? aliasValidation(draft) : null;
+    const canSubmit = !blocked && !receipt && (mode === 'leave' || fresh && (mode !== 'close' || detail?.role === 'owner')) && !validation;
+    let availability: AliasExitNotice | null = null;
+    if (canSubmit) availability = { kind: 'info', text: mode === 'alias' ? 'You can edit and save a new alias.'
+      : mode === 'leave' ? 'You can submit a new leave request.' : 'You can confirm a new close request.' };
+    else if (snapshot.detail.status === 'loading' || reading) availability = { kind: 'info', text: 'Loading the current group…' };
+    else if (!detail) availability = { kind: 'info', text: snapshot.detail.status === 'stale'
+      ? 'Group details are stale. Refresh to review the current membership.' : 'Current group details are unavailable. Refresh to check again.' };
+    else if (!identity(detail)) availability = { kind: 'info', text: 'Your current membership details are missing. Refresh to check again.' };
+    else if (!fresh) availability = { kind: 'warning', text: 'Membership details changed or are missing. Review current details before continuing.' };
+    else if (mode === 'close' && detail.role !== 'owner') availability = { kind: 'info', text: 'Only the current group owner can close this group.' };
+    else if (validation) availability = { kind: 'info', text: validation };
     let notice: AliasExitNotice | null = localNotice;
+    let guidance: AliasExitNotice | null = null;
     if (unresolved) notice = { kind: 'warning', text: !matching
       ? 'Another Community change is unresolved. It must be reconciled on its original surface. New changes and navigation are blocked here.'
       : pending ? 'Your change is in progress. Wait before leaving this screen.'
         : 'The original change could not be confirmed. Retry that exact change before editing or leaving.' };
     else if (receipt) notice = { kind: 'success', text: receipt };
-    else if (command.status === 'error' && matching) notice = semanticNotice(command.error);
-    else if (snapshot.detail.status === 'loading') notice = { kind: 'info', text: 'Loading the current group…' };
-    else if (!detail) notice = { kind: 'info', text: snapshot.detail.status === 'stale'
-      ? 'Group details are stale. Refresh to review the current membership.' : 'Current group details are unavailable. Refresh to check again.' };
-    else if (!fresh) notice = { kind: 'warning', text: 'Membership details changed or are missing. Review current details before continuing.' };
-    else if (mode === 'close' && detail.role !== 'owner') notice = { kind: 'info', text: 'Only the current group owner can close this group.' };
-    else if (validation) notice = { kind: 'info', text: validation };
+    else if (command.status === 'error' && matching) { notice = semanticNotice(command.error); guidance = availability; }
+    else if (!canSubmit) notice = availability ?? notice;
     return { ended: false, mode, detailStatus: snapshot.detail.groupId === groupId ? snapshot.detail.status : 'idle',
-      groupName: detail?.name ?? null, draft, pending, unresolved, receipt, notice,
+      groupName: detail?.name ?? null, draft, pending, unresolved, receipt, notice, guidance,
       canEdit: mode === 'alias' && fresh && !blocked && !receipt,
-      canSubmit: !blocked && !receipt && (mode === 'leave' || fresh && (mode !== 'close' || detail?.role === 'owner')) && !validation,
+      canSubmit,
       canRefresh: !blocked && snapshot.detail.status !== 'loading',
       canReview: !!detail && !!identity(detail) && !blocked && (!fresh && !receipt || mode === 'alias' && !!receipt),
       canClose: !blocked, canRetry: matching && unresolved && !pending && !!command.key && command.intent?.state === 'unknown' };

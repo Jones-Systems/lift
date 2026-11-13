@@ -8,7 +8,12 @@ import { commandKey } from '../../src/api/client';
 
 const G = '11111111-1111-4111-8111-111111111111', M = '22222222-2222-4222-8222-222222222222';
 const OTHER = '33333333-3333-4333-8333-333333333333';
-const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+const json = (value: unknown, status = 200) => {
+  const response = new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
+  // Parse serialized fixture bytes in the same Jest realm as the strict Community parser.
+  response.json = async () => JSON.parse(await response.text());
+  return response;
+};
 type Call = { path: string; method: string; raw: string | undefined; key: string | null };
 const pendingCleanup: (() => void)[] = [];
 function deferred() {
@@ -162,19 +167,23 @@ test('same-account session replacement and mode/group/controller replacement inv
   const oldSave = screen.getByTestId('community-alias-save').props.onPress;
   const oldBack = screen.getByTestId('a-back').props.onPress;
   f.state.generation = 2;
-  const replacement = { ...f.context, sessionGeneration: 2 };
+  const nextSession = await fixture();
+  const replacement = { ...f.context, controller: nextSession.controller, sessionGeneration: 2 };
   await result.rerender(<ExitConfirmation context={replacement} mode="close" />);
   await act(async () => { oldSave(); oldBack(); }); expect(writes(f.calls)).toHaveLength(0);
   expect(f.onClose).not.toHaveBeenCalled();
   const oldConfirm = screen.getByTestId('community-close-confirm').props.onPress;
   await result.rerender(<ExitConfirmation context={replacement} mode="leave" />);
   await act(async () => { oldConfirm(); }); expect(writes(f.calls)).toHaveLength(0);
+  expect(writes(nextSession.calls)).toHaveLength(0);
   const previousMode = screen.getByTestId('community-leave-confirm').props.onPress;
   await result.rerender(<ExitConfirmation context={{ ...replacement, groupId: OTHER }} mode="leave" />);
   await act(async () => { previousMode(); }); expect(writes(f.calls)).toHaveLength(0);
+  expect(writes(nextSession.calls)).toHaveLength(0);
   const oldLeave = screen.getByTestId('community-leave-confirm').props.onPress;
   const other = await fixture(); await result.rerender(<ExitConfirmation context={other.context} mode="close" />);
   await act(async () => { oldLeave(); }); expect(writes(f.calls)).toHaveLength(0); expect(writes(other.calls)).toHaveLength(0);
+  expect(writes(nextSession.calls)).toHaveLength(0);
 });
 
 test('late promise after account switch shows no old group alias receipt or enabled action', async () => {
@@ -206,4 +215,122 @@ test('stress text stays complete, missing own row disables alias and is never an
   await result.unmount();
   const model = createAliasExitPresentation(f.context, 'leave', commandKey); model.attach();
   expect(model.getSnapshot().receipt).toBeNull(); model.detach();
+});
+
+test('equal-fields context replacement on the same AliasScreen permanently fences captured input Save and Back', async () => {
+  const f = await fixture(), result = await render(<AliasScreen context={f.context} />);
+  const oldEdit = screen.getByLabelText('Your alias').props.onChangeText;
+  const oldSave = screen.getByTestId('community-alias-save').props.onPress;
+  const oldBack = screen.getByTestId('a-back').props.onPress;
+  await fireEvent.changeText(screen.getByLabelText('Your alias'), 'Old local draft');
+  await result.rerender(<AliasScreen context={{ ...f.context }} />);
+  await act(async () => { oldEdit('Replayed edit'); await oldSave(); oldBack(); });
+  expect(screen.getByLabelText('Your alias').props.value).toBe('Leaf');
+  expect(writes(f.calls)).toHaveLength(0); expect(f.onClose).not.toHaveBeenCalled();
+  await result.rerender(<AliasScreen context={f.context} />);
+  await act(async () => { oldEdit('Replayed again'); await oldSave(); oldBack(); });
+  expect(screen.getByLabelText('Your alias').props.value).toBe('Leaf');
+  expect(writes(f.calls)).toHaveLength(0); expect(f.onClose).not.toHaveBeenCalled();
+  await fireEvent.changeText(screen.getByLabelText('Your alias'), 'Current explicit alias');
+  await fireEvent.press(screen.getByTestId('community-alias-save'));
+  expect(writes(f.calls)).toHaveLength(1);
+  expect(JSON.parse(writes(f.calls)[0].raw!)).toEqual({ alias: 'Current explicit alias', expectedRevision: 7 });
+  expect(screen.getByText('Alias saved: Current explicit alias')).toBeTruthy();
+});
+
+test('equal-fields context replacement on the same ExitConfirmation fences confirm Cancel and Back in both modes', async () => {
+  for (const mode of ['leave', 'close'] as const) {
+    const f = await fixture(), result = await render(<ExitConfirmation context={f.context} mode={mode} />);
+    const oldConfirm = screen.getByTestId(`community-${mode}-confirm`).props.onPress;
+    const oldCancel = screen.getByRole('button', { name: 'Cancel' }).props.onPress;
+    const oldBack = screen.getByTestId('a-back').props.onPress;
+    await result.rerender(<ExitConfirmation context={{ ...f.context }} mode={mode} />);
+    await act(async () => { await oldConfirm(); oldCancel(); oldBack(); });
+    expect(writes(f.calls)).toHaveLength(0); expect(f.onClose).not.toHaveBeenCalled();
+    await result.rerender(<ExitConfirmation context={f.context} mode={mode} />);
+    await act(async () => { await oldConfirm(); oldCancel(); oldBack(); });
+    expect(writes(f.calls)).toHaveLength(0); expect(f.onClose).not.toHaveBeenCalled();
+    await fireEvent.press(screen.getByTestId(`community-${mode}-confirm`));
+    expect(writes(f.calls)).toHaveLength(1);
+    expect(screen.getByText(mode === 'leave' ? 'You left the group.' : 'The group is closed.')).toBeTruthy();
+    await result.unmount();
+  }
+});
+
+test('leave 429 renders previous rejection alongside an available explicit leave control', async () => {
+  const f = await fixture('member');
+  f.state.response = () => json({ error: { code: 'community_rate_limited', message: 'RAW quota' } }, 429);
+  await render(<ExitConfirmation context={f.context} mode="leave" />);
+  await fireEvent.press(screen.getByTestId('community-leave-confirm'));
+  expect(screen.getByText('The previous change was rate limited.')).toBeTruthy();
+  expect(screen.getByText('Previous change')).toBeTruthy();
+  expect(screen.getByText('You can submit a new leave request.')).toBeTruthy();
+  expect(screen.getByTestId('community-leave-confirm').props.accessibilityState.disabled).toBe(false);
+  expect(screen.queryByText(/A new change is unavailable/)).toBeNull();
+  expect(screen.queryByText('RAW quota')).toBeNull(); expect(screen.queryByText('You left the group.')).toBeNull();
+  const original = writes(f.calls)[0]; f.state.response = () => json({ left: true });
+  await fireEvent.press(screen.getByTestId('community-leave-confirm'));
+  expect(writes(f.calls)).toHaveLength(2); expect(writes(f.calls)[1].key).not.toBe(original.key);
+  expect(screen.getByText('You left the group.')).toBeTruthy();
+});
+
+test('alias stale rejection renders current refresh then review then enabled Save guidance', async () => {
+  const f = await fixture(); await render(<AliasScreen context={f.context} />);
+  await fireEvent.changeText(screen.getByLabelText('Your alias'), 'Rejected draft');
+  f.state.response = () => json({ error: { code: 'stale_revision', message: 'RAW revision' } }, 409);
+  await fireEvent.press(screen.getByTestId('community-alias-save'));
+  expect(screen.getByText('The previous change was rejected because the group or membership changed.')).toBeTruthy();
+  expect(screen.getByText('Previous change')).toBeTruthy();
+  expect(screen.getByText('Group details are stale. Refresh to review the current membership.')).toBeTruthy();
+  expect(screen.getByTestId('community-alias-save').props.accessibilityState.disabled).toBe(true);
+  expect(screen.queryByText('Review current details')).toBeNull();
+  const waiting = deferred(); f.state.response = () => waiting.promise;
+  await fireEvent.press(screen.getByText('Refresh group details'));
+  expect(screen.getByText('Loading the current group…')).toBeTruthy();
+  expect(screen.getByTestId('community-alias-save').props.accessibilityState.disabled).toBe(true);
+  expect(screen.queryByText('Review current details')).toBeNull();
+  f.state.detail = { ...f.state.detail, revision: 5, members: [{ ...f.state.detail.members[0]!, alias: 'Current alias', revision: 11 }] };
+  await act(async () => { waiting.resolve(json(f.state.detail)); });
+  expect(screen.getByText('Membership details changed or are missing. Review current details before continuing.')).toBeTruthy();
+  expect(screen.getByTestId('community-alias-save').props.accessibilityState.disabled).toBe(true);
+  await fireEvent.press(screen.getByText('Review current details'));
+  expect(screen.getByLabelText('Your alias').props.value).toBe('Current alias');
+  expect(screen.getByText('You can edit and save a new alias.')).toBeTruthy();
+  expect(screen.getByTestId('community-alias-save').props.accessibilityState.disabled).toBe(false);
+  expect(screen.queryByText(/Refresh to review/)).toBeNull();
+  expect(screen.queryByText(/Review current details before continuing/)).toBeNull();
+  expect(screen.queryByText('RAW revision')).toBeNull();
+  f.state.response = () => json({ ...f.state.detail.members[0]!, alias: 'Reviewed alias', revision: 12 });
+  await fireEvent.changeText(screen.getByLabelText('Your alias'), 'Reviewed alias');
+  await fireEvent.press(screen.getByTestId('community-alias-save'));
+  expect(JSON.parse(writes(f.calls)[1].raw!)).toEqual({ alias: 'Reviewed alias', expectedRevision: 11 });
+  expect(screen.getByText('Alias saved: Reviewed alias')).toBeTruthy();
+});
+
+test('new generation reusing a pending controller never adopts its late receipt while a fresh controller remains valid', async () => {
+  const f = await fixture(), waiting = deferred(); f.state.response = () => waiting.promise;
+  const result = await render(<AliasScreen context={f.context} />);
+  const oldSave = screen.getByTestId('community-alias-save').props.onPress;
+  const oldBack = screen.getByTestId('a-back').props.onPress;
+  await fireEvent.changeText(screen.getByLabelText('Your alias'), 'Previous generation alias');
+  await fireEvent.press(screen.getByTestId('community-alias-save'));
+  f.state.generation = 2; const replacement = { ...f.context, sessionGeneration: 2 };
+  await result.rerender(<AliasScreen context={replacement} />);
+  expect(screen.getByText('This Community session ended.')).toBeTruthy();
+  expect(screen.queryByLabelText('Your alias')).toBeNull(); expect(screen.queryByText('Synthetic group')).toBeNull();
+  await act(async () => { waiting.resolve(json({ memberId: M, alias: 'Previous generation alias', role: 'owner', revision: 8 })); });
+  expect(f.controller.getSnapshot().command.status).toBe('confirmed');
+  expect(screen.queryByText('Alias saved: Previous generation alias')).toBeNull();
+  await result.rerender(<AliasScreen context={{ ...replacement }} />);
+  expect(screen.getByText('This Community session ended.')).toBeTruthy();
+  f.state.generation = 1; await result.rerender(<AliasScreen context={f.context} />);
+  await act(async () => { await oldSave(); oldBack(); });
+  expect(screen.getByText('This Community session ended.')).toBeTruthy();
+  expect(writes(f.calls)).toHaveLength(1); expect(f.onClose).not.toHaveBeenCalled();
+  expect(f.controller.getSnapshot().disposed).toBe(false);
+  const fresh = await fixture(); fresh.state.generation = 2;
+  await result.rerender(<AliasScreen context={{ ...fresh.context, sessionGeneration: 2 }} />);
+  expect(screen.getByLabelText('Your alias').props.value).toBe('Leaf');
+  expect(screen.getByTestId('community-alias-save').props.accessibilityState.disabled).toBe(false);
+  expect(screen.queryByText('Alias saved: Previous generation alias')).toBeNull();
 });

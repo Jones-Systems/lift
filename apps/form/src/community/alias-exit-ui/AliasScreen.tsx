@@ -7,13 +7,11 @@ import type { AliasExitContext, AliasExitMode, AliasExitPresentation, AliasExitV
 import { createAliasExitPresentation } from './presentation';
 
 export function useAliasExitPresentation(context: AliasExitContext, mode: AliasExitMode) {
-  const { controller, groupId, sessionGeneration, isCurrentSession, onClose } = context;
-  const binding = useMemo(() => ({ controller, groupId, sessionGeneration, isCurrentSession, onClose, mode }),
-    [controller, groupId, sessionGeneration, isCurrentSession, onClose, mode]);
+  const binding = useMemo(() => ({ context, mode }), [context, mode]);
   const [active, setActive] = useState<{ binding: typeof binding; model: AliasExitPresentation } | null>(null);
   const [, redraw] = useReducer((value: number) => value + 1, 0);
   useLayoutEffect(() => {
-    const model = createAliasExitPresentation(binding, binding.mode, commandKey);
+    const model = createAliasExitPresentation(binding.context, binding.mode, commandKey);
     const subscription = model.subscribe(redraw);
     model.attach();
     setActive({ binding, model });
@@ -24,7 +22,9 @@ export function useAliasExitPresentation(context: AliasExitContext, mode: AliasE
 
 export function AliasExitStatus({ model, view }: { model: AliasExitPresentation; view: AliasExitView }) {
   return <>
+    {view.guidance ? <Subtitle text="Previous change" /> : null}
     {view.notice ? <Notice kind={view.notice.kind} text={view.notice.text} announce captureId="community-alias-exit-notice" /> : null}
+    {view.guidance ? <Notice kind={view.guidance.kind} text={view.guidance.text} announce captureId="community-alias-exit-guidance" /> : null}
     {!view.ended ? <>
       <PlainAction label="Refresh group details" chevron={null} disabled={!view.canRefresh} onPress={() => void model.refresh()} />
       {view.canReview ? <PlainAction label="Review current details" chevron={null} onPress={model.review} /> : null}
