@@ -35,6 +35,7 @@ function createPresentation(controller: Context['confirmation'], generation: str
   let destination: { saved: ContextConfirmationResult; value: SavedFirstPlanDestination | null } | undefined;
   let openOperation: Promise<void> | undefined;
   let openResult: SavedFirstPlanOpenResult | undefined;
+  let presentationId = 0, openedPresentation: number | undefined;
   const observers = new Set<() => void>();
   const current = (ctx: Context) => {
     try { return ctx.confirmation === controller && ctx.sessionGeneration === generation && ctx.isCurrentSession(); }
@@ -47,7 +48,7 @@ function createPresentation(controller: Context['confirmation'], generation: str
     const snapshot = controller.snapshot(), active = current(ctx);
     return { current: active, snapshot, saved: active && saved(snapshot),
       review: active && snapshot.status === 'ready' && result?.snapshot.status === 'ready' ? result.review : undefined,
-      canOpen: active && saved(snapshot) && !!destination?.value,
+      canOpen: active && saved(snapshot) && !!destination?.value && openedPresentation !== presentationId && openResult?.status !== 'stale',
       opening: !!openOperation, retrying: snapshot.status === 'pending' && result?.snapshot.effect === 'unknown',
       openResult: active ? openResult : undefined };
   }
@@ -65,6 +66,7 @@ function createPresentation(controller: Context['confirmation'], generation: str
     notify();
   }
   return { view, attach(ctx, observer) {
+    const attachmentId = ++presentationId;
     let attached = true;
     const active = () => attached && current(ctx);
     const emit = () => { if (attached) observer(); };
@@ -97,9 +99,12 @@ function createPresentation(controller: Context['confirmation'], generation: str
       },
       open() {
         const state = snapshot(), target = destination?.value;
-        if (!active() || !saved(state) || !target || openOperation || openResult?.status === 'opened' || openResult?.status === 'stale') return;
+        if (!active() || !saved(state) || !target || openOperation || openedPresentation === attachmentId || openResult?.status === 'stale') return;
         const pending = target.openSavedPlan().then(value => {
-          if (current(ctx)) openResult = value;
+          if (current(ctx)) {
+            openResult = value;
+            if (value.status === 'opened') openedPresentation = attachmentId;
+          }
         }, () => {
           if (current(ctx)) openResult = { status: 'unavailable', reason: 'read_failed' };
         }).finally(() => { if (openOperation === pending) openOperation = undefined; notify(); });
@@ -107,7 +112,7 @@ function createPresentation(controller: Context['confirmation'], generation: str
       },
       close() {
         const state = snapshot();
-        if (!active() || blocked(state)) return;
+        if (!active() || blocked(state) || openOperation) return;
         if (state.effect === 'none') controller.cancel();
         attached = false; observers.delete(emit); ctx.close();
       },

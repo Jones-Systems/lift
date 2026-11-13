@@ -48,7 +48,7 @@ function receipt() {
 }
 function fixture({ editable = true, renderer = createContextReviewRenderer(), generation = 'one' } = {}) {
   const f = { current: true, value: account(), reads: 0, writes: [], keys: 0, edits: [], closes: 0, destinations: [], opened: [], planReads: 0,
-    get: null, post: null, plans: null, destination: undefined };
+    get: null, post: null, plans: null, destination: undefined, onOpened: null };
   const api = { captureAuthContext: () => ({ isCurrent: () => f.current }), async request(route, method, body, key) {
     if (route === '/v1/me') { f.reads++; return f.get ? f.get() : clone(f.value); }
     if (route === '/v1/plans/first') { f.writes.push({ body, key }); return f.post ? f.post() : receipt(); }
@@ -63,7 +63,7 @@ function fixture({ editable = true, renderer = createContextReviewRenderer(), ge
     savedFirstPlanDestination(saved) {
       f.destinations.push(saved);
       return f.destination !== undefined ? f.destination : createSavedFirstPlanDestination({ saved, resources, scope,
-        adoptAndOpen: plan => { f.opened.push(plan); return f.current; } });
+        adoptAndOpen: plan => { f.opened.push(plan); f.onOpened?.(); return f.current; } });
     }, close: () => { f.closes++; } };
   const presentation = renderer(ctx).props.presentation;
   return Object.assign(f, { controller, ctx, presentation, renderer,
@@ -211,4 +211,36 @@ test('row formatting preserves all unknown values, long limitations and absent v
   value.profile.trainingContext = ''; value.profile.goals = [];
   assert.equal(rows().find(row => row.id === 'context').text, 'Empty response');
   assert.equal(rows().find(row => row.id === 'goals').text, 'None recorded');
+});
+
+test('in-flight saved readback guards retained Close until completion, then confirmed Back remains allowed', async () => {
+  const f = fixture(), a = f.attach(); await settled(); a.confirm(f.view().review); await settled();
+  const read = deferred(); f.plans = () => read.promise;
+  a.open(); a.open(); a.close(); await settled();
+  assert.equal(f.closes, 0); assert.equal(f.planReads, 1); assert.equal(f.opened.length, 0);
+  read.resolve({ items: [receipt().plan] }); await settled();
+  assert.equal(f.opened.length, 1); assert.equal(f.closes, 0);
+  a.close(); a.open(); await settled();
+  assert.equal(f.closes, 1); assert.equal(f.opened.length, 1);
+  assert.equal(f.controller.snapshot().effect, 'confirmed');
+});
+test('returning presentation can reopen the same receipt, while successful old callbacks stay spent', async () => {
+  const f = fixture(), a = f.attach(); await settled(); a.confirm(f.view().review); await settled();
+  a.open(); await settled(); a.open(); await settled();
+  assert.equal(f.planReads, 1); assert.equal(f.view().canOpen, false);
+  a.detach(); const b = f.attach();
+  assert.equal(f.view().canOpen, true); a.open(); a.close();
+  b.open(); b.open(); await settled();
+  assert.equal(f.planReads, 2); assert.equal(f.opened.length, 2); assert.equal(f.closes, 0);
+  assert.equal(f.destinations.length, 1); assert.equal(f.writes.length, 1); assert.equal(f.keys, 1); assert.equal(f.reads, 1);
+});
+test('late success belongs to its issuing attachment even if navigation synchronously reattaches before completion', async () => {
+  const f = fixture(), a = f.attach(); await settled(); a.confirm(f.view().review); await settled();
+  let returned;
+  f.onOpened = () => { a.detach(); returned = f.attach(); f.onOpened = null; };
+  a.open(); await settled();
+  assert.equal(f.view().openResult.status, 'opened'); assert.equal(f.view().canOpen, true);
+  a.open(); returned.open(); returned.open(); await settled();
+  assert.equal(f.planReads, 2); assert.equal(f.opened.length, 2); assert.equal(f.destinations.length, 1);
+  assert.equal(f.writes.length, 1); assert.equal(f.keys, 1);
 });

@@ -5,8 +5,13 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react-
 import type { Account } from '../../src/api/domain';
 import { FormResources } from '../../src/api/resources';
 import { FormTransport } from '../../src/api/transport';
-import type { ContextConfirmationSlotContext } from '../../src/features/contract';
+import type { ContextConfirmationSlotContext, HomeSlotContext, SourcePlanDetailSlotContext } from '../../src/features/contract';
 import { AccountRow, PrimaryAction } from '../../src/features/shared/ui';
+import { FormAccountApp } from '../../src/features/shell/FormAccountApp';
+import { TrainingSlot } from '../../src/features/training/TrainingSlot';
+import { TodayScreen } from '../../src/features/training/screens';
+import { createSourcePlanDetailRenderer } from '../../src/features/training/source-plan-detail';
+import { decodePlan } from '../../src/api/trainingCodec';
 import { createContextReviewRenderer } from '../../src/features/training/context-review';
 import { createContextConfirmation } from '../../src/integration/contextConfirmation';
 import { createSavedFirstPlanDestination } from '../../src/integration/savedFirstPlanDestination';
@@ -46,6 +51,8 @@ function fixture(editable = true) {
       f.writes.push({ body: JSON.parse(String(init?.body)), key: (init?.headers as Record<string, string>)['Idempotency-Key'] });
       return f.post ? f.post() : json(receipt());
     }
+    if (path === '/v1/history') return json({ items: [], nextBefore: null });
+    if (path === '/v1/stats') return json(emptyStats());
     expect(path).toBe('/v1/plans'); f.planReads++; return f.plans ? f.plans() : json({ items: [receipt().plan] });
   });
   const resources = new FormResources(api), edits = jest.fn(), close = jest.fn(), opened = jest.fn();
@@ -57,7 +64,7 @@ function fixture(editable = true) {
     createSavedFirstPlanDestination({ saved, resources, scope, adoptAndOpen: plan => { opened(plan); return f.current; } }));
   const ctx: ContextConfirmationSlotContext = { sessionGeneration: 'original', isCurrentSession: () => f.current,
     confirmation, savedFirstPlanDestination: destination, close };
-  return Object.assign(f, { ctx, confirmation, edits, close, opened, destination });
+  return Object.assign(f, { ctx, confirmation, edits, close, opened, destination, resources, api });
 }
 afterEach(async () => {
   await cleanup();
@@ -193,4 +200,200 @@ test('saved null destination is open-unavailable, while unavailable creation per
   expect(screen.getByText('Training context or plan creation is unavailable. You can go back or explicitly review again.')).toBeTruthy();
   expect(screen.getByTestId('a-back')).toBeTruthy(); expect(screen.getByTestId('context-recapture')).toBeTruthy();
   expect(unavailable.reads).toBe(1); expect(unavailable.writes).toHaveLength(1);
+});
+
+function emptyStats() {
+  return { confirmedSets: 0, repetitions: 0, volumeKg: 0, completedSessions: 0, byExercise: [],
+    units: { load: 'kg', volume: 'kg-repetitions' }, includesActiveConfirmedSets: true };
+}
+function trainingEntryFixture() {
+  const f = fixture(), plan = receipt().plan;
+  const noop = () => {};
+  const open = jest.fn<() => void>();
+  const ctx: HomeSlotContext = { account: f.value, appMode: 'basic', resources: f.resources.boundTo(() => f.current),
+    sessionGeneration: 'original', isCurrentSession: () => f.current, plans: [plan], activePlan: plan, storedPlans: [plan],
+    exercises: [], entitlements: null, openAccount: noop, openPlans: noop, openPlan: noop, openCues: noop,
+    openSettings: noop, reload: async () => {}, savedFirstPlanDestination: f.destination, openContextConfirmation: open };
+  return { f, ctx, open };
+}
+const retainedEntry = (): (() => void) => screen.UNSAFE_getByType(TodayScreen).props.entries
+  .find((entry: { testID: string }) => entry.testID === 'a-entry-context-review').onPress;
+
+test('actual legacy Today calls its captured context opener with no source-training renderer', async () => {
+  const { ctx, open } = trainingEntryFixture();
+  await render(<TrainingSlot {...ctx} />);
+  expect(ctx.renderSourceTraining).toBeUndefined();
+  expect(screen.getByTestId('screen-today')).toBeTruthy();
+  await fireEvent.press(screen.getByTestId('a-entry-context-review'));
+  expect(open).toHaveBeenCalledTimes(1);
+});
+test.each(['removed', 'replaced', 'session', 'owner'] as const)('actual Today retained context entry rejects %s and never replays through a replacement', async change => {
+  const { ctx, open } = trainingEntryFixture(), replacement = jest.fn<() => void>();
+  const view = await render(<TrainingSlot {...ctx} />);
+  const old = retainedEntry();
+  const next: HomeSlotContext = { ...ctx,
+    ...(change === 'removed' ? { openContextConfirmation: undefined } : {}),
+    ...(change === 'replaced' ? { openContextConfirmation: replacement } : {}),
+    ...(change === 'session' ? { sessionGeneration: 'replacement' } : {}),
+    ...(change === 'owner' ? { isCurrentSession: () => true } : {}) };
+  await view.rerender(<TrainingSlot {...next} />);
+  await act(async () => { old(); });
+  expect(open).not.toHaveBeenCalled(); expect(replacement).not.toHaveBeenCalled();
+  await view.rerender(<TrainingSlot {...ctx} />);
+  await act(async () => { old(); }); expect(open).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByTestId('a-entry-context-review'));
+  expect(open).toHaveBeenCalledTimes(1);
+});
+test('actual Today detached entry stays invalid after remount and current-session loss blocks a live entry', async () => {
+  const { f, ctx, open } = trainingEntryFixture();
+  const view = await render(<TrainingSlot {...ctx} />); const old = retainedEntry();
+  await view.unmount(); await render(<TrainingSlot {...ctx} />);
+  await act(async () => { old(); }); expect(open).not.toHaveBeenCalled();
+  f.current = false; await act(async () => { retainedEntry()(); }); expect(open).not.toHaveBeenCalled();
+});
+
+function sourceReceipt() {
+  const item = (id: string, nativeId: string, repetitions: boolean) => ({ id,
+    native: { exercise_id: nativeId, movement_pattern: 'synthetic movement', role: 'practice', sets: repetitions ? 3 : 1,
+      rest_seconds: 45, ...(repetitions ? { rep_range: [6, 10], target_rir: 2, substituted_for: 'prior_native', notes: ['Retained source note', ''] } : {}) },
+    registeredDomain: { exerciseId: 'domain_' + id, variantId: 'variant:' + id,
+      identity: { repository: 'Synthetic/Source', revision: 'rev:source', path: 'retained/native.json', sha256: 'a'.repeat(64), nativeId },
+      registration: { id: 'synthetic-registration', revision: 'r1', digest: 'b'.repeat(64), bytes: 123 }, recordDigest: 'c'.repeat(64) },
+    load: { kind: 'unspecified', basis: 'unknown' } });
+  const { minutes, ...metadata } = receipt().plan;
+  const plan = decodePlan({ ...metadata, schema: 'form.source-prescription-plan/v1',
+    origin: { kind: 'form-adaptation', id: 'synthetic-plan', revision: 'r1' },
+    duration: { kind: 'estimated-range', minMinutes: 20, maxMinutes: 35 },
+    items: [item('source_rep', 'native_rep', true), item('source_practice', 'native_practice', false)] });
+  if (!('schema' in plan)) throw Error('Expected a source receipt');
+  return { plan, provenance: receipt().provenance };
+}
+async function mountSourceJourney() {
+  const value = fixture().value, saved = sourceReceipt(), calls: { path: string; method: string; body: unknown; key: string | null }[] = [];
+  const f = { read: null as null | (() => Promise<Response>), contexts: [] as ContextConfirmationSlotContext[],
+    details: [] as SourcePlanDetailSlotContext[], receipts: [] as unknown[],
+    destinations: [] as ReturnType<ContextConfirmationSlotContext['savedFirstPlanDestination']>[] };
+  const origin = 'https://form.renderer.invalid';
+  const api = new FormTransport(origin, {
+    async load() { return JSON.stringify({ version: 1, baseURL: origin, token: 'synthetic-original' }); },
+    async save() {}, async clear() {},
+  }, async (url, init) => {
+    const path = new URL(String(url)).pathname, method = init?.method ?? 'GET';
+    calls.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : null, key: new Headers(init?.headers).get('Idempotency-Key') });
+    switch (path) {
+      case '/api/auth/get-session': return json({ session: { id: 'synthetic-session', token: 'synthetic-original',
+        userId: value.accountId, expiresAt: new Date(Date.now() + 3_600_000).toISOString() }, user: { id: value.accountId } });
+      case '/api/auth/sign-in/email': return new Response('{}', { headers: { 'set-auth-token': 'synthetic-replacement' } });
+      case '/v1/capabilities': return json({});
+      case '/v1/me': return json(value);
+      case '/v1/me/settings': return json({ accountId: value.accountId });
+      case '/v1/entitlements': return json({ accountId: value.accountId, grants: [], active: [] });
+      case '/v1/exercises': return json({ items: [] });
+      case '/v1/history': return json({ items: [], nextBefore: null });
+      case '/v1/stats': return json(emptyStats());
+      case '/v1/plans': return f.read ? f.read() : json({ items: [] });
+      case '/v1/plans/first': return json(saved);
+      default: throw Error('Unexpected source journey request: ' + method + ' ' + path);
+    }
+  });
+  const resources = new FormResources(api), contextRenderer = createContextReviewRenderer(), detailRenderer = createSourcePlanDetailRenderer();
+  const legacyReads = jest.spyOn(FormResources.prototype, 'plans');
+  const renderContext = (ctx: ContextConfirmationSlotContext) => {
+    f.contexts.push(ctx);
+    return contextRenderer({ ...ctx, savedFirstPlanDestination(result) {
+      f.receipts.push(result.receipt);
+      const destination = ctx.savedFirstPlanDestination(result);
+      f.destinations.push(destination);
+      return destination;
+    } });
+  };
+  const renderDetail = (ctx: SourcePlanDetailSlotContext) => { if (!f.details.includes(ctx)) f.details.push(ctx); return detailRenderer(ctx); };
+  const view = await render(<FormAccountApp resources={resources} appMode="basic" renderSettings={() => null}
+    renderHome={TrainingSlot} renderContextConfirmation={renderContext} renderSourcePlanDetail={renderDetail} />);
+  await screen.findByTestId('a-entry-context-review');
+  await fireEvent.press(screen.getByTestId('a-entry-context-review'));
+  await screen.findByTestId('context-row-name');
+  const confirmation = f.contexts.at(-1)!.confirmation, generation = f.contexts.at(-1)!.sessionGeneration;
+  await fireEvent.press(screen.getByTestId('context-confirm'));
+  expect(screen.getByText('Your plan is saved.')).toBeTruthy();
+  f.read = async () => json({ items: [saved.plan] });
+  const capturedAccountReads = calls.filter(call => call.path === '/v1/me').length;
+  const creates = () => calls.filter(call => call.path === '/v1/plans/first');
+  const planReads = () => calls.filter(call => call.path === '/v1/plans');
+  const assertNoNewCreation = (status: 'saved' | 'stale' = 'saved') => {
+    expect(creates()).toHaveLength(1);
+    expect(creates()[0]).toMatchObject({ method: 'POST', body: { profileRevision: 4, preferencesRevision: 7 }, key: expect.any(String) });
+    expect(new Set(f.contexts.map(ctx => ctx.confirmation))).toEqual(new Set([confirmation]));
+    expect(new Set(f.contexts.map(ctx => ctx.sessionGeneration))).toEqual(new Set([generation]));
+    expect(f.receipts).toEqual([saved]); expect(f.destinations).toHaveLength(1);
+    expect(calls.filter(call => call.path === '/v1/me')).toHaveLength(capturedAccountReads);
+    expect(legacyReads).not.toHaveBeenCalled();
+    expect(calls.filter(call => call.path === '/v1/workout-sessions')).toHaveLength(0);
+    expect(screen.queryByTestId('screen-plan-edit')).toBeNull();
+    expect(confirmation.snapshot()).toMatchObject({ status, effect: 'confirmed' });
+  };
+  return Object.assign(f, { api, saved, view, creates, planReads, assertNoNewCreation });
+}
+test('real shell source journey saves, guarded-reads, renders full source detail, closes back and explicitly reopens the same receipt', async () => {
+  const f = await mountSourceJourney(), before = f.planReads().length;
+  await fireEvent.press(screen.getByTestId('context-open'));
+  await screen.findByTestId('screen-source-plan-detail');
+  expect(f.details).toHaveLength(1);
+  expect(f.details[0].plan).toEqual(f.saved.plan); expect(f.details[0].plan).not.toBe(f.saved.plan);
+  expect(f.details[0].plan.schema).toBe('form.source-prescription-plan/v1');
+  expect(Object.isFrozen(f.details[0].plan.items[0].native)).toBe(true);
+  expect(screen.getByTestId('a-source-plan-item-1')).toHaveTextContent('Retained source note');
+  const detailClose = screen.getByTestId('a-source-plan-close').props.onPress;
+  await fireEvent.press(screen.getByTestId('a-source-plan-close'));
+  expect(screen.getByTestId('context-open')).not.toBeDisabled();
+  await fireEvent.press(screen.getByTestId('context-open'));
+  await screen.findByTestId('screen-source-plan-detail');
+  expect(f.details).toHaveLength(2); expect(f.details[1].plan).toEqual(f.saved.plan);
+  await act(async () => { detailClose(); });
+  expect(screen.getByTestId('screen-source-plan-detail')).toBeTruthy();
+  expect(f.planReads()).toHaveLength(before + 2); f.assertNoNewCreation();
+});
+test('real source readback removes Back and guards the retained Close until completed, then normal context Back cannot re-navigate', async () => {
+  const f = await mountSourceJourney(), read = deferredResponse(), before = f.planReads().length;
+  const back = screen.getByTestId('a-back').props.onPress;
+  const open = screen.UNSAFE_getAllByType(PrimaryAction).find(node => node.props.captureId === 'context-open')!.props.onPress;
+  f.read = () => read.promise;
+  await act(async () => { open(); open(); });
+  expect(screen.queryByTestId('a-back')).toBeNull();
+  await act(async () => { back(); });
+  expect(screen.getByTestId('screen-context-review')).toBeTruthy(); expect(f.details).toHaveLength(0);
+  expect(f.planReads()).toHaveLength(before + 1);
+  await act(async () => { read.resolve(json({ items: [f.saved.plan] })); });
+  await screen.findByTestId('screen-source-plan-detail');
+  await fireEvent.press(screen.getByTestId('a-source-plan-close'));
+  await fireEvent.press(screen.getByTestId('a-back'));
+  await act(async () => { back(); open(); });
+  expect(screen.queryByTestId('screen-context-review')).toBeNull();
+  expect(screen.queryByTestId('screen-source-plan-detail')).toBeNull();
+  expect(f.details).toHaveLength(1); expect(f.planReads()).toHaveLength(before + 1); f.assertNoNewCreation();
+});
+test('real source invalid readback explains unavailability and explicit retry only reads, preserving the original source receipt', async () => {
+  const f = await mountSourceJourney(), before = f.planReads().length;
+  f.read = async () => json({ items: [{ ...f.saved.plan, items: [{}] }] });
+  await fireEvent.press(screen.getByTestId('context-open'));
+  expect(screen.getByText('Your plan was saved. Its readback could not be verified.')).toBeTruthy();
+  expect(f.details).toHaveLength(0);
+  f.read = async () => json({ items: [f.saved.plan] });
+  await fireEvent.press(screen.getByTestId('context-open'));
+  await screen.findByTestId('screen-source-plan-detail');
+  expect(f.details[0].plan).toEqual(f.saved.plan);
+  expect(f.planReads()).toHaveLength(before + 2); f.assertNoNewCreation();
+});
+test('real shell auth replacement during source readback rejects stale navigation and retained old actions without new creation', async () => {
+  const f = await mountSourceJourney(), read = deferredResponse(), before = f.planReads().length;
+  f.read = () => read.promise;
+  const open = screen.UNSAFE_getAllByType(PrimaryAction).find(node => node.props.captureId === 'context-open')!.props.onPress;
+  const back = screen.getByTestId('a-back').props.onPress;
+  await act(async () => { open(); });
+  await act(async () => { await f.api.signIn('synthetic@example.invalid', 'synthetic'); });
+  await act(async () => { read.resolve(json({ items: [f.saved.plan] })); open(); back(); });
+  await act(async () => { expect(await f.destinations[0]!.openSavedPlan()).toEqual({ status: 'stale' }); });
+  expect(f.details).toHaveLength(0); expect(screen.queryByTestId('screen-source-plan-detail')).toBeNull();
+  expect(screen.queryByTestId('context-open')).toBeNull(); expect(screen.queryByTestId('context-row-name')).toBeNull();
+  expect(f.planReads()).toHaveLength(before + 1); f.assertNoNewCreation('stale');
 });

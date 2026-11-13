@@ -25,7 +25,7 @@ export function ContextReviewScreen({ ctx, presentation }: {
   const view = presentation.view(ctx), { snapshot } = view;
   const actions = attached && attached.ctx.confirmation === ctx.confirmation && attached.ctx.sessionGeneration === ctx.sessionGeneration ? attached.actions : undefined;
   const blocked = snapshot.status === 'pending' || snapshot.effect === 'pending' || snapshot.effect === 'unknown';
-  const canClose = view.current && !blocked && !!actions;
+  const canClose = view.current && !blocked && !view.opening && !!actions;
   const ready = view.current && snapshot.status === 'ready' && !!view.review;
   const recapture = view.current && snapshot.effect === 'none' && ['stale', 'unavailable', 'cancelled'].includes(snapshot.status);
   let message = 'Loading your training context…';
@@ -61,7 +61,7 @@ export function ContextReviewScreen({ ctx, presentation }: {
       {view.saved ? <>
         {openMessage ? <Notice kind="info" text={openMessage} announce captureId="context-readback-notice" /> : null}
         <PrimaryAction label={view.openResult?.status === 'unavailable' ? 'Retry opening saved plan' : 'Open saved plan'} captureId="context-open"
-          disabled={!view.canOpen || !actions || view.openResult?.status === 'stale' || view.openResult?.status === 'opened'}
+          disabled={!view.canOpen || !actions || view.openResult?.status === 'stale'}
           loading={view.opening} onPress={() => actions?.open()} />
       </> : null}
       {canClose && snapshot.effect === 'none' ? <PlainAction label="Cancel" captureId="context-cancel" chevron={null} onPress={() => actions?.close()} /> : null}
