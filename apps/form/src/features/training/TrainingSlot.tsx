@@ -296,6 +296,7 @@ function TrainingHome(ctx: HomeSlotContext) {
   const activeRemote: Remote<WorkoutSession | null> = legacyPages.status === 'ready' ? ready(activeSession)
     : legacyPages.status === 'error' ? { status: 'error', error: legacyPages.error } : { status: 'loading' };
   const entries = [
+    ...(ctx.openContextConfirmation ? [{ label: 'Review training context', onPress: () => { if (canPresent()) ctx.openContextConfirmation?.(); }, testID: 'a-entry-context-review' }] : []),
     ...(ctx.openActivity ? [{ label: 'Activity', onPress: ctx.openActivity, testID: 'a-entry-activity' }] : []),
     ...(ctx.openCommunity ? [{ label: 'Community', onPress: ctx.openCommunity, testID: 'a-entry-community' }] : []),
     ...(ctx.openBody ? [{ label: 'Body assessment', onPress: ctx.openBody, testID: 'a-entry-body' }] : []),
