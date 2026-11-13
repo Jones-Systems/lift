@@ -1,5 +1,5 @@
 // One account/session owner retains starts, workout queues and feedback across tabs and shell routes.
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AppState, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Exercise, History, Stats, WorkoutSession, SourcePlan, SourceWorkoutSession,
@@ -112,7 +112,7 @@ function TrainingHome(ctx: HomeSlotContext) {
   }
   const capturedEntry = contextEntry.current;
   const [entryAttachment, setEntryAttachment] = useState<{ entry: typeof capturedEntry; live: boolean } | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const attachment = { entry: capturedEntry, live: true };
     setEntryAttachment(attachment);
     return () => { attachment.live = false; };

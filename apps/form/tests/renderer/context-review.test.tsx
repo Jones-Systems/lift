@@ -244,6 +244,25 @@ test.each(['removed', 'replaced', 'session', 'owner'] as const)('actual Today re
   await fireEvent.press(screen.getByTestId('a-entry-context-review'));
   expect(open).toHaveBeenCalledTimes(1);
 });
+test('actual Today revokes its detached entry before replacement layout effects run', async () => {
+  const { ctx, open } = trainingEntryFixture();
+  const view = await render(<TrainingSlot {...ctx} />);
+  const old = retainedEntry();
+  const invokeDuringReplacementLayout = jest.fn<() => void>(() => { old(); });
+  function Replacement() {
+    React.useLayoutEffect(() => { invokeDuringReplacementLayout(); }, []);
+    return null;
+  }
+  await view.rerender(<Replacement />);
+  expect(invokeDuringReplacementLayout).toHaveBeenCalledTimes(1);
+  expect(ctx.isCurrentSession()).toBe(true);
+  expect(open).not.toHaveBeenCalled();
+  await view.rerender(<TrainingSlot {...ctx} />);
+  await act(async () => { old(); });
+  expect(open).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByTestId('a-entry-context-review'));
+  expect(open).toHaveBeenCalledTimes(1);
+});
 test('actual Today detached entry stays invalid after remount and current-session loss blocks a live entry', async () => {
   const { f, ctx, open } = trainingEntryFixture();
   const view = await render(<TrainingSlot {...ctx} />); const old = retainedEntry();

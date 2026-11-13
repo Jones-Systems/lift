@@ -44,8 +44,8 @@ class BreadthTests(unittest.TestCase):
         contract = breadth.selection(ROOT)
         manifest = json.loads((ROOT / breadth.MANIFEST).read_text())
         discovered, hosted = contract["discovered_test_files"], contract["existing_hosted_test_files"]
-        self.assertEqual(len(discovered), 297)
-        self.assertEqual(len(hosted), 57)
+        self.assertEqual(len(discovered), 316)
+        self.assertEqual(len(hosted), 76)
         self.assertEqual(sum(len(g["files"]) for g in contract["blocked_groups"]), 32)
         self.assertFalse(contract["all_coverage_available"])
         for files in (discovered + ["scripts/new.test.py"], discovered[1:]):
@@ -61,7 +61,14 @@ class BreadthTests(unittest.TestCase):
     def test_commands_preserve_nested_voice_transport_and_adapter_selection(self):
         commands = breadth.selection(ROOT)["commands"]
         selected = {c["group"]: c for c in commands}
-        self.assertEqual(len(selected["app-breadth"]["test_sources"]), 81)
+        self.assertEqual(len(selected["app-breadth"]["test_sources"]), 82)
+        for source in ("src/features/training/__tests__/context-review-presentation.test.cjs",
+                       "src/features/training/__tests__/source-plan-detail-presentation.test.cjs"):
+            self.assertIn("apps/form/" + source, selected["app-breadth"]["test_sources"])
+            self.assertEqual(selected["app-breadth"]["argv"].count(source), 1)
+        for source in ("tests/renderer/context-review.test.tsx", "tests/renderer/source-plan-detail.test.tsx"):
+            self.assertIn("apps/form/" + source, selected["app-renderer"]["test_sources"])
+            self.assertEqual(selected["app-renderer"]["argv"].count(source), 1)
         self.assertIn("src/api/tests/phone-signin.test.cjs", selected["app-breadth"]["argv"])
         self.assertNotIn("scripts/test-api-transport.cjs", selected["app-breadth"]["argv"])
         self.assertIn("tests/voice/portable-session.test.mjs", selected["website"]["argv"])
