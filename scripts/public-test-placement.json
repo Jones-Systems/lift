@@ -232,6 +232,7 @@
         "apps/form/src/features/plans/__tests__/plan-write.test.cjs",
         "apps/form/src/features/training/__tests__/context-review-presentation.test.cjs",
         "apps/form/src/features/training/__tests__/source-model.test.cjs",
+        "apps/form/src/features/training/__tests__/source-plan-detail-presentation.test.cjs",
         "apps/form/src/features/training/__tests__/source-rest.test.cjs",
         "apps/form/src/features/training/__tests__/source-training-mount.test.cjs",
         "apps/form/src/features/training/__tests__/start-write.test.cjs",
@@ -283,7 +284,8 @@
       "reason": "The remaining React Native renderer suite runs with the existing Jest command.",
       "files": [
         "apps/form/tests/renderer/context-review.test.tsx",
-        "apps/form/tests/renderer/runtime-auth.test.tsx"
+        "apps/form/tests/renderer/runtime-auth.test.tsx",
+        "apps/form/tests/renderer/source-plan-detail.test.tsx"
       ]
     },
     {
