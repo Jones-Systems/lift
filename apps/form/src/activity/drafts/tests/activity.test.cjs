@@ -184,7 +184,15 @@ test('incremental partial and complete splits are inspectable and contradictions
 test('then-separated running splits stay with the run through reviewed speech and explicit save', async () => {
   const speech = speechPort(), calls = [];
   const controller = new d.DraftController('account-generation-1', {
-    createEntry: async payload => { calls.push(payload); return entry(payload); },
+    createEntry: async payload => {
+      calls.push(payload);
+      return { ...entry(payload), items: payload.items.map(item => {
+        const snapshot = [chest, run].find(exercise => exercise.ref.source === item.exercise.source
+          && exercise.ref.id === item.exercise.id && exercise.ref.revision === item.exercise.revision);
+        assert.ok(snapshot, 'Every submitted exercise has its matching server snapshot');
+        return { ...item, snapshot: structuredClone(snapshot) };
+      }) };
+    },
     editEntry: async () => { throw new Error('unused'); },
   }, () => 'command-key-0001', speech);
   const text = 'Yesterday I ran 56 minutes partial incremental splits 20 minutes then ten minutes then chest press 75 pounds';
@@ -203,7 +211,9 @@ test('then-separated running splits stay with the run through reviewed speech an
   await assert.rejects(controller.save(), d.ActivityValidationError);
   assert.equal(calls.length, 0);
   controller.edit(confirm(result));
-  assert.equal((await controller.save()).phase, 'saved');
+  const saved = await controller.save();
+  assert.equal(saved.phase, 'saved');
+  assert.deepEqual(saved.saved.items.map(item => item.snapshot.ref), [run.ref, chest.ref]);
   assert.deepEqual(calls[0].items[0].splits.map(split => split.durationSeconds), [1200, 600]);
   assert.equal(calls[0].items[0].pace, undefined);
   assert.equal(calls[0].items[1].sets, undefined);
