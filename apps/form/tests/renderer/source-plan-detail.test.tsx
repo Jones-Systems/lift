@@ -1,6 +1,6 @@
 import React, { isValidElement } from 'react';
 import { afterEach, expect, jest, test } from '@jest/globals';
-import { AccessibilityInfo, Text } from 'react-native';
+import { AccessibilityInfo } from 'react-native';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react-native';
 import type { Account, SourcePlan } from '../../src/api/domain';
 import { FormResources } from '../../src/api/resources';
@@ -8,6 +8,30 @@ import { FormTransport } from '../../src/api/transport';
 import { decodePlan } from '../../src/api/trainingCodec';
 import type { FormAccountAppProps, SourcePlanDetailSlotContext } from '../../src/features/contract';
 import { createSourcePlanDetailRenderer, SourcePlanDetailScreen } from '../../src/features/training/source-plan-detail';
+
+// Retain the application's exact callbacks, while real primitives still own rendering and press behavior.
+const mockPresentationCallbacks = new Map<string, (() => void) | undefined>();
+jest.mock('../../src/features/shared/ui', () => {
+  const actual = jest.requireActual<typeof import('../../src/features/shared/ui')>('../../src/features/shared/ui');
+  const React = jest.requireActual<typeof import('react')>('react');
+  return {
+    ...actual,
+    PrimaryAction(props: React.ComponentProps<typeof actual.PrimaryAction>) {
+      if (props.captureId) mockPresentationCallbacks.set(props.captureId, props.onPress);
+      return <actual.PrimaryAction {...props} />;
+    },
+    PlainAction(props: React.ComponentProps<typeof actual.PlainAction>) {
+      if (props.captureId) mockPresentationCallbacks.set(props.captureId, props.onPress);
+      return <actual.PlainAction {...props} />;
+    },
+  };
+});
+function retainedAction(id: string): () => void {
+  screen.getByTestId(id);
+  const callback = mockPresentationCallbacks.get(id);
+  if (!callback) throw new Error(`No original presenter callback for ${id}`);
+  return callback;
+}
 
 function sourcePlan(): SourcePlan {
   const item = (id: string) => ({ id, native: { exercise_id: 'native_identifier', movement_pattern: 'unfamiliar pattern',
@@ -50,7 +74,7 @@ function fixture(options: { absentStart?: boolean; result?: boolean; archived?: 
 }
 
 const slot: NonNullable<FormAccountAppProps['renderSourcePlanDetail']> = createSourcePlanDetailRenderer();
-afterEach(async () => { await cleanup(); });
+afterEach(async () => { await cleanup(); mockPresentationCallbacks.clear(); });
 
 test('the actual typed slot renders the full original source object and wrapped ordered prescription without fetching metadata', async () => {
   const f = fixture();
@@ -80,7 +104,9 @@ test('the actual typed slot renders the full original source object and wrapped 
   expect(screen.getByTestId('a-source-plan-item-1')).toHaveTextContent('Empty note');
   const longNotes = screen.getAllByText('x'.repeat(4000));
   expect(longNotes).toHaveLength(2);
-  for (const node of screen.UNSAFE_getAllByType(Text)) expect(node.props.numberOfLines).toBeUndefined();
+  const textNodes = screen.container.queryAll(node => node.type === 'Text' || node.type === 'RCTText');
+  expect(textNodes.length).toBeGreaterThan(0);
+  for (const node of textNodes) expect(node.props.numberOfLines).toBeUndefined();
   for (const hidden of ['Private account name', 'synthetic-token', 'domain_identifier', 'variant-pin', 'source-pin',
     'synthetic/implementation', 'catalog/private-pin.json', 'registration-pin', 'registration-revision',
     'adaptation-pin', 'adaptation-revision', 'a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64)]) {
@@ -93,7 +119,7 @@ test('the actual typed slot renders the full original source object and wrapped 
 test('selection invokes the exact captured callback once with its original plan and never invents navigation or a workout', async () => {
   const f = fixture();
   await render(<>{slot(f.context)}</>);
-  const retained = screen.getByTestId('a-source-plan-select').props.onPress as () => void;
+  const retained = retainedAction('a-source-plan-select');
   await act(async () => { retained(); retained(); });
   expect(f.start).toHaveBeenCalledTimes(1); expect(f.start).toHaveBeenCalledWith();
   expect(f.selected).toHaveLength(1); expect(f.selected[0]).toBe(f.plan);
@@ -125,7 +151,7 @@ test('a false result is announced as unavailable and a retained action cannot re
   const f = fixture({ result: false });
   jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
   await render(<>{slot(f.context)}</>);
-  const retained = screen.getByTestId('a-source-plan-select').props.onPress as () => void;
+  const retained = retainedAction('a-source-plan-select');
   await act(async () => { retained(); retained(); });
   const message = 'This plan could not be selected. Selection is unavailable in this view.';
   expect(screen.getByText(message)).toBeTruthy();
@@ -138,7 +164,7 @@ test('a false result is announced as unavailable and a retained action cannot re
 test.each(['select', 'close'] as const)('session loss at retained %s removes private content and dispatches nothing', async action => {
   const f = fixture();
   await render(<>{slot(f.context)}</>);
-  const retained = screen.getByTestId(`a-source-plan-${action}`).props.onPress as () => void;
+  const retained = retainedAction(`a-source-plan-${action}`);
   f.expire();
   await act(async () => { retained(); });
   expect(screen.getByTestId('screen-source-plan-unavailable')).toBeTruthy();
@@ -169,8 +195,8 @@ test('an already stale session and a stale rerender contain no plan or account t
 test.each(['context', 'plan', 'generation', 'resources'] as const)('replacement of %s fences old callbacks even for the same account', async change => {
   const f = fixture(), replacementStart = jest.fn(() => true), replacementClose = jest.fn<() => void>();
   const view = await render(<>{slot(f.context)}</>);
-  const oldSelect = screen.getByTestId('a-source-plan-select').props.onPress as () => void;
-  const oldClose = screen.getByTestId('a-source-plan-close').props.onPress as () => void;
+  const oldSelect = retainedAction('a-source-plan-select');
+  const oldClose = retainedAction('a-source-plan-close');
   const replacement: SourcePlanDetailSlotContext = Object.freeze({ ...f.context,
     ...(change === 'plan' ? { plan: { ...sourcePlan(), name: 'Replacement saved plan' } } : {}),
     ...(change === 'generation' ? { sessionGeneration: 'replacement-generation' } : {}),
@@ -194,8 +220,8 @@ test.each(['context', 'plan', 'generation', 'resources'] as const)('replacement 
 test('close is captured once and permanently invalidates actions from the closed attachment', async () => {
   const f = fixture();
   await render(<>{slot(f.context)}</>);
-  const select = screen.getByTestId('a-source-plan-select').props.onPress as () => void;
-  const close = screen.getByTestId('a-source-plan-close').props.onPress as () => void;
+  const select = retainedAction('a-source-plan-select');
+  const close = retainedAction('a-source-plan-close');
   await act(async () => { close(); close(); select(); });
   expect(f.close).toHaveBeenCalledTimes(1); expect(f.start).not.toHaveBeenCalled();
 });
@@ -203,8 +229,8 @@ test('close is captured once and permanently invalidates actions from the closed
 test('a new context with identical fields still invalidates old intent', async () => {
   const f = fixture();
   const view = await render(<>{slot(f.context)}</>);
-  const select = screen.getByTestId('a-source-plan-select').props.onPress as () => void;
-  const close = screen.getByTestId('a-source-plan-close').props.onPress as () => void;
+  const select = retainedAction('a-source-plan-select');
+  const close = retainedAction('a-source-plan-close');
   await view.rerender(<>{slot(Object.freeze({ ...f.context }))}</>);
   await act(async () => { select(); close(); });
   expect(f.start).not.toHaveBeenCalled(); expect(f.close).not.toHaveBeenCalled();
@@ -226,8 +252,8 @@ test('session loss during selection suppresses private content and success even 
 test('unmount invalidates retained callbacks forever and a new attachment to the same context works', async () => {
   const f = fixture();
   const view = await render(<>{slot(f.context)}</>);
-  const select = screen.getByTestId('a-source-plan-select').props.onPress as () => void;
-  const close = screen.getByTestId('a-source-plan-close').props.onPress as () => void;
+  const select = retainedAction('a-source-plan-select');
+  const close = retainedAction('a-source-plan-close');
   await view.unmount();
   await act(async () => { select(); close(); });
   await render(<>{slot(f.context)}</>);
@@ -240,8 +266,8 @@ test('unmount invalidates retained callbacks forever and a new attachment to the
 test('reentrant selection and close cannot dispatch while the captured selection is busy', async () => {
   const f = fixture();
   await render(<>{slot(f.context)}</>);
-  const select = screen.getByTestId('a-source-plan-select').props.onPress as () => void;
-  const close = screen.getByTestId('a-source-plan-close').props.onPress as () => void;
+  const select = retainedAction('a-source-plan-select');
+  const close = retainedAction('a-source-plan-close');
   f.start.mockImplementationOnce(() => { select(); close(); return false; });
   await act(async () => { select(); });
   expect(f.start).toHaveBeenCalledTimes(1); expect(f.close).not.toHaveBeenCalled();
@@ -250,7 +276,7 @@ test('reentrant selection and close cannot dispatch while the captured selection
 test('React development reattachment supplies live actions without reviving an unmounted attachment', async () => {
   const f = fixture();
   const view = await render(<React.StrictMode>{slot(f.context)}</React.StrictMode>);
-  const oldSelect = screen.getByTestId('a-source-plan-select').props.onPress as () => void;
+  const oldSelect = retainedAction('a-source-plan-select');
   await view.unmount();
   await render(<React.StrictMode>{slot(f.context)}</React.StrictMode>);
   await act(async () => { oldSelect(); });
