@@ -27,6 +27,26 @@ const editing = load('activity/presentation/draftEditing.ts');
 const model = load('activity/drafts/model.ts');
 const { draftToActivityWrite } = load('activity/drafts/validation.ts');
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
+function deferredSpeech(text = 'press unknown load') {
+  const starting = deferred(), observers = new Set(), retained = [];
+  const calls = { starts: [], stops: 0, cancels: 0, accepts: [] };
+  const draft = (state, value = text) => ({ sessionId: 'speech-one', locale: 'en-US', state,
+    text: value, isFinal: state === 'review', error: null });
+  const emit = value => { for (const observer of [...observers]) observer(value); };
+  const port = {
+    availability: async locale => ({ available: true, reason: 'available', locale, onDeviceSupported: true,
+      permissions: { speech: 'granted', microphone: 'granted' } }),
+    requestPermissions: async () => ({ speech: 'granted', microphone: 'granted' }),
+    subscribe: observer => { observers.add(observer); retained.push(observer); return { remove: () => observers.delete(observer) }; },
+    start: locale => { calls.starts.push(locale); emit(draft('starting', '')); return starting.promise; },
+    stop: async () => { calls.stops += 1; emit(draft('review')); },
+    acceptReview: review => { calls.accepts.push(review); return { ...review, source: 'apple_on_device', locale: 'en-US' }; },
+    cancel: async () => { calls.cancels += 1; },
+    dispose: async () => { observers.clear(); },
+  };
+  return { port, starting, calls, final: () => emit(draft('review')),
+    lateFinal: () => { for (const observer of retained) observer(draft('review', 'old private speech')); } };
+}
 const exercise = { ref: { source: 'global', id: 'press' }, name: 'Press', description: '', movement: null,
   measurementType: 'repetitions', kind: 'resistance', loadApplicability: 'applicable', loadLabel: 'Weight',
   guidance: 'globalReference', cueStatus: 'globalReference', safetyAssessment: 'notEstablished' };
@@ -77,7 +97,7 @@ function fixture(options = {}) {
     }
     throw new Error(`Unexpected request ${method} ${url}`);
   };
-  const context = { account: { accountId: 'synthetic-account' }, appMode: 'basic', sessionGeneration: 'session-one',
+  const context = { account: { accountId: 'synthetic-account' }, appMode: 'basic', sessionGeneration: options.sessionGeneration ?? 'session-one',
     isCurrentSession: () => current, close: () => { calls.push({ method: 'CLOSE' }); } };
   context.activity = createActivitySession({ sessionGeneration: context.sessionGeneration, isCurrentSession: context.isCurrentSession,
     api: { request } }, () => `secure-key-${String(++serial).padStart(16, '0')}`, options.speech);
@@ -534,4 +554,119 @@ test('existing speech final review accepts into the same editable draft and neve
   assert.equal(f.state().route, 'editor'); assert.equal(f.writes().length, 0);
   assert.ok(f.state().consumer.draft.result.issues.some(issue => issue.code === 'dateAmbiguous'));
   assert.equal(f.state().consumer.draft.result.candidate.items[0].load.state, 'missing');
+});
+
+test('deferred speech startup survives attachment changes with fresh Stop/transcript controls and one original capture', async () => {
+  for (const settleDetached of [false, true]) {
+    const speech = deferredSpeech(), f = fixture({ speech: speech.port });
+    await f.actions().initialize(); await f.actions().loadDay('2026-11-10');
+    const oldList = f.actions(), starting = oldList.beginSpeech(), oldSpeech = f.actions();
+    const capture = editing.clone(f.context.activity.controller.getState());
+    assert.equal(capture.phase, 'capture'); assert.equal(capture.sessionId, 'speech-one');
+    assert.equal(f.state().route, 'speech'); assert.equal(f.state().busy, true);
+    const keys = f.keyCount(); f.detach();
+    if (!settleDetached) f.attach();
+    speech.starting.resolve('speech-one'); await starting;
+    if (settleDetached) f.attach();
+    assert.equal(activityPresentation(f.context), f.presentation);
+    assert.deepEqual(f.state().consumer.draft.context, capture.context);
+    assert.equal(f.state().consumer.draft.epoch, capture.epoch); assert.equal(f.state().route, 'speech');
+    assert.equal(f.state().busy, false);
+    await oldList.beginSpeech(); await oldSpeech.stopSpeech(); await oldSpeech.back();
+    await oldSpeech.acceptTranscript('old private speech');
+    assert.deepEqual(speech.calls.starts, ['en-US']); assert.equal(speech.calls.stops, 0);
+    assert.equal(speech.calls.cancels, 0); assert.equal(f.keyCount(), keys);
+    await f.actions().stopSpeech();
+    assert.equal(speech.calls.stops, 1); assert.equal(f.state().route, 'speech');
+    assert.equal(f.state().consumer.draft.phase, 'transcriptReview');
+    assert.equal(f.state().consumer.draft.transcript, 'press unknown load');
+    const oldReview = f.actions(); f.detach(); f.attach(); await oldReview.acceptTranscript('old private speech');
+    assert.equal(f.state().consumer.draft.phase, 'transcriptReview'); assert.equal(speech.calls.accepts.length, 0);
+    await f.actions().acceptTranscript('press unknown load');
+    assert.equal(f.state().route, 'editor'); assert.equal(f.writes().length, 0);
+    assert.equal(f.state().consumer.draft.epoch, capture.epoch);
+    assert.deepEqual(f.state().consumer.draft.result.context, capture.context);
+    assert.equal(f.state().consumer.draft.result.candidate.source, 'nativeSpeech');
+    assert.equal(f.state().consumer.draft.result.candidate.performedConfirmed, false);
+    const id = f.state().consumer.draft.result.candidate.items[0].id;
+    await f.actions().edit(result => editing.changeLoad(result, id, { state: 'knownValue', value: 0, unit: 'lb', basis: 'assistance' }));
+    await f.actions().review(); assert.equal(f.writes().length, 0); await f.actions().save();
+    assert.equal(f.state().route, 'detail'); assert.equal(f.writes().length, 1);
+    assert.equal(f.state().receipt.draftId, capture.context.draftId);
+    assert.equal(f.state().receipt.source, 'nativeSpeech');
+    assert.deepEqual(f.state().receipt.items[0].load, { state: 'knownValue', value: 0, unit: 'lb', basis: 'assistance' });
+    assert.equal(f.state().receipt.date.capturedAt, capture.context.capturedAt);
+    assert.equal(f.state().receipt.date.localDate, '2026-11-10');
+    assert.deepEqual(speech.calls.starts, ['en-US']); assert.equal(speech.calls.accepts.length, 1);
+    await f.context.activity.dispose();
+  }
+});
+test('final transcript arriving before deferred startup resolves remains reviewable on a fresh attachment', async () => {
+  const speech = deferredSpeech('last Friday press'), f = fixture({ speech: speech.port });
+  await f.actions().initialize(); const starting = f.actions().beginSpeech();
+  f.detach(); speech.final(); f.attach(); speech.starting.resolve('speech-one'); await starting;
+  assert.equal(f.state().route, 'speech'); assert.equal(f.state().consumer.draft.phase, 'transcriptReview');
+  await f.actions().acceptTranscript('last Friday press');
+  assert.equal(f.state().route, 'editor'); assert.equal(f.writes().length, 0);
+  assert.ok(f.state().consumer.draft.result.issues.some(issue => issue.code === 'dateAmbiguous'));
+  assert.equal(f.state().consumer.draft.result.candidate.items[0].load.state, 'missing');
+  await f.context.activity.dispose();
+});
+test('failed or unbound speech startup never fabricates a live capture or loses its honest cancellation state', async () => {
+  for (const failure of ['rejected', 'unbound']) {
+    const speech = deferredSpeech(), f = fixture({ speech: speech.port }); await f.actions().initialize();
+    const starting = f.actions().beginSpeech(), old = f.actions(); f.detach(); f.attach();
+    if (failure === 'rejected') speech.starting.reject(new Error('synthetic startup failure'));
+    else speech.starting.resolve('different-speech-session');
+    await starting;
+    assert.equal(f.state().busy, false); assert.equal(f.state().consumer.draft.phase, 'cancelled');
+    assert.equal(f.state().consumer.draft.sessionId, null); assert.equal(f.state().consumer.draft.context, null);
+    assert.match(f.state().notice, /ended without a reviewable transcript/);
+    await old.stopSpeech(); await old.acceptTranscript('old private speech');
+    assert.equal(speech.calls.stops, 0); assert.equal(speech.calls.accepts.length, 0); assert.equal(f.writes().length, 0);
+    await f.actions().back(); await f.actions().initialize(); await f.actions().beginManual();
+    const manual = editing.clone(f.state().consumer.draft);
+    speech.lateFinal(); await old.beginSpeech();
+    assert.equal(f.state().route, 'editor'); assert.deepEqual(f.state().consumer.draft, manual);
+    assert.deepEqual(speech.calls.starts, ['en-US']);
+    await f.context.activity.dispose();
+  }
+  const absent = fixture(); await absent.actions().initialize(); await absent.actions().beginSpeech();
+  assert.equal(absent.state().route, 'list'); assert.equal(absent.state().consumer.draft.phase, 'idle');
+  assert.match(absent.state().notice, /Speech is unavailable/); await absent.context.activity.dispose();
+});
+test('background or disposal cancels deferred speech custody; late startup cannot repave an unrelated manual route', async () => {
+  for (const boundary of ['background', 'dispose']) {
+    const speech = deferredSpeech(), f = fixture({ speech: speech.port }); await f.actions().initialize();
+    const starting = f.actions().beginSpeech(), old = f.actions(); f.detach();
+    await f.context.activity[boundary](); f.attach(); speech.starting.resolve('speech-one'); await starting;
+    assert.equal(f.state().consumer.draft.phase, 'cancelled'); assert.equal(f.state().consumer.draft.sessionId, null);
+    assert.equal(f.state().consumer.draft.result, null); assert.equal(f.state().busy, false);
+    assert.match(f.state().notice, /ended without a reviewable transcript/);
+    await old.stopSpeech(); await old.acceptTranscript('old private speech');
+    assert.equal(speech.calls.stops, 0); assert.equal(speech.calls.accepts.length, 0); assert.equal(f.writes().length, 0);
+    if (boundary === 'background') {
+      await f.actions().back(); await f.actions().initialize(); await f.actions().beginManual();
+      const unrelated = editing.clone(f.state().consumer.draft); speech.lateFinal();
+      assert.equal(f.state().route, 'editor'); assert.deepEqual(f.state().consumer.draft, unrelated);
+      await f.context.activity.dispose();
+    }
+    assert.deepEqual(speech.calls.starts, ['en-US']);
+  }
+});
+test('different root or generation never adopts an old deferred capture or its late private transcript', async () => {
+  for (const generation of ['session-one', 'session-two']) {
+    const speech = deferredSpeech(), f = fixture({ speech: speech.port }); await f.actions().initialize();
+    const starting = f.actions().beginSpeech(), old = f.actions(); f.detach(); f.expire();
+    const next = fixture({ sessionGeneration: generation }); await manual(next);
+    const unrelated = editing.clone(next.state());
+    speech.starting.resolve('speech-one'); await starting; speech.lateFinal();
+    await old.beginSpeech(); await old.stopSpeech(); await old.acceptTranscript('old private speech');
+    assert.equal(f.state().available, false); assert.equal(f.state().consumer, null); assert.equal(f.state().receipt, null);
+    assert.deepEqual(next.state(), unrelated); assert.notEqual(next.presentation, f.presentation);
+    assert.equal(next.state().route, 'editor'); assert.equal(next.state().consumer.draft.result.candidate.source, 'manual');
+    assert.equal(next.state().consumer.draft.transcript, ''); assert.equal(next.writes().length, 0);
+    assert.deepEqual(speech.calls.starts, ['en-US']); assert.equal(speech.calls.stops, 0); assert.equal(speech.calls.accepts.length, 0);
+    await f.context.activity.dispose(); await next.context.activity.dispose();
+  }
 });

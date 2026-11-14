@@ -173,6 +173,10 @@ export class ActivityPresentation {
     if (!this.current() || !state.available) { this.retire(); return; }
     if (previous && (!sameValue(previous.draft.result, state.draft.result) || previous.draft.epoch !== state.draft.epoch)) this.editVersion += 1;
     if (state.draft.pending) this.issued = { epoch: state.draft.epoch, command: clone(state.draft.pending) };
+    if (this.route === 'speech' && previous && ['capture', 'transcriptReview'].includes(previous.draft.phase)
+      && state.draft.phase === 'cancelled' && state.draft.epoch !== previous.draft.epoch) {
+      this.notice = 'Speech input ended without a reviewable transcript. Return to Activity and check input availability before continuing.';
+    }
     if (state.draft.phase === 'saved' && state.draft.saved && previous?.draft.phase !== 'saved') {
       if (!this.issued || this.issued.epoch !== state.draft.epoch || !receiptMatches(state.draft.saved, this.issued.command)) {
         this.integrityFailure();
@@ -351,13 +355,24 @@ export class ActivityPresentation {
     const input = { capturedAt: new Date().toISOString(), timeZone: this.state.calendar.value.timeZone, selectedDate: this.selectedDate || null };
     if (speech) {
       this.busy = true; this.publish();
-      try { await this.consumer.beginSpeech(input, 'en-US'); } finally { this.busy = false; this.publish(); }
-      if (this.admit(stamp)) this.navigate('speech');
+      try {
+        const starting = this.consumer.beginSpeech(input, 'en-US');
+        const draft = this.state.draft;
+        // The controller admits this new capture synchronously, before its configured port finishes starting.
+        // Bind its route now; reattachment retains it without replaying the initiating view's continuation.
+        if (this.admit(stamp) && draft.epoch === stamp.draftEpoch + 1
+          && ['capture', 'transcriptReview'].includes(draft.phase) && draft.context?.capturedAt === input.capturedAt
+          && draft.context.timeZone === input.timeZone && draft.context.selectedDate === input.selectedDate) {
+          if (!this.selectedDate) this.selectedDate = draft.context.referenceLocalDate;
+          this.navigate('speech');
+        }
+        await starting;
+      } finally { this.busy = false; this.publish(); }
     } else {
       this.consumer.beginManual(input);
       if (this.admit(stamp)) this.navigate('editor');
     }
-    if (!this.selectedDate && this.state.draft.context) this.selectedDate = this.state.draft.context.referenceLocalDate;
+    if (!speech && !this.selectedDate && this.state.draft.context) this.selectedDate = this.state.draft.context.referenceLocalDate;
     this.publish();
   }
   private async save(stamp: ActionStamp): Promise<void> {

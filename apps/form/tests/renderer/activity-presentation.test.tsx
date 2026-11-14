@@ -2,6 +2,8 @@ import React from 'react';
 import { afterEach, expect, jest, test } from '@jest/globals';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react-native';
 import type { ActivityRuntimeContext } from '../../src/FormRuntime';
+import type { SpeechPort } from '../../src/features/contract';
+import type { SpeechDraft } from '../../src/native/speech.types';
 import type { Account } from '../../src/api/domain';
 import { FormResources } from '../../src/api/resources';
 import type { ActivityCalendar, ActivityEntry, ActivityWrite, ExerciseSnapshot } from '../../src/activity/contracts';
@@ -19,6 +21,34 @@ function deferred<T>() {
   let resolve!: (value: T) => void, reject!: (error: unknown) => void;
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject };
 }
+function deferredSpeech(text = 'press unknown load') {
+  const starting = deferred<string>();
+  const observers = new Set<(draft: SpeechDraft | null) => void>();
+  const retained: ((draft: SpeechDraft | null) => void)[] = [];
+  const calls = { starts: [] as string[], stops: 0, cancels: 0,
+    accepts: [] as { sessionId: string; text: string; reviewed: true }[] };
+  const draft = (state: SpeechDraft['state'], value = text): SpeechDraft => ({ sessionId: 'renderer-speech-one',
+    locale: 'en-US', state, text: value, isFinal: state === 'review', error: null });
+  const emit = (value: SpeechDraft) => { for (const observer of [...observers]) observer(value); };
+  const port: SpeechPort = {
+    availability: async locale => ({ available: true, reason: 'available', locale, onDeviceSupported: true,
+      permissions: { speech: 'granted', microphone: 'granted' } }),
+    requestPermissions: async () => ({ speech: 'granted', microphone: 'granted' }),
+    subscribe: observer => { observers.add(observer); retained.push(observer); return { remove: () => { observers.delete(observer); } }; },
+    start: locale => { calls.starts.push(locale); emit(draft('starting', '')); return starting.promise; },
+    stop: async () => { calls.stops += 1; emit(draft('review')); },
+    acceptReview: review => { calls.accepts.push(review); return { ...review, source: 'apple_on_device', locale: 'en-US' }; },
+    cancel: async () => { calls.cancels += 1; },
+    dispose: async () => { observers.clear(); },
+  };
+  return { port, starting, calls,
+    lateFinal: () => { for (const observer of retained) observer(draft('review', 'old private speech')); } };
+}
+function control(label: string): () => void {
+  const onPress: unknown = screen.getByRole('button', { name: label }).props.onPress;
+  if (typeof onPress !== 'function') throw new Error(`Missing actual control handler: ${label}`);
+  return onPress as () => void;
+}
 function account(): Account {
   return { accountId: 'synthetic-activity', appAccountToken: 'synthetic-token',
     onboarding: { revision: 1, step: 'review', answers: {}, preferences: {}, status: 'completed', completedAt: null },
@@ -30,14 +60,14 @@ function account(): Account {
 }
 type Call = { path: string; method: string; body?: unknown; key?: string };
 function fixture(options: { calendar?: ActivityCalendar | null; calendarFailure?: boolean; pending?: ReturnType<typeof deferred<ActivityEntry>>;
-  failedDetail?: boolean; mismatch?: 'POST' | 'PATCH' } = {}) {
+  failedDetail?: boolean; mismatch?: 'POST' | 'PATCH'; speech?: SpeechPort; sessionGeneration?: string } = {}) {
   const calls: Call[] = [];
   let saved: ActivityEntry | null = null, current = true, keys = 0, mismatches = 0;
   const stored = new Map<string, ActivityEntry>();
   const receipts = new Map<string, ActivityEntry>();
   const serverEntry = (write: ActivityWrite, revision = 1, id = 'entry-one'): ActivityEntry => ({ ...write, id, revision, status: 'recorded',
     items: write.items.map(item => ({ ...item, snapshot: exercise })), createdAt: '2026-11-13T10:00:00Z', updatedAt: '2026-11-13T10:00:00Z' });
-  const activity = createActivitySession({ sessionGeneration: 'renderer-activity-one', isCurrentSession: () => current,
+  const activity = createActivitySession({ sessionGeneration: options.sessionGeneration ?? 'renderer-activity-one', isCurrentSession: () => current,
     api: { async request<T>(url: string, method = 'GET', body?: unknown, key?: string): Promise<T> {
       const path = url.split('?')[0]; calls.push({ path, method, body, key });
       let value: unknown;
@@ -70,7 +100,7 @@ function fixture(options: { calendar?: ActivityCalendar | null; calendarFailure?
         stored.set(id, saved);
       }
       return value as T;
-    } } }, () => `renderer-secure-key-${String(++keys).padStart(12, '0')}`);
+    } } }, () => `renderer-secure-key-${String(++keys).padStart(12, '0')}`, options.speech);
   const close = jest.fn();
   const context: ActivityRuntimeContext = { activity, sessionGeneration: activity.sessionGeneration, isCurrentSession: () => current,
     account: account(), appMode: 'basic', resources: new FormResources(), close };
@@ -262,4 +292,86 @@ test('same-binding remount retains original unknown controller; same-account rep
   await remount.rerender(renderer(next.context)); await act(async () => {});
   expect(screen.queryByText('Retry original entry request')).toBeNull();
   expect(next.writes()).toHaveLength(0); expect(f.writes()).toHaveLength(1);
+});
+
+test('deferred real speech startup survives actual unmount/remount and fresh Stop/transcript/edit/review controls complete once', async () => {
+  const speech = deferredSpeech(), f = await mount({ speech: speech.port });
+  await type('Civil date (YYYY-MM-DD)', '2026-11-10'); await tap('Load date');
+  const oldStart = control('Use existing speech input'), oldBack = control('Back to Today');
+  await tap('Use existing speech input');
+  const controller = f.context.activity.controller, capture = controller.getState(), keys = f.keyCount();
+  expect(capture).toMatchObject({ phase: 'capture', sessionId: 'renderer-speech-one' });
+  expect(screen.getByText(/Waiting for the current Activity operation/)).toBeTruthy();
+  expect(screen.queryByText('Stop speech')).toBeNull(); expect(f.writes()).toHaveLength(0);
+  await f.unmount(); const remount = await render(renderer(f.context)); await act(async () => {});
+  await act(async () => { speech.starting.resolve('renderer-speech-one'); });
+  expect(activityPresentation(f.context).getSnapshot().route).toBe('speech');
+  expect(controller.getState().context).toEqual(capture.context); expect(controller.getState().epoch).toBe(capture.epoch);
+  expect(screen.getByRole('button', { name: 'Stop speech' })).toBeTruthy();
+  await act(async () => { oldStart(); oldBack(); });
+  expect(speech.calls.starts).toEqual(['en-US']); expect(f.keyCount()).toBe(keys); expect(f.close).not.toHaveBeenCalled();
+  const oldStop = control('Stop speech'); await remount.unmount();
+  const stopView = await render(renderer(f.context)); await act(async () => {});
+  await act(async () => { oldStop(); }); expect(speech.calls.stops).toBe(0);
+  await tap('Stop speech'); expect(speech.calls.stops).toBe(1);
+  expect(controller.getState().phase).toBe('transcriptReview');
+  expect(screen.getByLabelText('Final transcript to review').props.value).toBe('press unknown load');
+  const oldAccept = control('Accept reviewed transcript'); await stopView.unmount();
+  await render(renderer(f.context)); await act(async () => {});
+  await act(async () => { oldAccept(); oldStop(); oldStart(); });
+  expect(controller.getState().phase).toBe('transcriptReview'); expect(speech.calls.accepts).toHaveLength(0);
+  await type('Final transcript to review', 'press unknown load'); await tap('Accept reviewed transcript');
+  expect(screen.getByText('Edit activity draft')).toBeTruthy(); expect(f.writes()).toHaveLength(0);
+  expect(controller.getState()).toMatchObject({ phase: 'structuredReview', epoch: capture.epoch,
+    result: { context: capture.context, candidate: { source: 'nativeSpeech', performedConfirmed: false } } });
+  await tap('Enter a known load, including zero'); await type('Exercise 1 load value', '0');
+  await tap('lb'); await tap('assistance'); await tap('Review activity');
+  expect(screen.getByText(/reported value 0 lb; basis: assistance/)).toBeTruthy(); expect(f.writes()).toHaveLength(0);
+  await tap('Save activity');
+  expect(screen.getByText('Entry entry-one; revision 1; status recorded')).toBeTruthy(); expect(f.writes()).toHaveLength(1);
+  expect(f.writes()[0].body).toMatchObject({ source: 'nativeSpeech', draftId: capture.context!.draftId,
+    performedConfirmed: true, date: { localDate: '2026-11-10', capturedAt: capture.context!.capturedAt, confirmed: true } });
+  expect(controller.getState().saved).toEqual(f.receipt());
+  expect(speech.calls.starts).toEqual(['en-US']); expect(speech.calls.stops).toBe(1); expect(speech.calls.accepts).toHaveLength(1);
+});
+test.each(['failure', 'unbound', 'background', 'dispose'] as const)('deferred speech %s stays cancelled with no fabricated Stop/review/save controls after remount', async boundary => {
+  const speech = deferredSpeech(), f = await mount({ speech: speech.port });
+  const oldStart = control('Use existing speech input'); await tap('Use existing speech input');
+  await f.unmount(); await render(renderer(f.context)); await act(async () => {});
+  await act(async () => {
+    if (boundary === 'background') await f.context.activity.background();
+    if (boundary === 'dispose') await f.context.activity.dispose();
+    if (boundary === 'failure') speech.starting.reject(new Error('synthetic startup failure'));
+    else speech.starting.resolve(boundary === 'unbound' ? 'different-speech-session' : 'renderer-speech-one');
+  });
+  expect(f.context.activity.controller.getState()).toMatchObject({ phase: 'cancelled', sessionId: null, context: null, result: null });
+  expect(screen.getByText(/Speech input ended without a reviewable transcript/)).toBeTruthy();
+  expect(screen.queryByText('Stop speech')).toBeNull(); expect(screen.queryByText('Accept reviewed transcript')).toBeNull();
+  expect(screen.queryByText('Save activity')).toBeNull(); expect(f.writes()).toHaveLength(0);
+  await act(async () => { oldStart(); }); expect(speech.calls.starts).toEqual(['en-US']);
+  expect(speech.calls.stops).toBe(0); expect(speech.calls.accepts).toHaveLength(0);
+  if (boundary !== 'dispose') {
+    await act(async () => { await fireEvent.press(screen.getByLabelText('Back to Discard unsaved input')); });
+    await tap('Load Activity calendar'); await tap('Log activity');
+    const unrelated = f.context.activity.controller.getState();
+    await act(async () => { speech.lateFinal(); oldStart(); });
+    expect(screen.getByText('Edit activity draft')).toBeTruthy(); expect(f.context.activity.controller.getState()).toEqual(unrelated);
+    expect(screen.queryByLabelText('Final transcript to review')).toBeNull();
+    expect(screen.queryByText('old private speech')).toBeNull(); expect(speech.calls.starts).toEqual(['en-US']);
+  }
+});
+test.each(['renderer-activity-one', 'renderer-activity-two'])('replacement root with generation %s never adopts deferred old capture or late private results', async sessionGeneration => {
+  const speech = deferredSpeech(), f = await mount({ speech: speech.port });
+  const oldStart = control('Use existing speech input'), oldBack = control('Back to Today');
+  await tap('Use existing speech input'); await f.unmount(); f.expire();
+  const next = fixture({ sessionGeneration }); await render(renderer(next.context)); await act(async () => {}); await draft();
+  const unrelated = next.context.activity.controller.getState();
+  await act(async () => { speech.starting.resolve('renderer-speech-one'); speech.lateFinal(); oldStart(); oldBack(); });
+  expect(activityPresentation(f.context).getSnapshot().available).toBe(false);
+  expect(activityPresentation(f.context).getSnapshot().consumer).toBeNull();
+  expect(next.context.activity.controller.getState()).toEqual(unrelated); expect(screen.getByText('Edit activity draft')).toBeTruthy();
+  expect(screen.queryByText('Stop speech')).toBeNull(); expect(screen.queryByLabelText('Final transcript to review')).toBeNull();
+  expect(screen.queryByText('old private speech')).toBeNull(); expect(next.writes()).toHaveLength(0); expect(f.writes()).toHaveLength(0);
+  expect(speech.calls.starts).toEqual(['en-US']); expect(speech.calls.stops).toBe(0); expect(speech.calls.accepts).toHaveLength(0);
+  expect(f.close).not.toHaveBeenCalled(); expect(next.close).not.toHaveBeenCalled();
 });
