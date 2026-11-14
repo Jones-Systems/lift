@@ -184,7 +184,15 @@ test('incremental partial and complete splits are inspectable and contradictions
 test('then-separated running splits stay with the run through reviewed speech and explicit save', async () => {
   const speech = speechPort(), calls = [];
   const controller = new d.DraftController('account-generation-1', {
-    createEntry: async payload => { calls.push(payload); return entry(payload); },
+    createEntry: async payload => {
+      calls.push(payload);
+      return { ...entry(payload), items: payload.items.map(item => {
+        const snapshot = [chest, run].find(exercise => exercise.ref.source === item.exercise.source
+          && exercise.ref.id === item.exercise.id && exercise.ref.revision === item.exercise.revision);
+        assert.ok(snapshot, 'Every submitted exercise has its matching server snapshot');
+        return { ...item, snapshot: structuredClone(snapshot) };
+      }) };
+    },
     editEntry: async () => { throw new Error('unused'); },
   }, () => 'command-key-0001', speech);
   const text = 'Yesterday I ran 56 minutes partial incremental splits 20 minutes then ten minutes then chest press 75 pounds';
@@ -203,7 +211,9 @@ test('then-separated running splits stay with the run through reviewed speech an
   await assert.rejects(controller.save(), d.ActivityValidationError);
   assert.equal(calls.length, 0);
   controller.edit(confirm(result));
-  assert.equal((await controller.save()).phase, 'saved');
+  const saved = await controller.save();
+  assert.equal(saved.phase, 'saved');
+  assert.deepEqual(saved.saved.items.map(item => item.snapshot.ref), [run.ref, chest.ref]);
   assert.deepEqual(calls[0].items[0].splits.map(split => split.durationSeconds), [1200, 600]);
   assert.equal(calls[0].items[0].pace, undefined);
   assert.equal(calls[0].items[1].sets, undefined);
@@ -252,7 +262,7 @@ test('unknown write retains identical sanitized payload/key/revision and explici
   const calls = []; let attempts = 0, keys = 0;
   const controller = new d.DraftController('account-generation-1', {
     createEntry: async (payload, key) => { calls.push([payload, key]); if (++attempts === 1) throw { status: 0, effectUnknown: true }; return entry(payload); },
-    editEntry: async (id, expectedRevision, payload, key) => { calls.push([payload, key, id, expectedRevision]); if (++attempts === 1) throw { status: 0, effectUnknown: true }; return entry(payload); },
+    editEntry: async (id, expectedRevision, payload, key) => { calls.push([payload, key, id, expectedRevision]); if (++attempts === 1) throw { status: 0, effectUnknown: true }; return { ...entry(payload), id, revision: expectedRevision + 1 }; },
   }, () => `command-key-${++keys}-0000`);
   controller.beginManual(context(), chest); controller.edit(manual());
   assert.equal((await controller.save({ id: 'entry-1', expectedRevision: 4 })).phase, 'unknown');
@@ -402,7 +412,8 @@ test('entry consumer fetches the recorded revision, preserves historical fields,
     if (path.includes('?')) return { items: [recorded], nextCursor: 'next-page' };
     if (method !== 'PATCH') return recorded;
     if (++attempts === 1) throw { status: 0, effectUnknown: true };
-    return { ...recorded, ...payload, revision: 8, items: recorded.items };
+    const { expectedRevision, ...fields } = payload;
+    return { ...recorded, ...fields, revision: expectedRevision + 1, items: recorded.items };
   } });
   let keys = 0;
   const newSecureKey = () => `command-key-${++keys}-0000`;
@@ -1428,4 +1439,240 @@ test('calendar malformed receipt remains unknown and calendar review cannot repl
   assert.throws(() => consumer.reviewCalendar('America/New_York'), /void_intent_in_progress/);
   await consumer.cancel(); controller.beginManual(context(), chest); consumer.edit(manual()); await consumer.save();
   assert.throws(() => consumer.reviewCalendar('America/New_York'), /capture_unavailable/); await consumer.dispose();
+});
+
+const cloneReceiptData = value => JSON.parse(JSON.stringify(value));
+function activityReceipt(payload, target = null, previous = null) {
+  const { expectedRevision: _requestOnly, ...fields } = payload;
+  return cloneReceiptData({ ...fields, id: target?.id ?? 'opaque_server_entry', revision: target ? target.expectedRevision + 1 : 1,
+    status: 'recorded', createdAt: previous?.createdAt ?? '2026-10-09T04:00:00.000Z', updatedAt: '2026-10-09T04:00:00.000Z',
+    items: fields.items.map(item => ({ ...item, snapshot: previous?.items.find(old => old.id === item.id)?.snapshot
+      ?? (item.exercise.source === 'personal' ? { ...run, ref: item.exercise }
+        : { ...chest, ref: item.exercise, name: 'Server catalog name', measurementType: 'unspecified', loadApplicability: 'unspecified', cueStatus: 'unknown' }) })) });
+}
+function deferredActivityReceipt(edit = false, result = manual()) {
+  const calls = [], replies = []; let keys = 0;
+  const previous = edit ? { ...activityReceipt(d.draftToActivityWrite(result)), id: 'entry-1', revision: 7 } : null;
+  if (previous) previous.items[0].snapshot.name = 'Historical retired catalog name';
+  const resources = new ActivityResources({ request: (path, method, payload, key) => {
+    calls.push({ path, method, payload, key });
+    return new Promise(resolve => replies.push(resolve));
+  } });
+  const controller = new d.DraftController('account-generation-1', resources, () => `receipt-command-${++keys}-0000`);
+  if (previous) {
+    controller.beginEntryEdit(previous);
+    const review = confirm(controller.getState().result);
+    review.issues = review.issues.map(issue => ({ ...issue, resolution: { kind: 'acknowledged',
+      code: issue.code === 'metricConflict' ? 'approximateMetrics' : 'possibleDuplicate' } }));
+    controller.edit(review);
+  }
+  else { controller.beginManual(result.context, chest); controller.edit(result); }
+  const target = previous && { id: previous.id, expectedRevision: previous.revision };
+  return { controller, calls, replies, previous, target, keys: () => keys,
+    receipt: () => activityReceipt(calls[0].payload, target, previous) };
+}
+
+test('create and edit malformed or unrelated purported success retain the exact unknown command until its original receipt confirms once', async () => {
+  const mutations = [
+    ['wrong revision', value => { value.revision += 1; }],
+    ['void status', value => { value.status = 'voided'; }],
+    ['wrong draft', value => { value.draftId = 'other-draft'; }],
+    ['wrong date', value => { value.date.localDate = '2026-10-07'; }],
+    ['wrong zone', value => { value.date.timeZone = 'UTC'; }],
+    ['wrong capture', value => { value.date.capturedAt = '2026-10-09T03:58:00Z'; }],
+    ['wrong reference date', value => { value.date.referenceLocalDate = '2026-10-07'; }],
+    ['wrong date source', value => { value.date.source = 'selected'; }],
+    ['wrong kind', value => { value.kind = 'exerciseSnack'; }],
+    ['wrong source', value => { value.source = 'nativeSpeech'; }],
+    ['unconfirmed performance', value => { value.performedConfirmed = false; }],
+    ['wrong item identity', value => { value.items[0].id = 'other-item'; }],
+    ['wrong exercise reference', value => { value.items[0].exercise.id = 'other-exercise'; }],
+    ['wrong load', value => { value.items[0].load = { state: 'knownValue', value: 0, unit: 'kg', basis: 'total' }; }],
+    ['invented count', value => { value.items[0].reportedSetCount = 3; }],
+    ['invented duration', value => { value.items[0].durationSeconds = 60; }],
+    ['wrong acknowledgements', value => { value.acknowledgedIssues = [{ fieldPath: 'items.0', code: 'possibleDuplicate' }]; }],
+    ['snapshot reference mismatch', value => { value.items[0].snapshot.ref.id = 'other-exercise'; }],
+    ['snapshot invalid schema', value => { value.items[0].snapshot.safetyAssessment = 'verified'; }],
+    ['missing snapshot', value => { delete value.items[0].snapshot; }],
+    ['invalid timestamp', value => { value.updatedAt = 'not-an-instant'; }],
+    ['missing field', value => { delete value.date; }],
+    ['request-only revision', value => { value.expectedRevision = 7; }],
+    ['unattested account field', value => { value.accountId = 'other-account'; }],
+  ];
+  for (const edit of [false, true]) for (const [name, corrupt] of [
+    ...mutations,
+    ...(edit ? [['wrong target', value => { value.id = 'other-entry'; }],
+      ['changed historical snapshot', value => { value.items[0].snapshot.name = 'New current catalog name'; }],
+      ['changed creation instant', value => { value.createdAt = '2026-10-09T04:01:00.000Z'; }]] : []),
+  ]) {
+    const fixture = deferredActivityReceipt(edit), { controller, calls, replies } = fixture;
+    let saved = 0;
+    const subscription = controller.subscribe(state => { if (state.phase === 'saved') saved++; });
+    const saving = controller.save(), pending = controller.getState().pending, originalRequest = cloneReceiptData(calls[0]);
+    const bad = fixture.receipt(); corrupt(bad); replies[0](bad);
+    const unknown = await saving;
+    assert.equal(unknown.phase, 'unknown', `${edit ? 'edit' : 'create'}: ${name}`);
+    assert.deepEqual(unknown.pending, pending); assert.equal(unknown.saved, null); assert.equal(saved, 0);
+    assert.deepEqual(unknown.error, { code: 'activity_receipt_unconfirmed', status: 0, originalEffectUnknown: true });
+    assert.throws(() => controller.edit(manual()), /draft_edit_unavailable/);
+    await assert.rejects(controller.save(), /explicit_structured_save_required/);
+    unknown.pending.payload.items[0].load = { state: 'notApplicable', reason: 'unloaded' };
+    unknown.pending.key = 'tampered-command'; if (unknown.pending.target) unknown.pending.target.expectedRevision = 99;
+    const retry = controller.retryUnknown(), receipt = fixture.receipt();
+    assert.deepEqual(calls[1], originalRequest); assert.equal(fixture.keys(), 1);
+    replies[1](receipt);
+    const confirmed = await retry;
+    assert.equal(confirmed.phase, 'saved'); assert.equal(confirmed.pending, null); assert.equal(saved, 1);
+    assert.deepEqual(confirmed.saved, receipt);
+    await assert.rejects(controller.retryUnknown(), /unknown_retry_unavailable/);
+    subscription.remove(); await controller.dispose();
+  }
+});
+
+test('non-JSON typed port results never become saved and do not invoke receipt accessors', async () => {
+  for (const bad of [null, undefined, [], 'saved', 42, { success: true }]) {
+    const { controller, replies } = deferredActivityReceipt();
+    const saving = controller.save(); replies[0](bad);
+    assert.equal((await saving).phase, 'unknown'); assert.ok(controller.getState().pending); await controller.dispose();
+  }
+  let reads = 0;
+  const fixture = deferredActivityReceipt(), saving = fixture.controller.save(), bad = fixture.receipt();
+  Object.defineProperty(bad.items[0].snapshot, 'name', { enumerable: true, get: () => { reads++; return 'Accessor'; } });
+  fixture.replies[0](bad);
+  assert.equal((await saving).phase, 'unknown'); assert.equal(reads, 0); await fixture.controller.dispose();
+});
+
+test('valid server enrichment preserves all load states, reported counts, running metrics and backdated capture without deriving fields', async () => {
+  const normalized = manual(context({ capturedAt: '2026-10-08T23:59:00-04:00' }));
+  normalized.issues.push({ id: 'duplicate-review', fieldPath: ' items.0 ', code: 'possibleDuplicate', blocking: true,
+    message: 'Reviewed possible duplicate', resolution: { kind: 'acknowledged', code: 'possibleDuplicate' } });
+  const results = [
+    manual(context(), chest, { state: 'knownValue', value: 0, unit: 'lb', basis: 'perImplement' }),
+    manual(), manual(context(), chest, { state: 'notApplicable', reason: 'bodyweight' }),
+    manual(context(), chest, { state: 'notApplicable', reason: 'unloaded' }),
+    confirm(parse('I did three sets of chest press 75 pounds')),
+    confirm(parse('Chest press 8 reps 0 kg')),
+    confirm(parse('I ran for 56 minutes at an 8:30 mile pace')),
+    confirm(parse('I ran 56 minutes complete incremental splits 28 minutes, 28 minutes')),
+    normalized,
+    { ...manual(context({ selectedDate: '1900-01-01' })), candidate: { ...manual(context({ selectedDate: '1900-01-01' })).candidate, kind: 'exerciseSnack' } },
+  ];
+  for (const edit of [false, true]) for (const result of results) {
+    const fixture = deferredActivityReceipt(edit, result), saving = fixture.controller.save();
+    const receipt = fixture.receipt();
+    // JSON member order is not a semantic difference; catalog enrichment is not part of the submitted write.
+    receipt.date = Object.fromEntries(Object.entries(receipt.date).reverse());
+    fixture.replies[0](receipt);
+    const state = await saving;
+    assert.equal(state.phase, 'saved'); assert.deepEqual(state.saved, receipt); assert.equal(fixture.keys(), 1);
+    assert.deepEqual(state.saved.items.map(({ snapshot: _snapshot, ...input }) => input), d.draftToActivityWrite(result).items);
+    await fixture.controller.dispose();
+  }
+});
+
+test('edit qualifies the original historical receipt after later entry changes and keeps original caller inputs detached', async () => {
+  const original = { ...entry(write()), revision: 7 }, requests = [], replies = []; let keys = 0;
+  original.items[0].snapshot.name = 'Original historical name';
+  const frozenOriginal = cloneReceiptData(original);
+  const controller = new d.DraftController('account-generation-1', {
+    createEntry: async () => { throw new Error('unused'); },
+    editEntry: (id, expectedRevision, payload, key) => {
+      requests.push({ id, expectedRevision, payload, key }); return new Promise(resolve => replies.push(resolve));
+    },
+  }, () => `original-receipt-${++keys}-0000`);
+  controller.beginEntryEdit(original);
+  const review = confirm(controller.getState().result); controller.edit(review);
+  const expectedPayload = d.draftToActivityWrite(review);
+  const saving = controller.save();
+  original.items[0].snapshot.name = 'Mutated caller entry'; review.candidate.items[0].load = { state: 'knownValue', value: 50, unit: 'kg', basis: 'total' };
+  assert.ok(Object.isFrozen(requests[0].payload.items[0].load));
+  const receipt = activityReceipt(expectedPayload, { id: frozenOriginal.id, expectedRevision: 7 }, frozenOriginal);
+  replies[0]({ ...receipt, revision: 9 });
+  assert.equal((await saving).phase, 'unknown');
+  const retry = controller.retryUnknown();
+  assert.equal(requests[0].payload, requests[1].payload); assert.deepEqual(requests[1], requests[0]); assert.equal(keys, 1);
+  replies[1](receipt);
+  const saved = await retry;
+  assert.equal(saved.phase, 'saved'); assert.deepEqual(saved.saved, receipt);
+  receipt.items[0].snapshot.name = 'Mutated transport response'; receipt.items[0].load = { state: 'notApplicable', reason: 'unloaded' };
+  saved.saved.date.localDate = '2026-10-07';
+  assert.equal(controller.getState().saved.items[0].snapshot.name, 'Original historical name');
+  assert.deepEqual(controller.getState().saved.items[0].load, expectedPayload.items[0].load);
+  assert.equal(controller.getState().saved.date.localDate, expectedPayload.date.localDate);
+  await controller.dispose();
+});
+
+test('late valid or invalid receipts cannot restore private state after cancel, background, session replacement or disposal', async () => {
+  for (const end of ['cancel', 'background', 'accountChanged', 'dispose']) for (const valid of [true, false]) {
+    const fixture = deferredActivityReceipt(), saving = fixture.controller.save(), receipt = fixture.receipt();
+    if (!valid) receipt.revision = 99;
+    if (end === 'accountChanged') {
+      await fixture.controller.accountChanged('account-generation-2');
+      const next = context({ accountGeneration: 'account-generation-2', draftId: 'next-draft' });
+      fixture.controller.beginManual(next, chest);
+    } else await fixture.controller[end]();
+    const before = fixture.controller.getState();
+    fixture.replies[0](receipt); await saving;
+    assert.deepEqual(fixture.controller.getState(), before);
+    assert.equal(before.pending, null); assert.equal(before.saved, null);
+    await fixture.controller.dispose();
+  }
+});
+
+test('a synchronous saving observer that cancels cannot dispatch the captured write afterward', async () => {
+  const fixture = deferredActivityReceipt();
+  const subscription = fixture.controller.subscribe(state => { if (state.phase === 'saving') void fixture.controller.cancel(); });
+  assert.equal((await fixture.controller.save()).phase, 'cancelled');
+  assert.equal(fixture.calls.length, 0); assert.equal(fixture.controller.getState().pending, null);
+  subscription.remove(); await fixture.controller.dispose();
+});
+
+test('personal reference revision, observed sets, running metrics and split changes cannot qualify an original command', async () => {
+  const observed = confirm(parse('Chest press 8 reps 0 kg'));
+  const running = confirm(parse('I ran 56 minutes complete incremental splits 28 minutes, 28 minutes'));
+  running.candidate.items[0].pace = { secondsPerUnit: 510, unit: 'mi' };
+  const cases = [
+    [observed, value => { value.items[0].sets[0].repetitions = 9; }],
+    [observed, value => { value.items[0].sets[0].load.basis = 'total'; }],
+    [observed, value => { value.items[0].sets[0].load.unit = 'lb'; }],
+    [running, value => { value.items[0].exercise.revision = 2; value.items[0].snapshot.ref.revision = 2; }],
+    [running, value => { value.items[0].exercise = { source: 'global', id: 'running' }; value.items[0].snapshot.ref = { source: 'global', id: 'running' }; }],
+    [running, value => { value.items[0].pace.secondsPerUnit = 520; }],
+    [running, value => { value.items[0].splits[0].durationSeconds = 1600; }],
+    [running, value => { delete value.items[0].pace; }],
+  ];
+  for (const [result, corrupt] of cases) {
+    const fixture = deferredActivityReceipt(false, result), saving = fixture.controller.save(), bad = fixture.receipt();
+    corrupt(bad); fixture.replies[0](bad);
+    assert.equal((await saving).phase, 'unknown'); assert.equal(fixture.controller.getState().saved, null);
+    const retry = fixture.controller.retryUnknown(); fixture.replies[1](fixture.receipt());
+    assert.equal((await retry).phase, 'saved'); assert.deepEqual(fixture.calls[0], fixture.calls[1]);
+    assert.equal(fixture.keys(), 1); await fixture.controller.dispose();
+  }
+});
+
+test('currentness is rechecked after receipt capture even when a hostile port cancels during validation', async () => {
+  const fixture = deferredActivityReceipt(), saving = fixture.controller.save(), receipt = fixture.receipt();
+  const hostile = new Proxy(receipt, { ownKeys(value) { void fixture.controller.cancel(); return Reflect.ownKeys(value); } });
+  fixture.replies[0](hostile); await saving;
+  const state = fixture.controller.getState();
+  assert.equal(state.phase, 'cancelled'); assert.equal(state.saved, null); assert.equal(state.pending, null);
+  assert.equal(state.context, null); assert.equal(state.result, null); await fixture.controller.dispose();
+});
+
+test('key issuance cannot transfer the original payload into a replacement account generation', async () => {
+  let calls = 0, controller;
+  controller = new d.DraftController('account-generation-1', {
+    createEntry: async payload => { calls++; return entry(payload); }, editEntry: async () => { throw new Error('unused'); },
+  }, () => {
+    void controller.accountChanged('account-generation-2');
+    const next = context({ accountGeneration: 'account-generation-2', draftId: 'replacement-draft' });
+    controller.beginManual(next, chest); controller.edit(manual(next));
+    return 'original-command-key-0000';
+  });
+  controller.beginManual(context(), chest); controller.edit(manual());
+  const state = await controller.save();
+  assert.equal(calls, 0); assert.equal(state.accountGeneration, 'account-generation-2');
+  assert.equal(state.phase, 'structuredReview'); assert.equal(state.result.draftId, 'replacement-draft');
+  assert.equal(state.pending, null); assert.equal(state.saved, null); await controller.dispose();
 });
