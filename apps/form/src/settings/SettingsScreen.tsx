@@ -1,7 +1,7 @@
 import { useLayoutEffect, useState, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
-import type { SettingsSlotContext } from '../features/contract';
-import { activeGrant, sourceLabel } from '../features/account/AccountScreens';
+import type { SettingsEditTarget, SettingsSlotContext } from '../features/contract';
+import { activeGrant, BodySheet, CoachSheet, InjurySheet, sourceLabel } from '../features/account/AccountScreens';
 import { EQUIPMENT, EXPERIENCE, GOALS, MAX_GOALS, areasList, coachStyleOf, heightLabel, parseInjury, weightLabel } from '../features/onboarding/model';
 import { shortDate } from '../features/shared/copy';
 import { L, t } from '../features/shared/tokens';
@@ -41,16 +41,17 @@ export function useSettingsScreenModel(ctx: SettingsSlotContext) {
 }
 
 type SettingsViewModel = ReturnType<typeof useSettingsScreenModel>;
+export type SettingsPresentationContext = SettingsSlotContext & { editTarget?: SettingsEditTarget; editBack?: string };
 
-export function SettingsSlot(ctx: SettingsSlotContext) {
+export function SettingsSlot(ctx: SettingsPresentationContext) {
   return <SettingsScreen {...ctx} />;
 }
 
-export function SettingsScreen(ctx: SettingsScreenProps) {
+export function SettingsScreen(ctx: SettingsScreenProps & Pick<SettingsPresentationContext, 'editTarget' | 'editBack'>) {
   return <SessionSettings key={ctx.account.accountId} ctx={ctx} />;
 }
 
-function SessionSettings({ ctx }: { ctx: SettingsSlotContext }) {
+function SessionSettings({ ctx }: { ctx: SettingsPresentationContext }) {
   const model = useSettingsScreenModel(ctx);
   const [page, setPage] = useState<'settings' | 'privacy'>('settings');
   const [confirmation, setConfirmation] = useState<SessionCommand | null>(null);
@@ -84,14 +85,18 @@ function SessionSettings({ ctx }: { ctx: SettingsSlotContext }) {
   };
   const sessionState = confirmation && snapshot.session?.command === confirmation ? snapshot.session.state : null;
   const closeConfirmation = () => setConfirmation(null);
+  const target = ctx.editTarget;
+  const supportedEditor = target === 'body' || target === 'workAround' || target === 'coach';
 
   return <>
     {page === 'privacy' ? <PrivacyScreen model={model} onBack={() => setPage('settings')} /> : (
-      <Screen testID="screen-settings" nav={<Nav back="Today" onBack={model.onBack} />}>
+      <Screen testID="screen-settings" nav={<Nav back={target ? ctx.editBack ?? 'Settings' : 'Today'} onBack={model.onBack} />}>
         <Gutter>
           <Title text="Settings" testID="a-settings-title" />
           <View testID="a-settings-identity"><Subtitle text={[facts.displayName, facts.email].filter(Boolean).join(' · ')} /></View>
         </Gutter>
+        {target && !supportedEditor ? <Gutter><Notice kind="info" captureId="settings-edit-unavailable"
+          text={`${editLabels[target]} is read-only here. An editor is not available.${ctx.editBack === 'Training context' ? ' Go back, then review your context again.' : ''}`} /></Gutter> : null}
         <SettingsGroup heading="App experience" first testID="a-mode-group">
           <View style={s.choiceGroup}>
             <Choices>
@@ -205,6 +210,10 @@ function SessionSettings({ ctx }: { ctx: SettingsSlotContext }) {
         </SettingsGroup>
       </Screen>
     )}
+    {target === 'coach' ? <CoachSheet visible preferences={preferences} onClose={model.onBack} save={model.savePreferences} /> : null}
+    {target === 'body' ? <BodySheet visible profile={profile} preferences={preferences} onClose={model.onBack}
+      saveProfile={model.saveProfile} savePreferences={model.savePreferences} /> : null}
+    {target === 'workAround' ? <InjurySheet visible answer={injury} onClose={model.onBack} save={model.saveProfile} /> : null}
     <Sheet visible={confirmation !== null} title={confirmation ? sessionTitles[confirmation] : ''}
       onClose={closeConfirmation} testID="a-signout-sheet" closeTestID="a-signout-close"
       actions={<>
@@ -224,6 +233,11 @@ function SessionSettings({ ctx }: { ctx: SettingsSlotContext }) {
     </Sheet>
   </>;
 }
+
+const editLabels: Record<SettingsEditTarget, string> = {
+  name: 'Name', age: 'Age', body: 'Body details', experience: 'Experience', goals: 'Goals', workAround: 'Work around',
+  schedule: 'Schedule', equipment: 'Equipment', coach: 'Coach style', cues: 'Cues',
+};
 
 const sessionLabels: Record<SessionCommand, string> = {
   signOut: 'Sign out', revokeOtherSessions: 'Sign out of other devices', revokeAllSessions: 'Sign out everywhere',

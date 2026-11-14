@@ -285,7 +285,8 @@
       "files": [
         "apps/form/tests/renderer/context-review.test.tsx",
         "apps/form/tests/renderer/runtime-auth.test.tsx",
-        "apps/form/tests/renderer/source-plan-detail.test.tsx"
+        "apps/form/tests/renderer/source-plan-detail.test.tsx",
+        "apps/form/tests/renderer/training-context-runtime.test.tsx"
       ]
     },
     {

@@ -44,7 +44,7 @@ class BreadthTests(unittest.TestCase):
         contract = breadth.selection(ROOT)
         manifest = json.loads((ROOT / breadth.MANIFEST).read_text())
         discovered, hosted = contract["discovered_test_files"], contract["existing_hosted_test_files"]
-        self.assertEqual(len(discovered), 316)
+        self.assertEqual(len(discovered), 317)
         self.assertEqual(len(hosted), 76)
         self.assertEqual(sum(len(g["files"]) for g in contract["blocked_groups"]), 32)
         self.assertFalse(contract["all_coverage_available"])
@@ -66,7 +66,9 @@ class BreadthTests(unittest.TestCase):
                        "src/features/training/__tests__/source-plan-detail-presentation.test.cjs"):
             self.assertIn("apps/form/" + source, selected["app-breadth"]["test_sources"])
             self.assertEqual(selected["app-breadth"]["argv"].count(source), 1)
-        for source in ("tests/renderer/context-review.test.tsx", "tests/renderer/source-plan-detail.test.tsx"):
+        self.assertEqual(len(selected["app-renderer"]["test_sources"]), 4)
+        for source in ("tests/renderer/context-review.test.tsx", "tests/renderer/source-plan-detail.test.tsx",
+                       "tests/renderer/training-context-runtime.test.tsx"):
             self.assertIn("apps/form/" + source, selected["app-renderer"]["test_sources"])
             self.assertEqual(selected["app-renderer"]["argv"].count(source), 1)
         self.assertIn("src/api/tests/phone-signin.test.cjs", selected["app-breadth"]["argv"])

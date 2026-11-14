@@ -22,7 +22,7 @@ import { FormSpeechAdapter } from '../../native/speech';
 import { AccountScreen, AccessScreen, type AccountRowId } from '../account/AccountScreens';
 import { AuthFlow } from '../auth/AuthFlow';
 import type {
-  AccountSecuritySlotContext, FeatureSlotContext, FormAccountAppProps, HomeSlotContext, SaveResult, SessionAction, SessionPhase, SettingsSlotContext, SourcePlanDetailSlotContext, SpeechPort,
+  AccountSecuritySlotContext, FeatureSlotContext, FormAccountAppProps, HomeSlotContext, SaveResult, SessionAction, SessionPhase, SettingsEditTarget, SettingsSlotContext, SourcePlanDetailSlotContext, SpeechPort,
 } from '../contract';
 import { CuesScreen } from '../cues/CuesScreen';
 import { OnboardingFlow } from '../onboarding/OnboardingFlow';
@@ -44,6 +44,8 @@ type Route =
   | { name: 'cues'; exerciseId: string; back: string }
   | { name: 'access' }
   | { name: 'settings' }
+  | { name: 'settings-edit'; id: number; context: SettingsSlotContext & { editTarget: SettingsEditTarget; editBack: string };
+      render: FormAccountAppProps['renderSettings']; isCurrent(): boolean; dispose(): void }
   | { name: 'account-security'; admission: ReturnType<typeof captureAccountSecuritySession>; context: AccountSecuritySlotContext;
       render: NonNullable<FormAccountAppProps['renderAccountSecurity']> }
   | { name: 'membership' | 'health'; context: FeatureSlotContext; render: NonNullable<FormAccountAppProps['renderMembership']> }
@@ -121,9 +123,9 @@ export function FormAccountApp(props: FormAccountAppProps) {
   const renderedEpoch = epochRef.current;
   const currentResources = useRef(resources);
   currentResources.current = resources;
-  const editPort = useRef({ callback: props.openEdit, generation: 0 });
-  if (editPort.current.callback !== props.openEdit) {
-    editPort.current = { callback: props.openEdit, generation: editPort.current.generation + 1 };
+  const editPort = useRef({ callback: props.openEdit, settings: props.renderSettings, generation: 0 });
+  if (editPort.current.callback !== props.openEdit || editPort.current.settings !== props.renderSettings) {
+    editPort.current = { callback: props.openEdit, settings: props.renderSettings, generation: editPort.current.generation + 1 };
   }
   const accountRenderers = useRef({ security: props.renderAccountSecurity, membership: props.renderMembership, health: props.renderHealth,
     generations: { security: 0, membership: 0, health: 0 } });
@@ -139,6 +141,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
   }
   const activeRoutes = useRef(routes);
   activeRoutes.current = routes;
+  const settingsEditSequence = useRef(0);
   const securityAdmission = useRef<ReturnType<typeof captureAccountSecuritySession> | null>(null);
   const transitionRoutes = useCallback((next: Route[], current: () => boolean = () => true) => {
     if (!current()) return;
@@ -150,6 +153,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
     if (previous !== next[next.length - 1]) {
       if (previous.name === 'membership' || previous.name === 'health') previous.context.isCurrentSession();
       if (previous.name === 'account-security') { previous.admission.dispose(); securityAdmission.current = null; }
+      if (previous.name === 'settings-edit') previous.dispose();
     }
     setRoutes(r => current() ? next : r);
   }, [notifyVoiceExit]);
@@ -595,7 +599,9 @@ export function FormAccountApp(props: FormAccountAppProps) {
   };
   const push = (route: Route) => {
     if (!currentView() || contextNavigationBlocked()) return;
-    transitionRoutes([...activeRoutes.current, route], () => currentView() && !contextNavigationBlocked());
+    const retained = activeRoutes.current[activeRoutes.current.length - 1].name === 'settings-edit'
+      ? activeRoutes.current.slice(0, -1) : activeRoutes.current;
+    transitionRoutes([...retained, route], () => currentView() && !contextNavigationBlocked());
   };
   const pop = () => {
     if (!currentView() || contextNavigationBlocked() || activeRoutes.current.length <= 1) return;
@@ -604,9 +610,32 @@ export function FormAccountApp(props: FormAccountAppProps) {
   const originalOpenEdit = props.openEdit, editGeneration = editPort.current.generation;
   const editCurrent = () => currentView() && currentResources.current === resources &&
     editPort.current.callback === originalOpenEdit && editPort.current.generation === editGeneration;
-  const openEdit: SettingsSlotContext['openEdit'] = originalOpenEdit ? target => {
-    if (editCurrent() && !contextNavigationBlocked()) originalOpenEdit(target);
-  } : undefined;
+  const openEdit: NonNullable<SettingsSlotContext['openEdit']> = target => {
+    if (!editCurrent() || contextNavigationBlocked()) return;
+    if (originalOpenEdit) { originalOpenEdit(target); return; }
+    if (target === 'cues') { push({ name: 'cues-index', back: 'Training context' }); return; }
+    const render = props.renderSettings;
+    let destination: Extract<Route, { name: 'settings-edit' }>;
+    let live = true;
+    const current = () => live && editCurrent() && editPort.current.settings === render &&
+      activeRoutes.current[activeRoutes.current.length - 1] === destination;
+    const saveInEditor = async <T,>(attempt: () => Promise<SaveResult<T>>): Promise<SaveResult<T>> => {
+      if (!current()) return { status: 'failed', error: sessionChanged() };
+      const result = await attempt();
+      return result.status === 'unknown' ? { status: 'unknown', retry: () => saveInEditor(result.retry) } : result;
+    };
+    const previous = activeRoutes.current[activeRoutes.current.length - 1];
+    const editBack = previous.name === 'settings-edit' ? previous.context.editBack
+      : previous.name === 'context-confirmation' ? 'Training context' : 'Settings';
+    const context = Object.freeze({ ...settingsCtx, editTarget: target, editBack,
+      close() { if (current()) pop(); },
+      saveProfile: (changes: Parameters<SettingsSlotContext['saveProfile']>[0]) => saveInEditor(() => scopedSaveProfile(changes)),
+      savePreferences: (changes: Parameters<SettingsSlotContext['savePreferences']>[0]) => saveInEditor(() => scopedSavePreferences(changes)),
+    });
+    destination = { name: 'settings-edit', id: ++settingsEditSequence.current, context, render,
+      isCurrent: current, dispose() { live = false; } };
+    push(destination);
+  };
   const openContextConfirmation = props.renderContextConfirmation && typeof scopedResources.account === 'function' &&
     typeof scopedResources.createFirstPlan === 'function' ? () => {
       if (!currentView() || contextNavigationBlocked()) return;
@@ -623,10 +652,10 @@ export function FormAccountApp(props: FormAccountAppProps) {
             isCurrentSession: binding => binding.resources === scopedResources && binding.accountId === account.accountId &&
               binding.sessionGeneration === accountSession.sessionGeneration && currentView() },
           newIdempotencyKey: commandKey,
-          ...(originalOpenEdit ? { openEdit: target => {
+          openEdit: target => {
             if (!editCurrent()) throw new Error('context-edit-port-unavailable');
-            originalOpenEdit(target);
-          } } : {}),
+            openEdit(target);
+          },
         }) };
       }
       // The mounted consumer owns its initial capture promise and the actual issued review; entry performs no read.
@@ -718,7 +747,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
     openAccess: () => push({ name: 'access' }),
     openPlans: () => push({ name: 'plans', back: 'Settings' }),
     openAccount: () => push({ name: 'account' }),
-    ...(openEdit ? { openEdit } : {}),
+    openEdit,
     close: pop,
     reload: scopedReload,
     openCuesIndex: () => push({ name: 'cues-index', back: 'Settings' }),
@@ -885,6 +914,11 @@ export function FormAccountApp(props: FormAccountAppProps) {
       break;
     case 'settings':
       screen = <View key={`settings:${sessionKey}`} style={s.fill}>{props.renderSettings(settingsCtx)}</View>;
+      break;
+    case 'settings-edit':
+      screen = route.isCurrent() ? <View key={`settings-edit:${sessionKey}:${route.id}`} style={s.fill}>
+        {route.render(route.context)}
+      </View> : null;
       break;
     case 'context-confirmation': {
       const retained = contextConfirmation.current;

@@ -156,7 +156,7 @@ test('entry performs no read and actual mounted consumer retains one capture and
     f.render(); assert.equal(f.consumer().initial, promise); assert.equal(f.consumer().presented, result);
     assert.equal(f.captures().length, 1); assert.equal(f.posts().length, 0);
     assert.deepEqual(result.review.profile, f.account.profile); assert.ok(Object.isFrozen(result.review.profile));
-    assert.equal(result.snapshot.canEdit, false); assert.equal(f.context().sessionGeneration, f.home().sessionGeneration);
+    assert.equal(result.snapshot.canEdit, true); assert.equal(f.context().sessionGeneration, f.home().sessionGeneration);
     assert.equal(f.context().isCurrentSession, f.home().isCurrentSession);
   } finally { f.dispose(); }
 });
@@ -182,10 +182,46 @@ test('explicit recapture reads actual changed context and invalidates the earlie
     assert.equal(next.review.profile.revision, 5); assert.deepEqual(next.review.profile.goals, ['mobility']);
     assert.equal((await first.review.confirm()).snapshot.status, 'stale');
     assert.equal(f.captures().length, 2); assert.equal(f.calls.some(c => c.method !== 'GET'), false);
-    assert.equal(next.review.edit('goals').status, 'unavailable');
+    assert.equal(next.review.edit('goals').status, 'stale');
+    f.render(); assert.equal(f.settings().editTarget, 'goals');
     assert.equal(f.calls.some(c => c.method === 'PATCH'), false);
     assert.equal(find(f.render(), 'AccountScreen'), null);
   } finally { f.dispose(); }
+});
+
+test('local Settings target retains original session resources, returns stale and requires explicit fresh capture', async () => {
+  const f = await fixture();
+  try {
+    const first = await enter(f), controller = f.context().confirmation, original = f.home();
+    first.review.edit('body'); f.render(); const editor = f.settings();
+    assert.equal(editor.editTarget, 'body'); assert.equal(editor.resources, original.resources);
+    assert.equal(editor.account.accountId, original.account.accountId);
+    assert.equal(f.context().confirmation, controller); assert.equal(f.captures().length, 1);
+    editor.close(); f.render();
+    assert.equal(controller.snapshot().status, 'stale'); assert.equal(f.captures().length, 1);
+    const failed = await editor.saveProfile({ heightCm: 170 });
+    assert.equal(failed.status, 'failed'); assert.equal(failed.error.code, 'session_changed');
+    f.account.profile = { ...f.account.profile, revision: 5, heightCm: 175 };
+    const next = await controller.capture();
+    assert.equal(next.review.profile.heightCm, 175); assert.equal(next.review.profile.revision, 5);
+    assert.equal((await first.review.confirm()).snapshot.status, 'stale');
+    assert.equal(f.captures().length, 2); assert.equal(f.posts().length, 0);
+    assert.equal(f.calls.some(c => c.method === 'PATCH'), false);
+  } finally { f.dispose(); }
+});
+
+test('local Settings editor never dispatches through old handlers after settings replacement or auth replacement', async () => {
+  for (const boundary of ['settings', 'auth']) {
+    const f = await fixture();
+    try {
+      const review = await enter(f); review.review.edit('coach'); f.render(); const editor = f.settings();
+      if (boundary === 'settings') { f.props.renderSettings = () => 'replacement-settings'; f.render(); }
+      else await f.replaceAuth();
+      const result = await editor.savePreferences({ coachVoice: 'calm' });
+      assert.equal(result.status, 'failed'); assert.equal(result.error.code, 'session_changed');
+      editor.close(); assert.equal(f.calls.some(c => c.method === 'PATCH'), false); assert.equal(f.posts().length, 0);
+    } finally { f.dispose(); }
+  }
 });
 
 test('supplied Settings edit target reaches the original callback and requires fresh capture after editing', async () => {

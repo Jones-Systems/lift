@@ -6,6 +6,7 @@
 // Optional SettingsSlotContext seams (openEdit, openCuesIndex, openSystemSettings, openBody, openCommunitySettings,
 // bodyPrivacy, openBodyChoice) are additive and absent-safe; the shell supplies them.
 export { SettingsSlot, SettingsScreen, useSettingsScreenModel } from './SettingsScreen';
+export type { SettingsPresentationContext } from './SettingsScreen';
 export { appModeFrom } from './appMode';
 export type {
   AppModeControl, CommandState, NotificationPermission, Remote, ServerError, SessionCommand, SettingsRow,
