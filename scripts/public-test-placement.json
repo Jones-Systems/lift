@@ -240,6 +240,7 @@
         "apps/form/src/features/training/__tests__/useCues.test.cjs",
         "apps/form/src/features/training/__tests__/useWorkout.test.cjs",
         "apps/form/src/integration/tests/account-email-session.test.cjs",
+        "apps/form/src/integration/tests/account-security-host.test.cjs",
         "apps/form/src/integration/tests/account-security-session.test.cjs",
         "apps/form/src/integration/tests/account-session.test.cjs",
         "apps/form/src/integration/tests/activity-dataflow.test.cjs",
@@ -283,6 +284,9 @@
       "placement": "breadth",
       "reason": "The remaining React Native renderer suite runs with the existing Jest command.",
       "files": [
+        "apps/form/tests/renderer/account-security-host.test.tsx",
+        "apps/form/tests/renderer/change-email.test.tsx",
+        "apps/form/tests/renderer/change-password.test.tsx",
         "apps/form/tests/renderer/context-review.test.tsx",
         "apps/form/tests/renderer/runtime-auth.test.tsx",
         "apps/form/tests/renderer/source-plan-detail.test.tsx",

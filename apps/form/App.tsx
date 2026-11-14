@@ -7,11 +7,13 @@ import { GalleryShell } from './src/GalleryShell';
 import { FormRuntime } from './src/FormRuntime';
 import { SettingsSlot } from './src/settings';
 import { TrainingSlot } from './src/features/training';
-import type { HomeSlotContext, SettingsSlotContext } from './src/features/contract';
+import { AccountSecurityScreen } from './src/features/credentials/account-security';
+import type { AccountSecuritySlotContext, HomeSlotContext, SettingsSlotContext } from './src/features/contract';
 import { createTrainingContextPresentation } from './src/integration/trainingContextPresentation';
 
 const renderSettings = (ctx: SettingsSlotContext) => <SettingsSlot {...ctx} />;
 const renderHome = (ctx: HomeSlotContext) => <TrainingSlot {...ctx} />;
+const renderAccountSecurity = (ctx: AccountSecuritySlotContext) => <AccountSecurityScreen {...ctx} />;
 
 export default function App() {
   const [trainingContext] = useState(createTrainingContextPresentation);
@@ -39,6 +41,7 @@ export default function App() {
         {...trainingContext}
         renderSettings={renderSettings}
         renderHome={renderHome}
+        renderAccountSecurity={renderAccountSecurity}
       />) : <View style={styles.fill} />}
     </SafeAreaProvider>
   );

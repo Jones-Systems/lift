@@ -18,14 +18,14 @@ prove that a new test was selected.
 | --- | ---: | --- |
 | Existing hosted | 76 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
 | `api-breadth` | 89 | Compile API TypeScript with `tsc`; run emitted TS tests and original MJS/CJS tests using the existing source hook. Never run the private projection build. |
-| `app-breadth` | 82 | Compile the transport compatibility output, then run explicit CJS files serially. Phone sign-in embeds the standalone transport suite exactly once. |
-| `app-renderer` | 4 | Existing Jest renderer command selects runtime auth, context review, source-plan detail and the Training context runtime mount; onboarding remains in the existing hosted group. |
+| `app-breadth` | 83 | Compile the transport compatibility output, then run explicit CJS files serially. Phone sign-in embeds the standalone transport suite exactly once. |
+| `app-renderer` | 7 | Existing Jest renderer command selects runtime auth, context review, source-plan detail, the Training context runtime mount, both frozen credential leaves and the account-security host composition; onboarding remains in the existing hosted group. |
 | `website` | 29 | Explicit recursive Node test paths include nested voice modules. Require the real portable session-controller source before execution. |
 | `adapter-unit` | 4 | Same four files and serial Node options as adapter `npm test`, with explicit TAP reporting. |
 | `breadth-contract` | 1 | This runner's selection, result and lifecycle contract runs inside the breadth job. |
 | Blocked | 32 | Exact files, reasons, missing inputs and intended private/manual qualification routes remain in the manifest. |
 
-Current discovery has 317 files. The public runner's `lifecycle-runtime` group
+Current discovery has 321 files. The public runner's `lifecycle-runtime` group
 selects exactly 36 API modules, including purchases, reconciliation, status
 reader, codec and both Source27 suites exactly once. The three existing purchase
 suites move from `api-breadth` to existing hosted placement; the two new suites
@@ -131,3 +131,5 @@ the full breadth command above on Node 24. Workflow/source changes additionally
 retain the existing `ci-placement`, native identity and public runner contracts
 under their existing owners. Source completion, local passing evidence and an
 exact-SHA hosted qualification are separate results.
+
+The account-security host adds one real-transport integration module to `app-breadth` and its actual App/Runtime/shell/Settings composition module to `app-renderer`. The two frozen password/email presentation modules also join `app-renderer` exactly once. These are source-authored checks; executable, native, provider and authenticated acceptance remain unqualified until separately run.

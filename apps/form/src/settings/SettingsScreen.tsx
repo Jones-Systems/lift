@@ -12,6 +12,7 @@ import {
 import { LoadingSkeleton } from '../variants/a/components';
 import { useTextScale } from '../variants/a/theme';
 import { createSettingsController, type CommandState, type SessionCommand, type SettingsScreenProps } from './model';
+import { securityActions } from '../features/credentials/model';
 
 export function useSettingsScreenModel(ctx: SettingsSlotContext) {
   const [controller] = useState(() => createSettingsController(ctx));
@@ -87,6 +88,8 @@ function SessionSettings({ ctx }: { ctx: SettingsPresentationContext }) {
   const closeConfirmation = () => setConfirmation(null);
   const target = ctx.editTarget;
   const supportedEditor = target === 'body' || target === 'workAround' || target === 'coach';
+  const credentialActions = securityActions(snapshot.settings.status === 'ready' && !snapshot.settings.refreshing
+    ? snapshot.settings.value : null, account.accountId);
 
   return <>
     {page === 'privacy' ? <PrivacyScreen model={model} onBack={() => setPage('settings')} /> : (
@@ -173,6 +176,10 @@ function SessionSettings({ ctx }: { ctx: SettingsPresentationContext }) {
           <AccountRow label="Form access" detail={access} testID="a-row-access" onPress={() => model.onRow('access')} last />
         </SettingsGroup>
         <SettingsGroup heading="Sign-in & security">
+          {ctx.securityNotice ? <Notice kind="success" text={ctx.securityNotice.text} captureId="settings-security-notice" /> : null}
+          {ctx.openAccountSecurity && (credentialActions.changePassword || credentialActions.changeEmail) ?
+            <AccountRow label="Sign-in & security" detail="Change email or password" testID="a-row-security"
+              onPress={() => { if (!blocked) ctx.openAccountSecurity?.(); }} /> : null}
           {snapshot.settings.status === 'loading' ? <>
             <LoadingSkeleton />
             <PlainAction label="Try again" chevron={null} disabled={blocked} onPress={model.onRefresh} />
@@ -189,6 +196,9 @@ function SessionSettings({ ctx }: { ctx: SettingsPresentationContext }) {
           {facts.sessionCommands.includes('revokeOtherSessions') ? <PlainAction label="Sign out of other devices" tone="ink" chevron={null}
             captureId="a-revoke-others" disabled={blocked && snapshot.session?.command !== 'revokeOtherSessions'}
             onPress={() => openConfirmation('revokeOtherSessions')} /> : null}
+          {ctx.securityNotice?.offerRevokeOtherSessions && facts.sessionCommands.includes('revokeOtherSessions') ?
+            <PlainAction label="Review signing out other devices" chevron={null} captureId="security-review-other-sessions"
+              disabled={blocked} onPress={() => openConfirmation('revokeOtherSessions')} /> : null}
           {facts.sessionCommands.includes('revokeAllSessions') ? <PlainAction label="Sign out everywhere" tone="ink" chevron={null}
             captureId="a-revoke-all" disabled={blocked && snapshot.session?.command !== 'revokeAllSessions'}
             onPress={() => openConfirmation('revokeAllSessions')} /> : null}

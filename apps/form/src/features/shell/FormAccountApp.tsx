@@ -15,6 +15,7 @@ import type { TeardownReason } from '../../voice-coaching/contracts';
 import type { LifecycleHostSession } from '../../integration/lifecycleSession';
 import { captureAccountSession } from '../../integration/accountSession';
 import { captureAccountSecuritySession } from '../../integration/accountSecuritySession';
+import type { CredentialTransition } from '../credentials/model';
 import { createContextConfirmation } from '../../integration/contextConfirmation';
 import { createSavedFirstPlanDestination } from '../../integration/savedFirstPlanDestination';
 import { captureSharedVoiceScope, type SharedVoiceScope } from '../../integration/sharedVoice';
@@ -83,6 +84,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
   const [data, setData] = useState<Data>(EMPTY);
   const [routes, setRoutes] = useState<Route[]>([{ name: 'home' }]);
   const [notice, setNotice] = useState<string | null>(null);
+  const [securityNotice, setSecurityNotice] = useState<SettingsSlotContext['securityNotice']>();
   const [fatal, setFatal] = useState<string | null>(null);
   const latest = useRef(data);
   latest.current = data;
@@ -162,7 +164,12 @@ export function FormAccountApp(props: FormAccountAppProps) {
     !retainedSecurity.isCurrentSession())) {
     retainedSecurity.dispose(); securityAdmission.current = null;
   }
-  useEffect(() => () => { securityAdmission.current?.dispose(); securityAdmission.current = null; }, []);
+  useEffect(() => {
+    const app = AppState.addEventListener('change', state => {
+      if (state !== 'active') void securityAdmission.current?.host.depart();
+    });
+    return () => { app.remove(); securityAdmission.current?.dispose(); securityAdmission.current = null; };
+  }, []);
   const sourceRenderer = useRef(props.renderSourcePlanDetail);
   sourceRenderer.current = props.renderSourcePlanDetail;
   const sourcePresentation = useRef({ detail: props.renderSourcePlanDetail, training: props.renderSourceTraining,
@@ -250,6 +257,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
     setData(EMPTY);
     transitionRoutes([{ name: 'home' }]);
     setNotice(message);
+    setSecurityNotice(undefined);
     setPhase('signed-out');
   }, [transitionRoutes, expireVoiceScope]);
 
@@ -391,6 +399,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
     setData(EMPTY);
     transitionRoutes([{ name: 'home' }]);
     setPhase('loading'); setFatal(null);
+    setSecurityNotice(undefined);
     const auth = resources.api.captureAuthContext();
     try {
       const [account, entitlements] = await Promise.all([resources.account(), resources.entitlements()]);
@@ -742,6 +751,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
   const settingsCtx: SettingsSlotContext = {
     lifecycle: lifecycleBinding?.key === sessionKey ? lifecycleBinding.host : undefined,
     account, appMode, resources: scopedResources, settings: data.settings, capabilities, entitlements: data.entitlements,
+    securityNotice,
     savePreferences: scopedSavePreferences, saveProfile: scopedSaveProfile, signOut: scopedSignOut,
     ...(scopedSessionAction ? { sessionAction: scopedSessionAction } : {}),
     openAccess: () => push({ name: 'access' }),
@@ -787,14 +797,17 @@ export function FormAccountApp(props: FormAccountAppProps) {
     const admission: ReturnType<typeof captureAccountSecuritySession> = captureAccountSecuritySession(resources, {
       accountId: account.accountId, sessionGeneration: sessionKey, isOwnerCurrent: physicalCurrent,
       onForeignAuth() { if (mounted.current && currentResources.current === resources && epochRef.current === who.epoch) signedOut(COPY.signedOut); },
+      settings: () => latest.current.settings,
+      returnToSettings: completion => returnToSettings(completion),
+      onSessionEnded() { if (admission.isCurrentSession()) signedOut(COPY.signedOut); },
     }, accountSession.commandSession.originalAuth);
     securityAdmission.current = admission;
     const current = admission.isCurrentSession;
     let handedOff = false;
-    const returnToSettings = async () => {
-      if (handedOff || !current()) return;
+    const returnToSettings = async (completion: CredentialTransition | null = null): Promise<boolean> => {
+      if (handedOff || !current()) return false;
       const acquired = await admission.reacquire();
-      if (handedOff || !acquired || !acquired.isCurrent() || !physicalCurrent()) return;
+      if (handedOff || !acquired || !acquired.isCurrent() || !physicalCurrent()) return false;
       handedOff = true;
       expireVoiceScope('account_changed');
       admission.dispose(); securityAdmission.current = null;
@@ -803,7 +816,10 @@ export function FormAccountApp(props: FormAccountAppProps) {
       accountAuth.current = { resources, guard: acquired.auth };
       latest.current = { ...EMPTY, account: acquired.account, entitlements: acquired.entitlements, settings: acquired.settings };
       setData(latest.current); transitionRoutes([{ name: 'home' }, { name: 'settings' }]); setPhase('ready');
+      setSecurityNotice(completion?.destination === 'settings' ? { text: completion.notice,
+        offerRevokeOtherSessions: completion.reason === 'email-changed' && completion.offerRevokeOtherSessions } : undefined);
       void loadPlans({ epoch, accountId: account.accountId });
+      return true;
     };
     const guardedNavigation = (action: () => void) => () => {
       if (!current() || !currentView()) return;
@@ -811,6 +827,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
     };
     const context: AccountSecuritySlotContext = Object.freeze({ ...settingsCtx,
       credentials: admission.credentials, sessionGeneration: sessionKey, isCurrentSession: current,
+      credentialHost: admission.host,
       savePreferences: (changes: Parameters<SettingsSlotContext['savePreferences']>[0]) => current() ? scopedSavePreferences(changes)
         : Promise.resolve({ status: 'failed' as const, error: sessionChanged() }),
       saveProfile: (changes: Parameters<SettingsSlotContext['saveProfile']>[0]) => current() ? scopedSaveProfile(changes)
@@ -828,7 +845,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
       ...(settingsCtx.openMembership ? { openMembership: guardedNavigation(settingsCtx.openMembership) } : {}),
       ...(settingsCtx.openHealth ? { openHealth: guardedNavigation(settingsCtx.openHealth) } : {}),
       openAccountSecurity: undefined,
-      close() { void returnToSettings(); }, reload: returnToSettings,
+      close() { void returnToSettings(); }, reload: async () => { await returnToSettings(); },
       onSignedOut() { if (current()) signedOut(COPY.signedOut); },
     });
     destination = { name: 'account-security', admission, context, render: securityRenderer };
