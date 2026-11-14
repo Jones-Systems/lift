@@ -3,7 +3,7 @@ import type { CheckinsContext, CheckinsPresentation, CheckinsView } from './cont
 import { endedCheckinsView, projectCheckins } from './projection';
 
 // Leaf removal preserves the host's page, but never permits adoption by a new auth generation.
-const controllerSessions = new WeakMap<CommunityPostsController, { generation: number; ended: boolean }>();
+const controllerSessions = new WeakMap<CommunityPostsController, { generation: CheckinsContext['sessionGeneration']; ended: boolean }>();
 
 export function createCheckinsPresentation(context: CheckinsContext): CheckinsPresentation {
   const { controller, groupId, sessionGeneration, isCurrentSession, onClose } = context;
@@ -21,7 +21,7 @@ export function createCheckinsPresentation(context: CheckinsContext): CheckinsPr
   };
   const currentSnapshot = (): CommunityPostsSnapshot | null => {
     if (ended || !attachment.active) return null;
-    if (controllerSession.ended || !isCurrentSession(sessionGeneration)) {
+    if (controllerSession.ended || !isCurrentSession()) {
       controllerSession.ended = true; invalidate('sessionended'); return null;
     }
     const snapshot = controller.getSnapshot();

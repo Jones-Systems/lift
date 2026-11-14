@@ -1,11 +1,12 @@
+import type { FeatureSlotContext } from '../../features/contract';
 import type { CommunityPost, CommunityPostsController, CommunityPostsSnapshot } from '../../api/community';
 
 /** The host owns the controller and supplies a fresh one for each auth generation. */
 export type CheckinsContext = Readonly<{
   controller: CommunityPostsController;
   groupId: string;
-  sessionGeneration: number;
-  isCurrentSession: (generation: number) => boolean;
+  sessionGeneration: FeatureSlotContext['sessionGeneration'];
+  isCurrentSession: FeatureSlotContext['isCurrentSession'];
   onClose: () => void;
 }>;
 

@@ -4,6 +4,7 @@ import { View } from 'react-native';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react-native';
 import { CommunityResources, type CommunityPost, type CommunityPostsPage } from '../../src/api/community';
 import { FormTransport } from '../../src/api/transport';
+import type { CommunityRuntimeContext } from '../../src/FormRuntime';
 import { CheckinsList, createCheckinsRenderer, type CheckinsContext } from '../../src/community/checkins-ui';
 
 const mockActions = new Map<string, (() => void) | undefined>();
@@ -47,8 +48,8 @@ function deferred() {
   return { promise, resolve };
 }
 async function fixture() {
-  const calls: Call[] = [], state: { generation: number; page: CommunityPostsPage; response: ((call: Call) => Response | Promise<Response>) | null } = {
-    generation: 1, page: { posts: [post({ text: 'Current page content', alias: 'Leaf', template: 'checking_in' })], nextCursor: C }, response: null,
+  const calls: Call[] = [], state: { generation: CommunityRuntimeContext['sessionGeneration']; page: CommunityPostsPage; response: ((call: Call) => Response | Promise<Response>) | null } = {
+    generation: 'session-one', page: { posts: [post({ text: 'Current page content', alias: 'Leaf', template: 'checking_in' })], nextCursor: C }, response: null,
   };
   const transport = new FormTransport('https://form.renderer.invalid', {
     async load() { return null; }, async save() {}, async clear() {},
@@ -62,9 +63,13 @@ async function fixture() {
   const resources = new CommunityResources(transport, () => true), controller = resources.createPostsController(G);
   resourceCleanup.push(() => resources.dispose());
   const onClose = jest.fn();
-  const context: CheckinsContext = { controller, groupId: G, sessionGeneration: 1,
-    isCurrentSession: generation => state.generation === generation, onClose };
-  return { calls, state, transport, controller, context, onClose };
+  function contextFor(sessionGeneration: CommunityRuntimeContext['sessionGeneration'] = 'session-one'): CheckinsContext {
+    const host: Pick<CommunityRuntimeContext, 'sessionGeneration' | 'isCurrentSession'> = { sessionGeneration,
+      isCurrentSession: () => state.generation === sessionGeneration };
+    return { controller, groupId: G, ...host, onClose };
+  }
+  const context = contextFor();
+  return { calls, state, transport, controller, context, contextFor, onClose };
 }
 function captureActions() {
   const refresh = mockActions.get('community-checkins-refresh'), next = mockActions.get('community-checkins-next'), close = mockBack;
@@ -79,7 +84,9 @@ afterEach(async () => {
 });
 
 test('renderer factory composes the real controls with explicit idle loading and current-page content', async () => {
-  const f = await fixture(), Renderer = createCheckinsRenderer(); await render(<Renderer context={f.context} />);
+  const f = await fixture(), Renderer = createCheckinsRenderer();
+  expect(f.context.sessionGeneration).toBe('session-one'); expect(f.context.isCurrentSession()).toBe(true);
+  await render(<Renderer context={f.context} />);
   expect(screen.getByRole('header', { name: 'Group check-ins' })).toBeTruthy();
   expect(screen.getByText('Load group check-ins to read the current page.')).toBeTruthy(); expect(f.calls).toHaveLength(0);
   expect(screen.getByRole('button', { name: 'Next page' }).props.accessibilityState.disabled).toBe(true);
@@ -221,21 +228,21 @@ test('layout removal expires callbacks before a parent layout effect can replay 
 test('session replacement cannot adopt old controller data or late completion; fresh controller remains usable', async () => {
   const f = await fixture(), waiting = deferred(); f.state.response = () => waiting.promise;
   const result = await render(<CheckinsList context={f.context} />); const old = captureActions(); await refresh();
-  f.state.generation = 2;
-  await result.rerender(<CheckinsList context={{ ...f.context, sessionGeneration: 2 }} />);
+  f.state.generation = 'session-two';
+  await result.rerender(<CheckinsList context={f.contextFor('session-two')} />);
   await act(async () => { waiting.resolve(json(f.state.page)); old.refresh(); old.next(); old.close(); });
   expect(screen.getByText('This Community session ended.')).toBeTruthy(); expect(screen.queryByText('Current page content')).toBeNull();
   expect(f.calls).toHaveLength(1); expect(f.onClose).not.toHaveBeenCalled();
-  f.state.generation = 1; await result.rerender(<CheckinsList context={f.context} />);
+  f.state.generation = 'session-one'; await result.rerender(<CheckinsList context={f.context} />);
   expect(screen.getByText('This Community session ended.')).toBeTruthy();
-  const fresh = await fixture(); fresh.state.generation = 2;
-  await result.rerender(<CheckinsList context={{ ...fresh.context, sessionGeneration: 2 }} />); await refresh();
+  const fresh = await fixture(); fresh.state.generation = 'session-two';
+  await result.rerender(<CheckinsList context={fresh.contextFor('session-two')} />); await refresh();
   expect(screen.getByText('Current page content')).toBeTruthy(); expect(fresh.calls).toHaveLength(1);
 });
 
 test('a session guard ending without context replacement redacts visible content on the next guarded action', async () => {
   const f = await fixture(); await render(<CheckinsList context={f.context} />); await refresh(); const old = captureActions();
-  f.state.generation = 2;
+  f.state.generation = 'session-two';
   await act(async () => { old.refresh(); old.next(); old.close(); });
   expect(screen.getByText('This Community session ended.')).toBeTruthy();
   expect(screen.queryByText('Current page content')).toBeNull(); expect(screen.queryByText('Leaf')).toBeNull();

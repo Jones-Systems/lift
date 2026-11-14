@@ -29,7 +29,7 @@ function deferred() {
   return { promise, resolve };
 }
 async function fixture(t) {
-  const calls = [], state = { generation: 1, mounted: true, response: () => ({ posts: [post()], nextCursor: null }) };
+  const calls = [], state = { generation: 'session-one', mounted: true, response: () => ({ posts: [post()], nextCursor: null }) };
   const transport = new FormTransport('https://synthetic.invalid', {
     async load() { return null; }, async save() {}, async clear() {},
   }, async (url, options) => {
@@ -40,12 +40,14 @@ async function fixture(t) {
   await transport.signIn('synthetic@example.invalid', 'synthetic-password');
   const resources = new CommunityResources(transport, () => state.mounted), controller = resources.createPostsController(G);
   let closes = 0;
-  const context = { controller, groupId: G, sessionGeneration: 1, isCurrentSession: generation => state.generation === generation,
-    onClose() { closes++; } };
+  const onClose = () => { closes++; };
+  const contextFor = (sessionGeneration = 'session-one') => ({ controller, groupId: G, sessionGeneration,
+    isCurrentSession: () => state.generation === sessionGeneration, onClose });
+  const context = contextFor();
   const models = [];
   function model(ctx = context) { const value = createCheckinsPresentation(ctx); models.push(value); value.attach(); return value; }
   t.after(() => { for (const value of models) value.detach(); resources.dispose(); });
-  return { calls, state, transport, resources, controller, context, model, closes: () => closes };
+  return { calls, state, transport, resources, controller, context, contextFor, model, closes: () => closes };
 }
 
 test('explicit idle read uses only GET and projects current DTO content without inventing missing fields', async t => {
@@ -162,9 +164,9 @@ test('a synchronous subscriber removal fences dispatch before loadPage', async t
 
 test('new auth generation cannot adopt reused controller state even if old session guard later returns true', async t => {
   const f = await fixture(t), old = f.model(); await old.refresh(); old.detach();
-  f.state.generation = 2; const replacement = f.model({ ...f.context, sessionGeneration: 2 });
+  f.state.generation = 'session-two'; const replacement = f.model(f.contextFor('session-two'));
   assert.equal(replacement.getSnapshot().status, 'sessionended'); assert.deepEqual(replacement.getSnapshot().rows, []);
-  f.state.generation = 1; const returned = f.model(); await returned.refresh(); returned.close();
+  f.state.generation = 'session-one'; const returned = f.model(); await returned.refresh(); returned.close();
   assert.equal(returned.getSnapshot().status, 'sessionended'); assert.equal(f.calls.length, 1); assert.equal(f.closes(), 0);
 });
 
@@ -187,7 +189,7 @@ test('session end and real transport auth replacement fence deferred pages and o
   for (const end of ['host', 'auth']) {
     const f = await fixture(t), m = f.model(), waiting = deferred(); f.state.response = () => waiting.promise;
     const read = m.refresh();
-    if (end === 'host') f.state.generation = 2;
+    if (end === 'host') f.state.generation = 'session-two';
     else await f.transport.signIn('other@example.invalid', 'synthetic-password');
     waiting.resolve({ posts: [post({ text: 'Old session page' })], nextCursor: C }); await read;
     await m.refresh(); await m.next(); m.close();
