@@ -44,8 +44,9 @@ class BreadthTests(unittest.TestCase):
         contract = breadth.selection(ROOT)
         manifest = json.loads((ROOT / breadth.MANIFEST).read_text())
         discovered, hosted = contract["discovered_test_files"], contract["existing_hosted_test_files"]
-        self.assertEqual(len(discovered), 297)
-        self.assertEqual(len(hosted), 57)
+        self.assertEqual(len(discovered), 314)
+        self.assertEqual(sum(len(g["files"]) for g in manifest["groups"]), 314)
+        self.assertEqual(len(hosted), 76)
         self.assertEqual(sum(len(g["files"]) for g in contract["blocked_groups"]), 32)
         self.assertFalse(contract["all_coverage_available"])
         for files in (discovered + ["scripts/new.test.py"], discovered[1:]):
@@ -62,6 +63,7 @@ class BreadthTests(unittest.TestCase):
         commands = breadth.selection(ROOT)["commands"]
         selected = {c["group"]: c for c in commands}
         self.assertEqual(len(selected["app-breadth"]["test_sources"]), 81)
+        self.assertEqual(len(selected["app-renderer"]["test_sources"]), 2)
         self.assertIn("src/api/tests/phone-signin.test.cjs", selected["app-breadth"]["argv"])
         self.assertNotIn("scripts/test-api-transport.cjs", selected["app-breadth"]["argv"])
         self.assertIn("tests/voice/portable-session.test.mjs", selected["website"]["argv"])
@@ -69,7 +71,12 @@ class BreadthTests(unittest.TestCase):
                          "--test-concurrency=1", "tests/adapter.test.mjs", "tests/domain-ports.test.mjs",
                          "tests/mcp-handler.test.mjs", "tests/oauth-resource.test.mjs"])
         self.assertIn("--import", selected["api-breadth"]["argv"])
-        self.assertIn("dist/tests/purchases/purchases.test.js", selected["api-breadth"]["argv"])
+        purchase = "services/api/tests/purchases/purchases.test.ts"
+        manifest = json.loads((ROOT / breadth.MANIFEST).read_text())
+        self.assertEqual([g["id"] for g in manifest["groups"] if purchase in g["files"]], ["existing-hosted"])
+        self.assertEqual(breadth.selection(ROOT)["existing_hosted_test_files"].count(purchase), 1)
+        self.assertNotIn("dist/tests/purchases/purchases.test.js", selected["api-breadth"]["argv"])
+        self.assertTrue(all("dist/tests/purchases/purchases.test.js" not in c["argv"] for c in commands))
         self.assertNotIn("npm run build", json.dumps(commands))
         workflow = (ROOT / ".github/workflows/public-breadth.yml").read_text()
         self.assertIn("schedule:", workflow)
@@ -78,6 +85,24 @@ class BreadthTests(unittest.TestCase):
         self.assertIn("python3 -B scripts/run-public-breadth.py --install", workflow)
         self.assertIn("breadth-contract", selected)
         self.assertIn("persist-credentials: false", workflow)
+
+    def test_checkins_modules_have_exact_group_membership_and_one_command_argument_each(self):
+        manifest = json.loads((ROOT / breadth.MANIFEST).read_text())
+        commands = breadth.selection(ROOT)["commands"]
+        selected = {c["group"]: c for c in commands}
+        modules = (
+            ("apps/form/src/community/checkins-ui/__tests__/presentation.test.cjs", "app-breadth"),
+            ("apps/form/tests/renderer/community-checkins.test.tsx", "app-renderer"),
+        )
+        for source, group in modules:
+            with self.subTest(source=source):
+                self.assertEqual([g["id"] for g in manifest["groups"] if source in g["files"]], [group])
+                self.assertEqual(selected[group]["cwd"], "apps/form")
+                self.assertEqual(selected[group]["test_sources"].count(source), 1)
+                self.assertEqual(sum(c["test_sources"].count(source) for c in commands), 1)
+                argument = source.removeprefix("apps/form/")
+                self.assertEqual(selected[group]["argv"].count(argument), 1)
+                self.assertEqual(sum(c["argv"].count(argument) for c in commands), 1)
 
     def test_counts_report_only_the_exact_apple_skip_as_documented_unavailable(self):
         log = self.parent / "tap.log"
