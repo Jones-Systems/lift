@@ -1,3 +1,4 @@
+import 'react-native-gesture-handler/jestSetup';
 import React, { StrictMode, useLayoutEffect } from 'react';
 import { afterEach, expect, jest, test } from '@jest/globals';
 import { AccessibilityInfo, AppState, View } from 'react-native';
