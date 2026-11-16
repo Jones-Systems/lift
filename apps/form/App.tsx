@@ -1,4 +1,5 @@
-import { Platform, StyleSheet, View } from 'react-native';
+import { lazy, Suspense } from 'react';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useFormFonts } from './src/fonts';
@@ -6,6 +7,21 @@ import { GalleryShell } from './src/GalleryShell';
 import { FormRuntime } from './src/FormRuntime';
 import { SettingsSlot } from './src/settings';
 import { TrainingSlot } from './src/features/training';
+import { readSyntheticPreviewSelection } from './src/integration/syntheticPreview/entry';
+
+const TrainingCommunityPreviewHost = lazy(() => import('./src/integration/syntheticPreview/TrainingCommunityPreviewHost'));
+
+function FontReadyContent({ gallery }: { gallery: boolean }) {
+  const selection = readSyntheticPreviewSelection();
+  if (selection.status === 'denied') return <Text accessibilityRole="alert" testID="synthetic-preview-denial">Preview unavailable: {selection.reason}</Text>;
+  if (selection.status === 'selected') return <Suspense fallback={<View style={styles.fill} />}>
+    <TrainingCommunityPreviewHost key={selection.scenario} />
+  </Suspense>;
+  return gallery ? <GalleryShell /> : <FormRuntime
+    renderSettings={ctx => <SettingsSlot {...ctx} />}
+    renderHome={ctx => <TrainingSlot {...ctx} />}
+  />;
+}
 
 export default function App() {
   const fontsReady = useFormFonts();
@@ -28,10 +44,7 @@ export default function App() {
         transformOrigin: 'left top',
         overflow: 'hidden',
       }]}>
-      {fontsReady ? (gallery ? <GalleryShell /> : <FormRuntime
-        renderSettings={ctx => <SettingsSlot {...ctx} />}
-        renderHome={ctx => <TrainingSlot {...ctx} />}
-      />) : <View style={styles.fill} />}
+      {fontsReady ? <FontReadyContent gallery={gallery} /> : <View style={styles.fill} />}
     </SafeAreaProvider>
   );
   if (Platform.OS !== 'web' || capture) return <GestureHandlerRootView style={styles.fill}>{frame}</GestureHandlerRootView>;

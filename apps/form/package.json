@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "check:tokens": "node scripts/check-token-styles.cjs",
     "test:api": "node scripts/run-api-tests.cjs",
-    "test:integration": "node --test --test-concurrency=1 src/integration/tests/*.test.cjs",
+    "test:integration": "node --test --test-concurrency=1 src/integration/tests/*.test.cjs src/integration/syntheticPreview/tests/*.test.cjs",
     "test:renderer": "jest --runInBand"
   },
   "dependencies": {
