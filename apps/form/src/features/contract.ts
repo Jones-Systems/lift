@@ -21,6 +21,7 @@ import type { SourceTrainingRenderer } from './training';
 import type { createContextConfirmation, ContextConfirmationResult } from '../integration/contextConfirmation';
 import type { SavedFirstPlanDestination } from '../integration/savedFirstPlanDestination';
 import type { ReviewedSpeechText, SpeechAvailability, SpeechDraft, SpeechPermissions } from '../native/speech.types';
+import type { captureAccountSecuritySession } from '../integration/accountSecuritySession';
 
 export type { AppMode, StandardCoachingSession, ManualProgressController };
 
@@ -120,6 +121,8 @@ export type SettingsSlotContext = {
   close(): void;
   reload(): Promise<void>;
   openAccountSecurity?: () => void;
+  /** Accepted credential completion, displayed only after the shell's authoritative reacquisition. */
+  securityNotice?: Readonly<{ text: string; offerRevokeOtherSessions: boolean }>;
   openMembership?: () => void;
   openHealth?: () => void;
   /* Optional additive seams (settings-training v2 contracts.md#slot-adapter). Each is absent-safe: Settings draws the
@@ -143,6 +146,8 @@ export type SettingsSlotContext = {
 
 export type AccountSecuritySlotContext = SettingsSlotContext & {
   credentials: CredentialsPort;
+  /** Optional for existing external renderers; the standard host borrows this admission-owned custody. */
+  credentialHost?: ReturnType<typeof captureAccountSecuritySession>['host'];
   sessionGeneration: string;
   isCurrentSession(): boolean;
   onSignedOut(): void;

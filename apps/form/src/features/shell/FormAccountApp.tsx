@@ -15,6 +15,7 @@ import type { TeardownReason } from '../../voice-coaching/contracts';
 import type { LifecycleHostSession } from '../../integration/lifecycleSession';
 import { captureAccountSession } from '../../integration/accountSession';
 import { captureAccountSecuritySession } from '../../integration/accountSecuritySession';
+import type { CredentialTransition } from '../credentials/model';
 import { createContextConfirmation } from '../../integration/contextConfirmation';
 import { createSavedFirstPlanDestination } from '../../integration/savedFirstPlanDestination';
 import { captureSharedVoiceScope, type SharedVoiceScope } from '../../integration/sharedVoice';
@@ -22,7 +23,7 @@ import { FormSpeechAdapter } from '../../native/speech';
 import { AccountScreen, AccessScreen, type AccountRowId } from '../account/AccountScreens';
 import { AuthFlow } from '../auth/AuthFlow';
 import type {
-  AccountSecuritySlotContext, FeatureSlotContext, FormAccountAppProps, HomeSlotContext, SaveResult, SessionAction, SessionPhase, SettingsSlotContext, SourcePlanDetailSlotContext, SpeechPort,
+  AccountSecuritySlotContext, FeatureSlotContext, FormAccountAppProps, HomeSlotContext, SaveResult, SessionAction, SessionPhase, SettingsEditTarget, SettingsSlotContext, SourcePlanDetailSlotContext, SpeechPort,
 } from '../contract';
 import { CuesScreen } from '../cues/CuesScreen';
 import { OnboardingFlow } from '../onboarding/OnboardingFlow';
@@ -44,6 +45,8 @@ type Route =
   | { name: 'cues'; exerciseId: string; back: string }
   | { name: 'access' }
   | { name: 'settings' }
+  | { name: 'settings-edit'; id: number; context: SettingsSlotContext & { editTarget: SettingsEditTarget; editBack: string };
+      render: FormAccountAppProps['renderSettings']; isCurrent(): boolean; dispose(): void }
   | { name: 'account-security'; admission: ReturnType<typeof captureAccountSecuritySession>; context: AccountSecuritySlotContext;
       render: NonNullable<FormAccountAppProps['renderAccountSecurity']> }
   | { name: 'membership' | 'health'; context: FeatureSlotContext; render: NonNullable<FormAccountAppProps['renderMembership']> }
@@ -81,6 +84,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
   const [data, setData] = useState<Data>(EMPTY);
   const [routes, setRoutes] = useState<Route[]>([{ name: 'home' }]);
   const [notice, setNotice] = useState<string | null>(null);
+  const [securityNotice, setSecurityNotice] = useState<SettingsSlotContext['securityNotice']>();
   const [fatal, setFatal] = useState<string | null>(null);
   const latest = useRef(data);
   latest.current = data;
@@ -121,9 +125,9 @@ export function FormAccountApp(props: FormAccountAppProps) {
   const renderedEpoch = epochRef.current;
   const currentResources = useRef(resources);
   currentResources.current = resources;
-  const editPort = useRef({ callback: props.openEdit, generation: 0 });
-  if (editPort.current.callback !== props.openEdit) {
-    editPort.current = { callback: props.openEdit, generation: editPort.current.generation + 1 };
+  const editPort = useRef({ callback: props.openEdit, settings: props.renderSettings, generation: 0 });
+  if (editPort.current.callback !== props.openEdit || editPort.current.settings !== props.renderSettings) {
+    editPort.current = { callback: props.openEdit, settings: props.renderSettings, generation: editPort.current.generation + 1 };
   }
   const accountRenderers = useRef({ security: props.renderAccountSecurity, membership: props.renderMembership, health: props.renderHealth,
     generations: { security: 0, membership: 0, health: 0 } });
@@ -139,6 +143,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
   }
   const activeRoutes = useRef(routes);
   activeRoutes.current = routes;
+  const settingsEditSequence = useRef(0);
   const securityAdmission = useRef<ReturnType<typeof captureAccountSecuritySession> | null>(null);
   const transitionRoutes = useCallback((next: Route[], current: () => boolean = () => true) => {
     if (!current()) return;
@@ -150,6 +155,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
     if (previous !== next[next.length - 1]) {
       if (previous.name === 'membership' || previous.name === 'health') previous.context.isCurrentSession();
       if (previous.name === 'account-security') { previous.admission.dispose(); securityAdmission.current = null; }
+      if (previous.name === 'settings-edit') previous.dispose();
     }
     setRoutes(r => current() ? next : r);
   }, [notifyVoiceExit]);
@@ -158,7 +164,12 @@ export function FormAccountApp(props: FormAccountAppProps) {
     !retainedSecurity.isCurrentSession())) {
     retainedSecurity.dispose(); securityAdmission.current = null;
   }
-  useEffect(() => () => { securityAdmission.current?.dispose(); securityAdmission.current = null; }, []);
+  useEffect(() => {
+    const app = AppState.addEventListener('change', state => {
+      if (state !== 'active') void securityAdmission.current?.host.depart();
+    });
+    return () => { app.remove(); securityAdmission.current?.dispose(); securityAdmission.current = null; };
+  }, []);
   const sourceRenderer = useRef(props.renderSourcePlanDetail);
   sourceRenderer.current = props.renderSourcePlanDetail;
   const sourcePresentation = useRef({ detail: props.renderSourcePlanDetail, training: props.renderSourceTraining,
@@ -246,6 +257,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
     setData(EMPTY);
     transitionRoutes([{ name: 'home' }]);
     setNotice(message);
+    setSecurityNotice(undefined);
     setPhase('signed-out');
   }, [transitionRoutes, expireVoiceScope]);
 
@@ -387,6 +399,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
     setData(EMPTY);
     transitionRoutes([{ name: 'home' }]);
     setPhase('loading'); setFatal(null);
+    setSecurityNotice(undefined);
     const auth = resources.api.captureAuthContext();
     try {
       const [account, entitlements] = await Promise.all([resources.account(), resources.entitlements()]);
@@ -595,7 +608,9 @@ export function FormAccountApp(props: FormAccountAppProps) {
   };
   const push = (route: Route) => {
     if (!currentView() || contextNavigationBlocked()) return;
-    transitionRoutes([...activeRoutes.current, route], () => currentView() && !contextNavigationBlocked());
+    const retained = activeRoutes.current[activeRoutes.current.length - 1].name === 'settings-edit'
+      ? activeRoutes.current.slice(0, -1) : activeRoutes.current;
+    transitionRoutes([...retained, route], () => currentView() && !contextNavigationBlocked());
   };
   const pop = () => {
     if (!currentView() || contextNavigationBlocked() || activeRoutes.current.length <= 1) return;
@@ -604,9 +619,32 @@ export function FormAccountApp(props: FormAccountAppProps) {
   const originalOpenEdit = props.openEdit, editGeneration = editPort.current.generation;
   const editCurrent = () => currentView() && currentResources.current === resources &&
     editPort.current.callback === originalOpenEdit && editPort.current.generation === editGeneration;
-  const openEdit: SettingsSlotContext['openEdit'] = originalOpenEdit ? target => {
-    if (editCurrent() && !contextNavigationBlocked()) originalOpenEdit(target);
-  } : undefined;
+  const openEdit: NonNullable<SettingsSlotContext['openEdit']> = target => {
+    if (!editCurrent() || contextNavigationBlocked()) return;
+    if (originalOpenEdit) { originalOpenEdit(target); return; }
+    if (target === 'cues') { push({ name: 'cues-index', back: 'Training context' }); return; }
+    const render = props.renderSettings;
+    let destination: Extract<Route, { name: 'settings-edit' }>;
+    let live = true;
+    const current = () => live && editCurrent() && editPort.current.settings === render &&
+      activeRoutes.current[activeRoutes.current.length - 1] === destination;
+    const saveInEditor = async <T,>(attempt: () => Promise<SaveResult<T>>): Promise<SaveResult<T>> => {
+      if (!current()) return { status: 'failed', error: sessionChanged() };
+      const result = await attempt();
+      return result.status === 'unknown' ? { status: 'unknown', retry: () => saveInEditor(result.retry) } : result;
+    };
+    const previous = activeRoutes.current[activeRoutes.current.length - 1];
+    const editBack = previous.name === 'settings-edit' ? previous.context.editBack
+      : previous.name === 'context-confirmation' ? 'Training context' : 'Settings';
+    const context = Object.freeze({ ...settingsCtx, editTarget: target, editBack,
+      close() { if (current()) pop(); },
+      saveProfile: (changes: Parameters<SettingsSlotContext['saveProfile']>[0]) => saveInEditor(() => scopedSaveProfile(changes)),
+      savePreferences: (changes: Parameters<SettingsSlotContext['savePreferences']>[0]) => saveInEditor(() => scopedSavePreferences(changes)),
+    });
+    destination = { name: 'settings-edit', id: ++settingsEditSequence.current, context, render,
+      isCurrent: current, dispose() { live = false; } };
+    push(destination);
+  };
   const openContextConfirmation = props.renderContextConfirmation && typeof scopedResources.account === 'function' &&
     typeof scopedResources.createFirstPlan === 'function' ? () => {
       if (!currentView() || contextNavigationBlocked()) return;
@@ -623,10 +661,10 @@ export function FormAccountApp(props: FormAccountAppProps) {
             isCurrentSession: binding => binding.resources === scopedResources && binding.accountId === account.accountId &&
               binding.sessionGeneration === accountSession.sessionGeneration && currentView() },
           newIdempotencyKey: commandKey,
-          ...(originalOpenEdit ? { openEdit: target => {
+          openEdit: target => {
             if (!editCurrent()) throw new Error('context-edit-port-unavailable');
-            originalOpenEdit(target);
-          } } : {}),
+            openEdit(target);
+          },
         }) };
       }
       // The mounted consumer owns its initial capture promise and the actual issued review; entry performs no read.
@@ -713,12 +751,13 @@ export function FormAccountApp(props: FormAccountAppProps) {
   const settingsCtx: SettingsSlotContext = {
     lifecycle: lifecycleBinding?.key === sessionKey ? lifecycleBinding.host : undefined,
     account, appMode, resources: scopedResources, settings: data.settings, capabilities, entitlements: data.entitlements,
+    securityNotice,
     savePreferences: scopedSavePreferences, saveProfile: scopedSaveProfile, signOut: scopedSignOut,
     ...(scopedSessionAction ? { sessionAction: scopedSessionAction } : {}),
     openAccess: () => push({ name: 'access' }),
     openPlans: () => push({ name: 'plans', back: 'Settings' }),
     openAccount: () => push({ name: 'account' }),
-    ...(openEdit ? { openEdit } : {}),
+    openEdit,
     close: pop,
     reload: scopedReload,
     openCuesIndex: () => push({ name: 'cues-index', back: 'Settings' }),
@@ -758,14 +797,17 @@ export function FormAccountApp(props: FormAccountAppProps) {
     const admission: ReturnType<typeof captureAccountSecuritySession> = captureAccountSecuritySession(resources, {
       accountId: account.accountId, sessionGeneration: sessionKey, isOwnerCurrent: physicalCurrent,
       onForeignAuth() { if (mounted.current && currentResources.current === resources && epochRef.current === who.epoch) signedOut(COPY.signedOut); },
+      settings: () => latest.current.settings,
+      returnToSettings: completion => returnToSettings(completion),
+      onSessionEnded() { if (admission.isCurrentSession()) signedOut(COPY.signedOut); },
     }, accountSession.commandSession.originalAuth);
     securityAdmission.current = admission;
     const current = admission.isCurrentSession;
     let handedOff = false;
-    const returnToSettings = async () => {
-      if (handedOff || !current()) return;
+    const returnToSettings = async (completion: CredentialTransition | null = null): Promise<boolean> => {
+      if (handedOff || !current()) return false;
       const acquired = await admission.reacquire();
-      if (handedOff || !acquired || !acquired.isCurrent() || !physicalCurrent()) return;
+      if (handedOff || !acquired || !acquired.isCurrent() || !physicalCurrent()) return false;
       handedOff = true;
       expireVoiceScope('account_changed');
       admission.dispose(); securityAdmission.current = null;
@@ -774,7 +816,10 @@ export function FormAccountApp(props: FormAccountAppProps) {
       accountAuth.current = { resources, guard: acquired.auth };
       latest.current = { ...EMPTY, account: acquired.account, entitlements: acquired.entitlements, settings: acquired.settings };
       setData(latest.current); transitionRoutes([{ name: 'home' }, { name: 'settings' }]); setPhase('ready');
+      setSecurityNotice(completion?.destination === 'settings' ? { text: completion.notice,
+        offerRevokeOtherSessions: completion.reason === 'email-changed' && completion.offerRevokeOtherSessions } : undefined);
       void loadPlans({ epoch, accountId: account.accountId });
+      return true;
     };
     const guardedNavigation = (action: () => void) => () => {
       if (!current() || !currentView()) return;
@@ -782,6 +827,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
     };
     const context: AccountSecuritySlotContext = Object.freeze({ ...settingsCtx,
       credentials: admission.credentials, sessionGeneration: sessionKey, isCurrentSession: current,
+      credentialHost: admission.host,
       savePreferences: (changes: Parameters<SettingsSlotContext['savePreferences']>[0]) => current() ? scopedSavePreferences(changes)
         : Promise.resolve({ status: 'failed' as const, error: sessionChanged() }),
       saveProfile: (changes: Parameters<SettingsSlotContext['saveProfile']>[0]) => current() ? scopedSaveProfile(changes)
@@ -799,7 +845,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
       ...(settingsCtx.openMembership ? { openMembership: guardedNavigation(settingsCtx.openMembership) } : {}),
       ...(settingsCtx.openHealth ? { openHealth: guardedNavigation(settingsCtx.openHealth) } : {}),
       openAccountSecurity: undefined,
-      close() { void returnToSettings(); }, reload: returnToSettings,
+      close() { void returnToSettings(); }, reload: async () => { await returnToSettings(); },
       onSignedOut() { if (current()) signedOut(COPY.signedOut); },
     });
     destination = { name: 'account-security', admission, context, render: securityRenderer };
@@ -885,6 +931,11 @@ export function FormAccountApp(props: FormAccountAppProps) {
       break;
     case 'settings':
       screen = <View key={`settings:${sessionKey}`} style={s.fill}>{props.renderSettings(settingsCtx)}</View>;
+      break;
+    case 'settings-edit':
+      screen = route.isCurrent() ? <View key={`settings-edit:${sessionKey}:${route.id}`} style={s.fill}>
+        {route.render(route.context)}
+      </View> : null;
       break;
     case 'context-confirmation': {
       const retained = contextConfirmation.current;

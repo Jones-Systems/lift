@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -6,8 +7,16 @@ import { GalleryShell } from './src/GalleryShell';
 import { FormRuntime } from './src/FormRuntime';
 import { SettingsSlot } from './src/settings';
 import { TrainingSlot } from './src/features/training';
+import { AccountSecurityScreen } from './src/features/credentials/account-security';
+import type { AccountSecuritySlotContext, HomeSlotContext, SettingsSlotContext } from './src/features/contract';
+import { createTrainingContextPresentation } from './src/integration/trainingContextPresentation';
+
+const renderSettings = (ctx: SettingsSlotContext) => <SettingsSlot {...ctx} />;
+const renderHome = (ctx: HomeSlotContext) => <TrainingSlot {...ctx} />;
+const renderAccountSecurity = (ctx: AccountSecuritySlotContext) => <AccountSecurityScreen {...ctx} />;
 
 export default function App() {
+  const [trainingContext] = useState(createTrainingContextPresentation);
   const fontsReady = useFormFonts();
   const query = Platform.OS === 'web' && typeof window !== 'undefined'
     ? new URLSearchParams(window.location.search)
@@ -29,8 +38,10 @@ export default function App() {
         overflow: 'hidden',
       }]}>
       {fontsReady ? (gallery ? <GalleryShell /> : <FormRuntime
-        renderSettings={ctx => <SettingsSlot {...ctx} />}
-        renderHome={ctx => <TrainingSlot {...ctx} />}
+        {...trainingContext}
+        renderSettings={renderSettings}
+        renderHome={renderHome}
+        renderAccountSecurity={renderAccountSecurity}
       />) : <View style={styles.fill} />}
     </SafeAreaProvider>
   );

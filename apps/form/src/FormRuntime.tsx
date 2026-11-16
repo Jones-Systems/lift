@@ -28,7 +28,7 @@ import { observeSystemMotion } from './integration/systemMotion';
 import { appModeFrom } from './settings/appMode';
 import {
   FormAccountApp, type FormAccountAppProps, type FormAccountSnapshot,
-  type SaveResult, type SessionAction, type FeatureSlotContext, type SpeechPort,
+  type SaveResult, type SessionAction, type FeatureSlotContext, type HomeSlotContext, type SettingsSlotContext, type SpeechPort,
 } from './features';
 
 type RuntimeProps = Omit<FormAccountAppProps,
@@ -152,6 +152,12 @@ export function FormRuntime({ resources = formResources, standardNative, standar
     }
   }, [resources]);
   const activitySpeech = useCallback((ctx: FeatureSlotContext) => scopedSpeech(ctx.voiceScope ?? null), [scopedSpeech]);
+  const homeRenderer = slots.renderHome;
+  const renderHome = useCallback((ctx: HomeSlotContext) => homeRenderer?.({
+    ...ctx, presentation: resolvePresentationPolicy(ctx.account.preferences, reduceMotion),
+  }), [homeRenderer, reduceMotion]);
+  const settingsRenderer = useCallback((ctx: SettingsSlotContext) => renderSettings({ ...ctx, bodyPrivacy: bodyPrivacySummary(),
+    presentation: resolvePresentationPolicy(ctx.account.preferences, reduceMotion) }), [renderSettings, reduceMotion]);
 
   return <FormAccountApp
     {...slots}
@@ -166,9 +172,7 @@ export function FormRuntime({ resources = formResources, standardNative, standar
     appMode={appMode}
     identity={runtimeIdentity}
     onSnapshot={receiveSnapshot}
-    renderHome={slots.renderHome ? (ctx) => slots.renderHome!({
-      ...ctx, presentation: resolvePresentationPolicy(ctx.account.preferences, reduceMotion),
-    }) : undefined}
+    renderHome={homeRenderer ? renderHome : undefined}
     renderCommunity={renderCommunity ? (ctx) => <CommunityBoundary
       key={ctx.sessionGeneration}
       ctx={{ ...ctx, presentation: resolvePresentationPolicy(ctx.account.preferences, reduceMotion) }}
@@ -191,8 +195,7 @@ export function FormRuntime({ resources = formResources, standardNative, standar
       standardTurn={configuredStandardTurn}
       retainDisposal={retainDisposal}
     /> : undefined}
-    renderSettings={(ctx) => renderSettings({ ...ctx, bodyPrivacy: bodyPrivacySummary(),
-      presentation: resolvePresentationPolicy(ctx.account.preferences, reduceMotion) })}
+    renderSettings={settingsRenderer}
     renderBody={(ctx) => renderBody ? <ManualProgressBoundary
       key={ctx.sessionGeneration} ctx={ctx} render={renderBody} retainDisposal={retainDisposal}
       rendererCurrent={() => bodyRenderer.current === renderBody} retainPresentation={retainBodyPresentation}
