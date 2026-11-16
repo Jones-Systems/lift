@@ -28,7 +28,7 @@ const preparedNotifications = new WeakMap<object, Prepared>();
 const cursors = new WeakMap<object, CursorState>();
 const failure = (status: InboxFailure['status']): InboxFailure => ({ status, acknowledge: false });
 class Refusal extends Error { constructor(readonly status: InboxFailure['status']) { super(status); } }
-const refuse = (status: InboxFailure['status']): never => { throw new Refusal(status); };
+const refuse: (status: InboxFailure['status']) => never = status => { throw new Refusal(status); };
 const id = (value: string) => { if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(value)) refuse('rejected'); return value; };
 const uuid = (value: string) => {
   if (typeof value !== 'string' || !/^[a-fA-F0-9]{8}-(?:[a-fA-F0-9]{4}-){3}[a-fA-F0-9]{12}$/.test(value)) refuse('rejected');
