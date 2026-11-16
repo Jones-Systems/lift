@@ -1,0 +1,77 @@
+{
+  "form_pr": 196,
+  "form_head": "d4a37957cff572c797a61b695760fa17b4df8bc8",
+  "merge_base": "e41e578a52fbc71b07d1b76e8525e5811aa3831c",
+  "files": [
+    {
+      "path": "apps/form/src/features/feature-board/controller.ts",
+      "mode": "100644",
+      "sha256": "39c9bcedaed89c9fdd7297c187ab9edcb1046d2cb4c9ddc4fdd13074f7254949",
+      "already_in_form_snapshot": true
+    },
+    {
+      "path": "apps/form/src/features/feature-board/tests/controller.test.cjs",
+      "mode": "100644",
+      "sha256": "bbca169e573efdf450a4f9f654e255a7c80b8159767b39d34571a9037ef4f47d",
+      "already_in_form_snapshot": true
+    },
+    {
+      "path": "services/api/src/community/board/correction-migration.ts",
+      "mode": "100644",
+      "sha256": "d7619b4fff98926cc1918dc92d51c4252d6ac2d34443741ea251386dc291e9e8",
+      "already_in_form_snapshot": true
+    },
+    {
+      "path": "services/api/src/community/board/index.ts",
+      "mode": "100644",
+      "sha256": "845a27a402711eab3aeb7476a5789393afcd1761d080b7f0f5c7cfdf2ac166e4",
+      "already_in_form_snapshot": true
+    },
+    {
+      "path": "services/api/src/community/board/routes.ts",
+      "mode": "100644",
+      "sha256": "19e0b1511935b5910b4cb9fc57ddc4c89c9784896ffd6a055bb4f7832f51fdb0",
+      "already_in_form_snapshot": true
+    },
+    {
+      "path": "services/api/src/community/board/schemas.ts",
+      "mode": "100644",
+      "sha256": "46937d413c67ae7c3fefae19f9f52ac0b072208683630e9d6d108c0d2aadecd1",
+      "already_in_form_snapshot": true
+    },
+    {
+      "path": "services/api/src/community/board/service.ts",
+      "mode": "100644",
+      "sha256": "e1076958dbe56c01267d3810395ac3a0a5af6fd2d1bcb7d1f94a1eb68e7ec2e5",
+      "already_in_form_snapshot": true
+    },
+    {
+      "path": "services/api/src/community/board/types.ts",
+      "mode": "100644",
+      "sha256": "4a666f19b5faac8c2c01cacda12ebaca61cad2d822ede2a2889fb67535a4194b",
+      "already_in_form_snapshot": true
+    },
+    {
+      "path": "services/api/tests/community/board/correction.test.ts",
+      "mode": "100644",
+      "sha256": "08eb359196b0c6cb9d1046a583cbf368b2b63d981e999e9475965a5730d94c8a",
+      "already_in_form_snapshot": true
+    },
+    {
+      "path": "services/api/tests/community/board/persistence-races.test.ts",
+      "mode": "100644",
+      "sha256": "3a536496d9b1f1f57a61682f571d470c8dfd87b932c1d4481cff9e1194d19c26",
+      "already_in_form_snapshot": true
+    },
+    {
+      "path": "services/api/tests/community/board/race-worker.ts",
+      "mode": "100644",
+      "sha256": "1d9cc30e2ec355774a265f95c86109b7816a42b17f1bf9f06cbf59b49ac82447",
+      "already_in_form_snapshot": true
+    }
+  ],
+  "schema": "lift.form-code-pair/v1",
+  "integration_baseline": "e1c877a7f7fd1dfcf951328b1f3593d1ac015b5a",
+  "claim": "Changed product file after-states match the stated Form head; private docs and source history are excluded.",
+  "transition": "product changes already present in initial public snapshot"
+}
