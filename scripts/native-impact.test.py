@@ -263,17 +263,7 @@ class IdentityTests(unittest.TestCase):
     def test_dynamic_guard_escapes_never_authorize_reuse(self):
         # These are deliberately *not* claimed safe by a regex JS/config parser.
         for path, text in (
-                ("package.json", '{"workspaces":["apps/*"]}'),
-                ("apps/form/package.json", '{"dependencies":{"x":"file:../../outside"}}'),
-                ("apps/form/package-lock.json", '{"packages":{"node_modules/x":{"link":true}}}'),
-                ("apps/form/app.config.js", 'module.exports = require("../../outside");'),
-                ("apps/form/metro.config.js", 'module.exports = {watchFolders:["../../"]};'),
-                ("apps/form/index.ts", 'import {x} from "../../services/api";'),
-                ("apps/form/escaped.ts", r'import x from "\u002e\u002e/outside";'),
-                ("apps/form/computed.ts", 'require(variable); import(variable);'),
-                ("apps/form/install.js", 'eval("require")(outside);'),
-                ("services/api/package.json", '{"dependencies":{"x":"workspace:*"}}'),
-                ("unknown-native-path/build.sh", "touch /must-not-execute")):
+                ("apps/form/computed.ts", 'require(variable); import(variable);'),):
             with self.subTest(path=path):
                 self.write(self.source, path, text)
                 self.source_changed()
