@@ -3,7 +3,8 @@ run-name: public-eligible-breadth head=${{ inputs.source_sha || github.sha }}
 
 on:
   schedule:
-    - cron: '41 7 * * *'
+    - cron: '40 4 * * *'
+      timezone: 'America/New_York'
   workflow_dispatch:
     inputs:
       source_sha:
