@@ -17,7 +17,9 @@ type ClaimRow = { attempt_id: string; receipt_id: string; kind: string; generati
   store_generation: string; settled: number; cancel_requested: number };
 type Prepared = { receiptId: string; version: number; attemptId: string; outer: InboxOuter; payload: Buffer;
   storeGeneration: string; policy: string; operationId: string };
-type Frame = { db: Sqlite; owner: NotificationInbox; active: boolean; completed: boolean; invalid: boolean; capability: InboxCapability };
+type PurchaseCommitRequest = Readonly<{ operationId: string; claim: InboxClaim; applicationInput: string }>;
+type Frame = { db: Sqlite; owner: NotificationInbox; active: boolean; completed: boolean; invalid: boolean;
+  capability: InboxCapability; readonly request: PurchaseCommitRequest };
 type CursorState = { owner: NotificationInbox; store: string; generation: string; policy: string; scope: string;
   filter: string; highwater: number; after: number; floor: number };
 const frames = new WeakMap<object, Frame>();
@@ -34,6 +36,10 @@ const uuid = (value: string) => {
 };
 const thenable = (value: unknown): boolean => value !== null && (typeof value === 'object' || typeof value === 'function') && 'then' in value;
 const equal = (one: Uint8Array, two: Uint8Array) => Buffer.from(one).equals(Buffer.from(two));
+const sameClaim = (one: InboxClaim, two: InboxClaim): boolean =>
+  one.receiptId === two.receiptId && one.workId === two.workId && one.processingAttemptId === two.processingAttemptId &&
+  one.generation === two.generation && one.custodyId === two.custodyId && one.storeGeneration === two.storeGeneration &&
+  one.versions.receipt === two.versions.receipt && one.versions.work === two.versions.work && one.versions.aggregate === two.versions.aggregate;
 export const notificationPayloadDigest = (bytes: Uint8Array): string =>
   createHash('sha256').update('form.notification-inbox.signedPayload.utf8.v1\0').update(bytes).digest('hex');
 export const newNotificationReceiptId = (): string => randomUUID();
@@ -504,24 +510,30 @@ export class NotificationInbox {
   }
   completeWithinPurchaseCommit(frame: PurchaseCommitFrame, claim: InboxClaim): InboxSuccess {
     const binding = frame && frames.get(frame);
-    if (!binding || binding.owner !== this || binding.db !== this.#db || !binding.active || binding.completed || !this.#db.inTransaction) {
+    try {
+      if (!binding || binding.owner !== this || binding.db !== this.#db || !binding.active || binding.completed ||
+          !this.#db.inTransaction || !sameClaim(binding.request.claim,claim)) refuse('rejected');
+      const result = this.#complete(binding.capability,binding.request.claim,'applied','applied');
+      binding.completed = true;
+      return result;
+    } catch (error) {
       if (binding?.active) binding.invalid = true;
-      refuse('rejected');
+      throw error;
     }
-    const result = this.#complete(binding.capability,claim,'applied','applied');
-    binding.completed = true;
-    return result;
   }
   createSyntheticPurchaseCommitter(capability: InboxCapability, input: Readonly<{ use: 'isolated-synthetic' }>) {
     if (input.use !== 'isolated-synthetic') throw new Error('synthetic_committer_required');
     this.#check(capability,'complete');
     return Object.freeze({
-      commit: (request: Readonly<{ operationId: string; claim: InboxClaim; applicationInput: string }>,
+      commit: (request: PurchaseCommitRequest,
         apply: (db: Sqlite, frame: PurchaseCommitFrame) => unknown, guard: () => unknown): InboxResult => this.#safe(() => {
-        const state = this.#state(request.claim.receiptId), policy = this.#check(capability,'complete',state);
-        if (typeof request.applicationInput !== 'string' || !/^[a-zA-Z0-9_.:-]{1,128}$/.test(request.applicationInput)) refuse('rejected');
-        return this.#run(request.operationId,state.receipt_id,{kind:'purchase_commit',...request},policy,() => {
-          this.#validateClaim(request.claim,true); this.#check(capability,'complete',state);
+        const claim = request.claim, versions = claim.versions;
+        const expected: PurchaseCommitRequest = Object.freeze({...request,
+          claim:Object.freeze({...claim,versions:Object.freeze({...versions})})});
+        const state = this.#state(expected.claim.receiptId), policy = this.#check(capability,'complete',state);
+        if (typeof expected.applicationInput !== 'string' || !/^[a-zA-Z0-9_.:-]{1,128}$/.test(expected.applicationInput)) refuse('rejected');
+        return this.#run(expected.operationId,state.receipt_id,{kind:'purchase_commit',...expected},policy,() => {
+          this.#validateClaim(expected.claim,true); this.#check(capability,'complete',state);
           const store = inboxStore(this.#db);
           const assertGuard = () => {
             const value = guard();
@@ -532,14 +544,25 @@ export class NotificationInbox {
           };
           assertGuard();
           const frame = Object.freeze({}) as PurchaseCommitFrame;
-          const binding: Frame = {db:this.#db,owner:this,active:true,completed:false,invalid:false,capability};
+          const binding: Frame = {db:this.#db,owner:this,active:true,completed:false,invalid:false,capability,request:expected};
           frames.set(frame,binding); activeFrames.set(this.#db,binding);
           try {
             const applied = apply(this.#db,frame);
             if (thenable(applied) || binding.invalid) refuse('rejected');
-            if (!binding.completed) this.completeWithinPurchaseCommit(frame,request.claim);
+            if (!binding.completed) this.completeWithinPurchaseCommit(frame,expected.claim);
             assertGuard();
-            return this.#success(this.#state(state.receipt_id));
+            const completed = this.#state(expected.claim.receiptId), work = this.#work(completed), aggregate = this.#aggregate(completed);
+            const settled = this.#db.prepare('SELECT * FROM notification_inbox_claims WHERE attempt_id=?')
+              .get(expected.claim.processingAttemptId) as ClaimRow | undefined;
+            if (binding.invalid || !binding.completed || completed.disposition !== 'applied' || completed.reason !== 'applied' ||
+                completed.version !== expected.claim.versions.receipt+1 || !this.#knownAcceptance(completed) ||
+                work.work_id !== expected.claim.workId || work.receipt_id !== expected.claim.receiptId ||
+                work.disposition !== 'applied' || work.version !== expected.claim.versions.work+1 || work.claim_generation !== expected.claim.generation ||
+                !aggregate || aggregate.conflicted || aggregate.version !== expected.claim.versions.aggregate ||
+                !settled || settled.settled !== 1 || settled.kind !== 'processing' || settled.receipt_id !== expected.claim.receiptId ||
+                settled.custody_id !== expected.claim.custodyId || settled.generation !== expected.claim.generation ||
+                settled.store_generation !== expected.claim.storeGeneration) refuse('rejected');
+            return this.#success(completed);
           } finally { binding.active = false; activeFrames.delete(this.#db); }
         });
       }),

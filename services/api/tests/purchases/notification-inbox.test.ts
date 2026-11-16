@@ -408,6 +408,99 @@ test('private same-handle purchase frame atomically rolls back application and c
   fail(committer.commit({...request,applicationInput:'changed'},()=>{},()=>true),'identity_collision');
 });
 
+test('purchase frame refuses another live claim even when refusal is caught and rolls back both claims',async t=>{
+  const f=fixture(t),a=await f.accept(),b=await f.accept(f.request('synthetic.b',namespace,randomUUID()));
+  const claimA=f.claim(a.capture.receiptId),claimB=f.claim(b.capture.receiptId);
+  f.db.exec('CREATE TABLE synthetic_application (effect TEXT PRIMARY KEY)');
+  const committer=f.inbox.createSyntheticPurchaseCommitter(f.caps.complete,{use:'isolated-synthetic'});
+  const tables=['state','work','claims','transitions','operations','reservations'];
+  const before=tables.map(table=>f.rows(table));
+  for(const boundary of ['uncaught','caught-before-completion','caught-after-completion','caught-in-final-guard']){
+    const request={operationId:operation(),claim:claimA,applicationInput:'application-a'};
+    let liveFrame:PurchaseCommitFrame|undefined;
+    fail(committer.commit(request,(db,frame)=>{
+      liveFrame=frame;
+      assert.equal(db,f.db);db.prepare('INSERT INTO synthetic_application VALUES(?)').run('a');
+      if(boundary==='uncaught')f.inbox.completeWithinPurchaseCommit(frame,claimB);
+      else if(boundary!=='caught-in-final-guard'){
+        if(boundary==='caught-after-completion')f.inbox.completeWithinPurchaseCommit(frame,claimA);
+        assert.throws(()=>f.inbox.completeWithinPurchaseCommit(frame,claimB));
+        if(boundary==='caught-before-completion')f.inbox.completeWithinPurchaseCommit(frame,claimA);
+      }
+    },()=>{
+      if(boundary==='caught-in-final-guard'&&liveFrame)assert.throws(()=>f.inbox.completeWithinPurchaseCommit(liveFrame!,claimB));
+      return true;
+    }),'rejected');
+    assert.deepEqual(f.db.prepare('SELECT * FROM synthetic_application').all(),[]);
+    assert.deepEqual(tables.map(table=>f.rows(table)),before);
+    for(const claim of [claimA,claimB]){
+      assert.equal(ok(f.inbox.readCapture(f.caps.metadata,claim.receiptId)).disposition,'claimed');
+      assert.equal((f.rows('claims') as {attempt_id:string;settled:number}[]).find(row=>row.attempt_id===claim.processingAttemptId)!.settled,0);
+    }
+  }
+  const request={applicationInput:'application-a',claim:claimA,operationId:operation()};
+  const applied=ok(committer.commit(request,(db,frame)=>{
+    db.prepare('INSERT INTO synthetic_application VALUES(?)').run('a');
+    const exact={...claimA,versions:{aggregate:claimA.versions.aggregate,work:claimA.versions.work,receipt:claimA.versions.receipt}};
+    assert.equal(f.inbox.completeWithinPurchaseCommit(frame,exact).disposition,'applied');
+  },()=>true));
+  assert.equal(applied.receiptId,claimA.receiptId);assert.equal(applied.disposition,'applied');
+  assert.equal((f.rows('claims') as {attempt_id:string;settled:number}[]).find(row=>row.attempt_id===claimA.processingAttemptId)!.settled,1);
+  assert.deepEqual(f.db.prepare('SELECT * FROM synthetic_application').all(),[{effect:'a'}]);
+  assert.equal(ok(f.inbox.readCapture(f.caps.metadata,claimB.receiptId)).disposition,'claimed');
+  assert.equal((f.rows('claims') as {attempt_id:string;settled:number}[]).find(row=>row.attempt_id===claimB.processingAttemptId)!.settled,0);
+  assert.deepEqual(ok(f.inbox.readOperation(f.caps.metadata,request.operationId,{kind:'purchase_commit',...request})),applied);
+  assert.deepEqual(ok(committer.commit(request,()=>{throw new Error('must not repeat application');},()=>true)),applied);
+});
+
+test('purchase request claim versions and operation identity are immutable across guard callbacks',async t=>{
+  const f=fixture(t),a=await f.accept(),b=await f.accept(f.request('synthetic.b',namespace,randomUUID()));
+  const claimA=f.claim(a.capture.receiptId),claimB=f.claim(b.capture.receiptId);
+  f.db.exec('CREATE TABLE synthetic_application (effect TEXT PRIMARY KEY)');
+  const committer=f.inbox.createSyntheticPurchaseCommitter(f.caps.complete,{use:'isolated-synthetic'});
+  const request={operationId:operation(),claim:{...claimA,versions:{...claimA.versions}},applicationInput:'application-a'};
+  const original={operationId:request.operationId,claim:claimA,applicationInput:request.applicationInput};
+  const bBefore=['state','work','claims'].map(table=>f.rows(table));
+  const applied=ok(committer.commit(request,db=>{db.prepare('INSERT INTO synthetic_application VALUES(?)').run('a');},()=>{
+    request.claim.versions.receipt+=100;
+    Object.assign(request.claim,claimB,{versions:{...claimB.versions}});
+    request.operationId=operation();request.applicationInput='application-b';
+    return true;
+  }));
+  assert.equal(applied.receiptId,claimA.receiptId);assert.equal(applied.disposition,'applied');
+  assert.equal(applied.version,claimA.versions.receipt+1);
+  assert.deepEqual(f.db.prepare('SELECT * FROM synthetic_application').all(),[{effect:'a'}]);
+  for(const [index,table] of ['state','work','claims'].entries()){
+    const forB=(rows:unknown[])=>rows.filter(row=>(row as {receipt_id:string}).receipt_id===claimB.receiptId);
+    assert.deepEqual(forB(f.rows(table)),forB(bBefore[index]!));
+  }
+  assert.deepEqual(ok(f.inbox.readOperation(f.caps.metadata,original.operationId,{kind:'purchase_commit',...original})),applied);
+  fail(f.inbox.readOperation(f.caps.metadata,original.operationId,{kind:'purchase_commit',...request,operationId:original.operationId}),'identity_collision');
+  assert.equal(f.db.prepare('SELECT 1 FROM notification_inbox_operations WHERE operation_id=?').get(request.operationId),undefined);
+});
+
+test('purchase commit requires the bound receipt work and claim to remain applied and settled after the final guard',async t=>{
+  const f=fixture(t),accepted=await f.accept(),claim=f.claim(accepted.capture.receiptId);
+  f.db.exec('CREATE TABLE synthetic_application (effect TEXT PRIMARY KEY)');
+  const committer=f.inbox.createSyntheticPurchaseCommitter(f.caps.complete,{use:'isolated-synthetic'});
+  const tables=['state','work','claims','transitions','operations','reservations'],before=tables.map(table=>f.rows(table));
+  for(const target of ['state','work','claim']){
+    let guards=0;
+    fail(committer.commit({operationId:operation(),claim,applicationInput:'application-a'},db=>{
+      db.prepare('INSERT INTO synthetic_application VALUES(?)').run('a');
+    },()=>{
+      if(++guards===2){
+        if(target==='state')f.db.prepare("UPDATE notification_inbox_state SET disposition='claimed' WHERE receipt_id=?").run(claim.receiptId);
+        if(target==='work')f.db.prepare("UPDATE notification_inbox_work SET disposition='claimed' WHERE work_id=?").run(claim.workId);
+        if(target==='claim')f.db.prepare('UPDATE notification_inbox_claims SET settled=0 WHERE attempt_id=?').run(claim.processingAttemptId);
+      }
+      return true;
+    }),'rejected');
+    assert.equal(guards,2);assert.deepEqual(f.db.prepare('SELECT * FROM synthetic_application').all(),[]);
+    assert.deepEqual(tables.map(table=>f.rows(table)),before);
+  }
+});
+
 test('unknown completion readback preserves original operation and changed completion input collides',async t=>{
   const f=fixture(t),accepted=await f.accept(),claim=f.claim(accepted.capture.receiptId);
   const request={operationId:operation(),claim,disposition:'held' as const,reason:'unknown_owner' as const};f.lose(request.operationId);
