@@ -77,11 +77,14 @@ test('real transport originating replacement remains current; fresh one-use host
     await controller.submit('synthetic-current', password, password);
     assert.equal(controller.snapshot().status, 'saved'); assert.equal(f.foreign, 0);
     f.account = { ...f.account, profile: { revision: 5 } };
+    const returnCheckpoint = f.calls.length;
     f.host.complete(); f.host.complete(); await f.host.retryReturn();
     assert.equal(controller.snapshot().status, 'disposed'); assert.equal(f.adopted.length, 1);
     assert.equal(f.adopted[0].account.profile.revision, 5);
     assert.equal(f.adopted[0].completion.reason, 'password-changed');
-    assert.equal(f.calls.find(call => call.path === '/v1/me').authorization, 'Bearer synthetic-password');
+    const returnedAccountRead = f.calls.slice(returnCheckpoint).find(call => call.path === '/v1/me');
+    assert.ok(returnedAccountRead, 'Completion must reacquire the account after replacement');
+    assert.equal(returnedAccountRead.authorization, 'Bearer synthetic-password');
     assert.equal(f.stored.at(-1), 'synthetic-password'); assert.equal(f.cleared, 0);
   } finally { f.admission.dispose(); }
 });
