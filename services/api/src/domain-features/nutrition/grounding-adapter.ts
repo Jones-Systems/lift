@@ -1,13 +1,21 @@
 import type { GroundingResult, GroundingRetriever, ObservationEntry } from '../../grounding/index.js';
-import { nutritionJobTopics, type NutritionGroundingPort } from './index.js';
+import type { NutritionGroundingPort } from './index.js';
+import { captureNutritionQueryPolicy, nutritionQueryMatchesEvidence, resolveNutritionQuery,
+  type NutritionQueryPolicySelection } from './job-query-policy.js';
 
 export function createNutritionGroundingPort(
   retriever: GroundingRetriever,
+  selection?: NutritionQueryPolicySelection,
 ): NutritionGroundingPort<ObservationEntry, GroundingResult> {
+  const policy = captureNutritionQueryPolicy(selection);
   return {
     async retrieve(request) {
-      const topic = nutritionJobTopics[request.job];
-      const context = retriever.retrieve({ query: request.question, topic });
+      const { query, topic } = resolveNutritionQuery(policy, request.job, request.question);
+      const context = retriever.retrieve({ query, topic });
+      if (policy.mode === 'form.nutrition-job-query/v1'
+        && !nutritionQueryMatchesEvidence(policy, request.job, request.question, context)) {
+        throw new TypeError('nutrition-query-evidence-mismatch');
+      }
       const gaps = [
         `clinical-readiness: ${context.clinicalReadiness}; no recommendation authority.`,
         'verbatim-passages-unavailable: retained summaries are not verified original passages.',
