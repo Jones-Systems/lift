@@ -13,6 +13,7 @@ import type { AccountSettings } from '../../api/settings';
 import type { AuthAttemptGuard } from '../../api/transport';
 import type { TeardownReason } from '../../voice-coaching/contracts';
 import type { LifecycleHostSession } from '../../integration/lifecycleSession';
+import { captureContextEditorSession, isContextEditorTarget } from '../../integration/contextEditorSession';
 import { captureAccountSession } from '../../integration/accountSession';
 import { captureAccountSecuritySession } from '../../integration/accountSecuritySession';
 import type { CredentialTransition } from '../credentials/model';
@@ -45,6 +46,8 @@ type Route =
   | { name: 'cues'; exerciseId: string; back: string }
   | { name: 'access' }
   | { name: 'settings' }
+  | { name: 'context-editor'; admission: ReturnType<typeof captureContextEditorSession>;
+      render: NonNullable<FormAccountAppProps['renderContextEditor']> }
   | { name: 'settings-edit'; id: number; context: SettingsSlotContext & { editTarget: SettingsEditTarget; editBack: string };
       render: FormAccountAppProps['renderSettings']; isCurrent(): boolean; dispose(): void }
   | { name: 'account-security'; admission: ReturnType<typeof captureAccountSecuritySession>; context: AccountSecuritySlotContext;
@@ -125,9 +128,9 @@ export function FormAccountApp(props: FormAccountAppProps) {
   const renderedEpoch = epochRef.current;
   const currentResources = useRef(resources);
   currentResources.current = resources;
-  const editPort = useRef({ callback: props.openEdit, settings: props.renderSettings, generation: 0 });
-  if (editPort.current.callback !== props.openEdit || editPort.current.settings !== props.renderSettings) {
-    editPort.current = { callback: props.openEdit, settings: props.renderSettings, generation: editPort.current.generation + 1 };
+  const editPort = useRef({ callback: props.openEdit, settings: props.renderSettings, editor: props.renderContextEditor, generation: 0 });
+  if (editPort.current.callback !== props.openEdit || editPort.current.settings !== props.renderSettings || editPort.current.editor !== props.renderContextEditor) {
+    editPort.current = { callback: props.openEdit, settings: props.renderSettings, editor: props.renderContextEditor, generation: editPort.current.generation + 1 };
   }
   const accountRenderers = useRef({ security: props.renderAccountSecurity, membership: props.renderMembership, health: props.renderHealth,
     generations: { security: 0, membership: 0, health: 0 } });
@@ -143,6 +146,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
   }
   const activeRoutes = useRef(routes);
   activeRoutes.current = routes;
+  const contextEditorAdmission = useRef<ReturnType<typeof captureContextEditorSession> | null>(null);
   const settingsEditSequence = useRef(0);
   const securityAdmission = useRef<ReturnType<typeof captureAccountSecuritySession> | null>(null);
   const transitionRoutes = useCallback((next: Route[], current: () => boolean = () => true) => {
@@ -155,6 +159,10 @@ export function FormAccountApp(props: FormAccountAppProps) {
     if (previous !== next[next.length - 1]) {
       if (previous.name === 'membership' || previous.name === 'health') previous.context.isCurrentSession();
       if (previous.name === 'account-security') { previous.admission.dispose(); securityAdmission.current = null; }
+      if (previous.name === 'context-editor') {
+        previous.admission.dispose();
+        if (!previous.admission.navigationBlocked()) contextEditorAdmission.current = null;
+      }
       if (previous.name === 'settings-edit') previous.dispose();
     }
     setRoutes(r => current() ? next : r);
@@ -601,6 +609,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
 
   // Read the retained command synchronously: an old Home or Back closure cannot dismiss an unresolved save.
   const contextNavigationBlocked = () => {
+    if (contextEditorAdmission.current?.navigationBlocked()) return true;
     const retained = contextConfirmation.current;
     if (retained?.session !== accountSession) return false;
     const state = retained.confirmation.snapshot();
@@ -608,7 +617,7 @@ export function FormAccountApp(props: FormAccountAppProps) {
   };
   const push = (route: Route) => {
     if (!currentView() || contextNavigationBlocked()) return;
-    const retained = activeRoutes.current[activeRoutes.current.length - 1].name === 'settings-edit'
+    const retained = ['settings-edit', 'context-editor'].includes(activeRoutes.current[activeRoutes.current.length - 1].name)
       ? activeRoutes.current.slice(0, -1) : activeRoutes.current;
     transitionRoutes([...retained, route], () => currentView() && !contextNavigationBlocked());
   };
@@ -623,6 +632,24 @@ export function FormAccountApp(props: FormAccountAppProps) {
     if (!editCurrent() || contextNavigationBlocked()) return;
     if (originalOpenEdit) { originalOpenEdit(target); return; }
     if (target === 'cues') { push({ name: 'cues-index', back: 'Training context' }); return; }
+    if (isContextEditorTarget(target) && props.renderContextEditor) {
+      const render = props.renderContextEditor;
+      let destination: Extract<Route, { name: 'context-editor' }>;
+      const admission = captureContextEditorSession(scopedResources, account, target, {
+        isCurrentSession: currentView,
+        isCurrentEditor: () => editCurrent() && editPort.current.editor === render &&
+          activeRoutes.current[activeRoutes.current.length - 1] === destination,
+        close: pop,
+        profile: value => commitFor(who, d => d.account
+          ? { ...d, account: { ...d.account, profile: value } } : d),
+        preferences: value => commitFor(who, d => d.account
+          ? { ...d, account: { ...d.account, preferences: value } } : d),
+      });
+      destination = { name: 'context-editor', admission, render };
+      push(destination);
+      contextEditorAdmission.current = admission;
+      return;
+    }
     const render = props.renderSettings;
     let destination: Extract<Route, { name: 'settings-edit' }>;
     let live = true;
@@ -931,6 +958,10 @@ export function FormAccountApp(props: FormAccountAppProps) {
       break;
     case 'settings':
       screen = <View key={`settings:${sessionKey}`} style={s.fill}>{props.renderSettings(settingsCtx)}</View>;
+      break;
+    case 'context-editor':
+      screen = route.admission.isCurrent() && props.renderContextEditor === route.render
+        ? route.render({ entry: route.admission.entry, attachment: route.admission.entry.attachment }) : null;
       break;
     case 'settings-edit':
       screen = route.isCurrent() ? <View key={`settings-edit:${sessionKey}:${route.id}`} style={s.fill}>

@@ -1,5 +1,6 @@
 // Public integration contract for the account-backed Form shell.
 // Mirrors docs/workstreams/form-accounts-onboarding/continuation/mobile/onboarding/integration-contract.md.
+import type { ContextEditorScreenProps } from '../settings/context-editors';
 import type { ReactNode } from 'react';
 import type { ApiError } from '../api/client';
 import type { AuthAttemptGuard } from '../api/transport';
@@ -34,6 +35,7 @@ export type FormAccountAppProps = {
   /** Settings component slot; the only place appMode is chosen. */
   renderSettings: (ctx: SettingsSlotContext) => ReactNode;
   openEdit?: SettingsSlotContext['openEdit'];
+  renderContextEditor?: (props: ContextEditorScreenProps) => ReactNode;
   renderAccountSecurity?: (ctx: AccountSecuritySlotContext) => ReactNode;
   renderMembership?: (ctx: FeatureSlotContext) => ReactNode;
   renderHealth?: (ctx: FeatureSlotContext) => ReactNode;

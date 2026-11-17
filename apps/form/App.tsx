@@ -5,12 +5,14 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useFormFonts } from './src/fonts';
 import { GalleryShell } from './src/GalleryShell';
 import { FormRuntime } from './src/FormRuntime';
+import { ContextEditorScreen, type ContextEditorScreenProps } from './src/settings/context-editors';
 import { SettingsSlot } from './src/settings';
 import { TrainingSlot } from './src/features/training';
 import { AccountSecurityScreen } from './src/features/credentials/account-security';
 import type { AccountSecuritySlotContext, HomeSlotContext, SettingsSlotContext } from './src/features/contract';
 import { createTrainingContextPresentation } from './src/integration/trainingContextPresentation';
 
+const renderContextEditor = (props: ContextEditorScreenProps) => <ContextEditorScreen {...props} />;
 const renderSettings = (ctx: SettingsSlotContext) => <SettingsSlot {...ctx} />;
 const renderHome = (ctx: HomeSlotContext) => <TrainingSlot {...ctx} />;
 const renderAccountSecurity = (ctx: AccountSecuritySlotContext) => <AccountSecurityScreen {...ctx} />;
@@ -39,6 +41,7 @@ export default function App() {
       }]}>
       {fontsReady ? (gallery ? <GalleryShell /> : <FormRuntime
         {...trainingContext}
+        renderContextEditor={renderContextEditor}
         renderSettings={renderSettings}
         renderHome={renderHome}
         renderAccountSecurity={renderAccountSecurity}
