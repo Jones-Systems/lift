@@ -6,6 +6,25 @@ import { FormTransport } from '../../src/api/transport';
 import { AliasScreen, ExitConfirmation, createAliasExitPresentation, type AliasExitContext } from '../../src/community/alias-exit-ui';
 import { commandKey } from '../../src/api/client';
 
+// The generated expo-crypto Jest mock returns undefined from randomUUID(), which the strict Community
+// command-key parser rejects before any write. Supply distinct, deterministic v4-shaped keys instead.
+jest.mock('expo-crypto', () => {
+  let next = 0;
+  return { ...jest.requireActual<object>('expo-crypto'),
+    randomUUID: () => `00000000-0000-4000-8000-${(++next).toString(16).padStart(12, '0')}` };
+});
+
+// React Native Pressable hosts expose Pressability handlers (onClick, onResponder*), not onPress, and
+// those handlers read the latest config when called. Snapshot the config's onPress at capture time so a
+// retained handler is the exact callback rendered then, which the owner fences must reject later.
+type PressProps = { onPress?: unknown; onStartShouldSetResponder?: { testOnly_pressabilityConfig?: () => { onPress?: unknown } } };
+function pressHandler(element: { props: object }): () => unknown {
+  const props = element.props as PressProps;
+  const handler = props.onPress ?? props.onStartShouldSetResponder?.testOnly_pressabilityConfig?.().onPress;
+  if (typeof handler !== 'function') throw new Error('Captured element exposes no rendered onPress handler');
+  return handler as () => unknown;
+}
+
 const G = '11111111-1111-4111-8111-111111111111', M = '22222222-2222-4222-8222-222222222222';
 const OTHER = '33333333-3333-4333-8333-333333333333';
 const json = (value: unknown, status = 200) => {
@@ -69,7 +88,7 @@ test('ordinary alias form uses real own member and explicit member-revision save
 test('pending disables native input/actions and omits actionable Back; retained close and double tap cannot bypass', async () => {
   const f = await fixture(), waiting = deferred(); f.state.response = () => waiting.promise;
   await render(<AliasScreen context={f.context} />);
-  const back = screen.getByTestId('a-back').props.onPress;
+  const back = pressHandler(screen.getByTestId('a-back'));
   await fireEvent.changeText(screen.getByLabelText('Your alias'), 'Pending alias');
   await fireEvent.press(screen.getByTestId('community-alias-save'));
   await fireEvent.press(screen.getByTestId('community-alias-save'));
@@ -117,7 +136,7 @@ test('actual unmount/remount retains uncertain intent and retries same key/body 
   const f = await fixture(); f.state.response = () => { throw new Error('lost response'); };
   const first = await render(<AliasScreen context={f.context} />);
   const oldEdit = screen.getByLabelText('Your alias').props.onChangeText;
-  const oldSave = screen.getByTestId('community-alias-save').props.onPress;
+  const oldSave = pressHandler(screen.getByTestId('community-alias-save'));
   await fireEvent.changeText(screen.getByLabelText('Your alias'), 'Retained alias');
   await fireEvent.press(screen.getByTestId('community-alias-save')); const original = writes(f.calls)[0];
   expect(screen.queryByTestId('a-back')).toBeNull();
@@ -164,23 +183,23 @@ test('revision replacement requires explicit fresh review and rejected alias nev
 
 test('same-account session replacement and mode/group/controller replacement invalidate captured callbacks', async () => {
   const f = await fixture(); const result = await render(<AliasScreen context={f.context} />);
-  const oldSave = screen.getByTestId('community-alias-save').props.onPress;
-  const oldBack = screen.getByTestId('a-back').props.onPress;
+  const oldSave = pressHandler(screen.getByTestId('community-alias-save'));
+  const oldBack = pressHandler(screen.getByTestId('a-back'));
   f.state.generation = 2;
   const nextSession = await fixture();
   const replacement = { ...f.context, controller: nextSession.controller, sessionGeneration: 2 };
   await result.rerender(<ExitConfirmation context={replacement} mode="close" />);
   await act(async () => { oldSave(); oldBack(); }); expect(writes(f.calls)).toHaveLength(0);
   expect(f.onClose).not.toHaveBeenCalled();
-  const oldConfirm = screen.getByTestId('community-close-confirm').props.onPress;
+  const oldConfirm = pressHandler(screen.getByTestId('community-close-confirm'));
   await result.rerender(<ExitConfirmation context={replacement} mode="leave" />);
   await act(async () => { oldConfirm(); }); expect(writes(f.calls)).toHaveLength(0);
   expect(writes(nextSession.calls)).toHaveLength(0);
-  const previousMode = screen.getByTestId('community-leave-confirm').props.onPress;
+  const previousMode = pressHandler(screen.getByTestId('community-leave-confirm'));
   await result.rerender(<ExitConfirmation context={{ ...replacement, groupId: OTHER }} mode="leave" />);
   await act(async () => { previousMode(); }); expect(writes(f.calls)).toHaveLength(0);
   expect(writes(nextSession.calls)).toHaveLength(0);
-  const oldLeave = screen.getByTestId('community-leave-confirm').props.onPress;
+  const oldLeave = pressHandler(screen.getByTestId('community-leave-confirm'));
   const other = await fixture(); await result.rerender(<ExitConfirmation context={other.context} mode="close" />);
   await act(async () => { oldLeave(); }); expect(writes(f.calls)).toHaveLength(0); expect(writes(other.calls)).toHaveLength(0);
   expect(writes(nextSession.calls)).toHaveLength(0);
@@ -220,8 +239,8 @@ test('stress text stays complete, missing own row disables alias and is never an
 test('equal-fields context replacement on the same AliasScreen permanently fences captured input Save and Back', async () => {
   const f = await fixture(), result = await render(<AliasScreen context={f.context} />);
   const oldEdit = screen.getByLabelText('Your alias').props.onChangeText;
-  const oldSave = screen.getByTestId('community-alias-save').props.onPress;
-  const oldBack = screen.getByTestId('a-back').props.onPress;
+  const oldSave = pressHandler(screen.getByTestId('community-alias-save'));
+  const oldBack = pressHandler(screen.getByTestId('a-back'));
   await fireEvent.changeText(screen.getByLabelText('Your alias'), 'Old local draft');
   await result.rerender(<AliasScreen context={{ ...f.context }} />);
   await act(async () => { oldEdit('Replayed edit'); await oldSave(); oldBack(); });
@@ -241,9 +260,9 @@ test('equal-fields context replacement on the same AliasScreen permanently fence
 test('equal-fields context replacement on the same ExitConfirmation fences confirm Cancel and Back in both modes', async () => {
   for (const mode of ['leave', 'close'] as const) {
     const f = await fixture(), result = await render(<ExitConfirmation context={f.context} mode={mode} />);
-    const oldConfirm = screen.getByTestId(`community-${mode}-confirm`).props.onPress;
-    const oldCancel = screen.getByRole('button', { name: 'Cancel' }).props.onPress;
-    const oldBack = screen.getByTestId('a-back').props.onPress;
+    const oldConfirm = pressHandler(screen.getByTestId(`community-${mode}-confirm`));
+    const oldCancel = pressHandler(screen.getByRole('button', { name: 'Cancel' }));
+    const oldBack = pressHandler(screen.getByTestId('a-back'));
     await result.rerender(<ExitConfirmation context={{ ...f.context }} mode={mode} />);
     await act(async () => { await oldConfirm(); oldCancel(); oldBack(); });
     expect(writes(f.calls)).toHaveLength(0); expect(f.onClose).not.toHaveBeenCalled();
@@ -310,8 +329,8 @@ test('alias stale rejection renders current refresh then review then enabled Sav
 test('new generation reusing a pending controller never adopts its late receipt while a fresh controller remains valid', async () => {
   const f = await fixture(), waiting = deferred(); f.state.response = () => waiting.promise;
   const result = await render(<AliasScreen context={f.context} />);
-  const oldSave = screen.getByTestId('community-alias-save').props.onPress;
-  const oldBack = screen.getByTestId('a-back').props.onPress;
+  const oldSave = pressHandler(screen.getByTestId('community-alias-save'));
+  const oldBack = pressHandler(screen.getByTestId('a-back'));
   await fireEvent.changeText(screen.getByLabelText('Your alias'), 'Previous generation alias');
   await fireEvent.press(screen.getByTestId('community-alias-save'));
   f.state.generation = 2; const replacement = { ...f.context, sessionGeneration: 2 };
