@@ -8,15 +8,17 @@
     "services/api/src/planning/first-plan/evaluation.ts",
     "services/api/src/planning/first-plan/source-selection.ts",
     "services/api/src/planning/first-plan/fallback-policy.ts",
-    "services/api/src/planning/first-plan/fallback-producer.ts"
+    "services/api/src/planning/first-plan/fallback-producer.ts",
+    "services/api/src/planning/first-plan/operational-fallback-source.ts"
   ],
   "tests": [
     "services/api/tests/planning/first-plan/selection.test.mjs",
     "services/api/tests/planning/first-plan/normalization.test.mjs",
-    "services/api/tests/planning/first-plan/source-selection.test.mjs"
+    "services/api/tests/planning/first-plan/source-selection.test.mjs",
+    "services/api/tests/planning/first-plan/operational-fallback-source.test.mjs"
   ],
   "harness": "services/api/tests/planning/first-plan/resolve.mjs",
-  "command": "node --import ./services/api/tests/planning/first-plan/resolve.mjs --test --test-isolation=none --test-concurrency=1 services/api/tests/planning/first-plan/selection.test.mjs services/api/tests/planning/first-plan/normalization.test.mjs services/api/tests/planning/first-plan/source-selection.test.mjs",
+  "command": "node --import ./services/api/tests/planning/first-plan/resolve.mjs --test --test-isolation=none --test-concurrency=1 services/api/tests/planning/first-plan/selection.test.mjs services/api/tests/planning/first-plan/normalization.test.mjs services/api/tests/planning/first-plan/source-selection.test.mjs services/api/tests/planning/first-plan/operational-fallback-source.test.mjs",
   "covers": [
     "confirmed editable context",
     "canonical API plan compatibility",

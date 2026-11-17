@@ -17,19 +17,19 @@ prove that a new test was selected.
 | Placement/group | Files | Execution and reason |
 | --- | ---: | --- |
 | Existing hosted | 76 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
-| `api-breadth` | 89 | Compile API TypeScript with `tsc`; run emitted TS tests and original MJS/CJS tests using the existing source hook. Never run the private projection build. |
+| `api-breadth` | 91 | Compile API TypeScript with `tsc`; run emitted TS tests and original MJS/CJS tests using the existing source hook. Never run the private projection build. |
 | `app-breadth` | 80 | Compile the transport compatibility output, then run explicit CJS files serially. Phone sign-in embeds the standalone transport suite exactly once. |
 | `app-renderer` | 1 | Existing Jest renderer command selects `runtime-auth.test.tsx`; onboarding remains in the existing hosted group. |
 | `website` | 29 | Explicit recursive Node test paths include nested voice modules. Require the real portable session-controller source before execution. |
 | `adapter-unit` | 4 | Same four files and serial Node options as adapter `npm test`, with explicit TAP reporting. |
 | `breadth-contract` | 1 | This runner's selection, result and lifecycle contract runs inside the breadth job. |
-| Blocked | 32 | Exact files, reasons, missing inputs and intended private/manual qualification routes remain in the manifest. |
+| Blocked | 33 | Exact files, reasons, missing inputs and intended private/manual qualification routes remain in the manifest. |
 
-Current discovery has 312 files. The public runner's `lifecycle-runtime` group
+Current discovery has 315 files. The public runner's `lifecycle-runtime` group
 selects exactly 36 API modules, including purchases, reconciliation, status
 reader, codec and both Source27 suites exactly once. The three existing purchase
 suites move from `api-breadth` to existing hosted placement; the two new suites
-join hosted placement. API discovery has 105 ordinary modules and 175 total
+join hosted placement. API discovery has 105 ordinary modules and 178 total
 files. The Source27 fixture helper is required/digested/compiled source only,
 excluded from discovery, invocation and module counts. The codec's 18 synthetic
 cases establish bounded syntax, content identities and conservative ordering.
@@ -55,7 +55,7 @@ execution, and moves the existing v1 app lifecycle suite from `app-breadth` to
 hosted execution exactly once. Its API compilation precedes actual
 backend-encoder/client-parser interop. These unmounted syntax and compatibility
 tests do not qualify future producers, evidence authority, transport or consumer
-exposure. There are 203 additional public product test files, plus the breadth
+exposure. There are 205 additional public product test files, plus the breadth
 contract.
 The default `plan-revision` group moves the existing backend suite from
 `api-breadth` to hosted placement exactly once and adds the planning revision
@@ -64,8 +64,15 @@ serially from fresh emissions after full strict API compilation. Coverage is
 limited to the unmounted legacy PLAN16 transactional revision/receipt/undo core
 and test-only disposal role/identity assertions; it does not establish arbitrary
 async-hook safety, runtime activation or authenticated product acceptance.
+The durable notification inbox suite is in `api-breadth` and counts toward
+ordinary API discovery once. The operational first-plan fallback source adds
+one public negative module to `api-breadth`, next to first-plan selection. Its
+SQLite integration suite joins the blocked `private-grounding` group, next to
+source preparation, because it reads the retained catalog inventory and native
+registration candidate that are absent here. Neither placement qualifies runtime
+activation, accepted private sources or authenticated product behaviour.
 These are source selection counts, not executed case counts or proof of passing
-tests. The 32 blocked files remain intact: 29 need private research/projection
+tests. The 33 blocked files remain intact: 30 need private research/projection
 inputs, one needs the internal website route inventory, one needs
 `docs/live-coaching/usage/offline-cost.mjs`, and one needs the
 adapter's admitted exact-source donor and Linux x64 dependency qualification.
