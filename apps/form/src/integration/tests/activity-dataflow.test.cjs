@@ -154,7 +154,8 @@ test('unknown edit retries exact target/revision/key/payload/draftId; changed dr
   const calls = []; let attempts = 0;
   const f = fixture(async (...args) => {
     calls.push(args); if (++attempts === 1) throw new ApiError(0, 'network_unknown', 'Unconfirmed', true);
-    return entry(args[2]);
+    const { expectedRevision, ...fields } = args[2];
+    return { ...entry(fields), id: 'original-entry', revision: expectedRevision + 1 };
   });
   f.session.controller.beginManual(context(), exercise);
   f.session.controller.edit(confirmed(f.session.controller.getState().result));
@@ -163,7 +164,10 @@ test('unknown edit retries exact target/revision/key/payload/draftId; changed dr
   assert.equal(pending.payload.draftId, 'draft-one'); assert.equal(pending.target.id, 'original-entry'); assert.equal(pending.target.expectedRevision, 4);
   const leaked = f.session.controller.getState(); leaked.pending.payload.items[0].load = { state: 'notApplicable', reason: 'bodyweight' };
   assert.throws(() => f.session.controller.edit(confirmed(d.manualActivityDraft(context(), exercise))), /draft_edit_unavailable/);
-  assert.equal((await f.session.controller.retryUnknown()).phase, 'saved');
+  const saved = await f.session.controller.retryUnknown();
+  assert.equal(saved.phase, 'saved');
+  assert.equal(saved.saved.id, 'original-entry'); assert.equal(saved.saved.revision, 5);
+  assert.equal(saved.saved.status, 'recorded'); assert.ok(!('expectedRevision' in saved.saved));
   assert.deepEqual(calls[0], calls[1]); assert.equal(calls[0][0], '/v1/activity/entries/original-entry'); assert.equal(calls[0][1], 'PATCH');
   assert.equal(calls[0][2].expectedRevision, 4); assert.equal(calls[0][2].draftId, 'draft-one'); assert.equal(f.keys(), 1);
   f.flow.dispose(); await f.session.dispose();
