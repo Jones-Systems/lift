@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { stripePurchaseMigrationSql, stripeApiVersion, stripeConfiguration, stripeCatalog, verifyStripeSignature,
   buildCheckoutRequest, buildPortalRequest, StripeWebPurchases, createStripeWebPurchases, mergePurchaseEntitlements,
-  type StripeConfiguration, type StripeRequest } from '../../src/purchases/stripe/index.js';
+  createStripeEntitlementSource, stripeLifecycleContributor, type StripeConfiguration, type StripeRequest } from '../../src/purchases/stripe/index.js';
 import { bindSuppressionAuthority } from '../../src/lifecycle/guards.js';
 import type { DisableRecord, AccountContext } from '../../src/lifecycle/types.js';
 const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-222222222222';
@@ -149,6 +149,7 @@ test('concurrent current-state refresh cannot overwrite a newer committed fetch'
 });
 test('deterministic channel merge retains access from either active channel',async t=>{
   const f=fixture(t);await f.send(f.event('invoice.paid'));
+  assert.deepEqual(createStripeEntitlementSource(f.service()).read(actor).active,['form_plus']);
   const apple={id:'apple-grant',entitlement:'form_plus',source:'apple' as const,sourceId:'1001',grantedAt:new Date().toISOString(),expiresAt:null,environment:'Sandbox' as const,active:true};
   assert.deepEqual(mergePurchaseEntitlements({grants:[{...apple,active:false}]},f.service().entitlements(actor)).active,['form_plus']);
   await f.send(f.event('charge.refunded',2));const result=mergePurchaseEntitlements({grants:[apple]},f.service().entitlements(actor));
@@ -156,7 +157,7 @@ test('deterministic channel merge retains access from either active channel',asy
   assert.deepEqual(mergePurchaseEntitlements({grants:[{...apple,active:false}]},f.service().entitlements(actor)).active,[]);
 });
 test('lifecycle exports linkage and records pending_external cancellation without HTTP',async t=>{
-  const f=fixture(t);await f.send(f.event('invoice.paid'));const lifecycle=f.service().lifecycle(),exported:unknown[]=[];
+  const f=fixture(t);await f.send(f.event('invoice.paid'));const lifecycle=stripeLifecycleContributor(f.service()),exported:unknown[]=[];
   lifecycle.export(actor,{snapshotAtMs:Date.now(),append:(_category,v)=>exported.push(v)});
   assert.match(JSON.stringify(exported),/sub_one/);assert.match(JSON.stringify(exported),/cus_one/);assert.ok(!JSON.stringify(exported).includes(f.secret));
   const calls=f.calls.length;f.disabled.set(A,{accountId:A,authUserId:'userA',epoch:1,requestId:'delete',disabledAtMs:Date.now(),sequence:1});

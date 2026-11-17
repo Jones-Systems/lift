@@ -9,10 +9,9 @@ export type { StripeOutcome, StripeGrant } from './service.js';
 
 import type { Sqlite } from '../../storage.js';
 import type { AccountContext } from '../../lifecycle/types.js';
-import type { SourceStatusFacade } from '../status-source.js';
 import { stripeConfiguration, type StripeConfiguration } from './configuration.js';
 import type { StripeHttpClient } from './requests.js';
-import { StripeWebPurchases, mergePurchaseEntitlements } from './service.js';
+import { StripeWebPurchases, type StripeGrant } from './service.js';
 export function createStripeWebPurchases(db: Sqlite, configuration?: StripeConfiguration,
   ports?: { client: StripeHttpClient; secret: (reference: string) => string | undefined }) {
   const config = stripeConfiguration(configuration);
@@ -20,10 +19,13 @@ export function createStripeWebPurchases(db: Sqlite, configuration?: StripeConfi
   if (!ports || db.memory || !db.name) throw new Error('stripe_durable_composition_required');
   return new StripeWebPurchases(db, config, ports.client, ports.secret);
 }
-// Optional account-facing composition preserves Apple's own evidence and lifecycle checks.
-export function composeWebSubscriptionStatus(apple: SourceStatusFacade, stripe: StripeWebPurchases) {
-  return Object.freeze({ forOwner(actor: AccountContext) {
-    const captured = Object.freeze({...actor}), owner = apple.forOwner(captured);
-    return Object.freeze({...owner, entitlements: () => mergePurchaseEntitlements(owner.entitlements(),stripe.entitlements(captured))});
-  }, ingestNotification: apple.ingestNotification, stripeLifecycle: stripe.lifecycle() });
+// Stripe-owned contract for future Platform registration; no existing projection seam is changed.
+export interface StripeEntitlementSource {
+  read(actor: AccountContext): Readonly<{ grants: readonly StripeGrant[]; active: readonly string[] }>;
+}
+export function createStripeEntitlementSource(service: StripeWebPurchases): StripeEntitlementSource {
+  return Object.freeze({ read: (actor: AccountContext) => service.entitlements(Object.freeze({...actor})) });
+}
+export function stripeLifecycleContributor(service: StripeWebPurchases) {
+  return service.lifecycle();
 }

@@ -49,13 +49,15 @@ grants no additional grace: Apple's grace is a signed provider-specific deadline
 not a reusable fixed duration, and Stripe supplies no equivalent signed deadline.
 This conservative policy is an explicit deviation from reusing Apple grace.
 
-`composeWebSubscriptionStatus` combines the existing Apple owner facade and
-Stripe grants deterministically; either active channel supplies `form_plus`.
-Apple evidence, verification and Source27 projection remain separate and intact.
-These are individual grants and never create commercial-family eligibility.
+`createStripeEntitlementSource` exposes the Stripe-owned `StripeEntitlementSource`
+interface. The existing Apple projection has no general provider-source seam;
+Platform owns future projection registration. `mergePurchaseEntitlements` is a
+pure, tested merge rule: either active channel supplies `form_plus`. It is not
+registered in the existing projection. These individual grants never create
+commercial-family eligibility.
 
-Register `stripe.lifecycle()` with account lifecycle/export alongside the other
-adapters. It exports only subscription/customer/product references and status.
+Platform must register `stripeLifecycleContributor(service)` with account
+lifecycle/export alongside the other adapters. It exports only subscription/customer/product references and status.
 Suppression records durable `pending_external` cancellation intents and fences
 access; purge reports pending external work and retains purchase evidence. No
 Stripe cancellation is issued and no retention/destruction deadline is claimed.
