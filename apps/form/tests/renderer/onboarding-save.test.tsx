@@ -32,6 +32,7 @@ async function mountInjury() {
   const api = new FormTransport('https://form.renderer.invalid', {
     async load() { return null; }, async save() { throw new Error('Unexpected session save'); }, async clear() {},
   }, async (url, init) => {
+    if (new URL(String(url)).pathname === '/v1/me') return json(account);
     expect(new URL(String(url)).pathname).toBe('/v1/me/onboarding');
     expect(init?.method).toBe('PATCH');
     const body: Patch = JSON.parse(String(init?.body));
@@ -48,6 +49,10 @@ async function mountInjury() {
   expect(screen.getByTestId('screen-onboarding-injury')).toBeTruthy();
   return {
     requests, onAccount, onUnauthenticated, onDone,
+    async reject(status: number, code: string) {
+      await act(async () => { requests.at(-1)!.resolve(json({ error: { code, message: 'Synthetic rejection' } }, status)); });
+    },
+    advanceServerRevision() { account.onboarding.revision = 9; },
     expire() { current = false; },
     async acknowledge(index = 0) {
       const { body, resolve } = requests[index];
@@ -127,4 +132,56 @@ test('an expired session cannot advance after an injury acknowledgement or dispa
   expect(f.onAccount).not.toHaveBeenCalled();
   expect(f.onUnauthenticated).not.toHaveBeenCalled();
   expect(f.onDone).not.toHaveBeenCalled();
+});
+
+
+test('repeated Continue while the injury save is pending sends one request and never completes onboarding', async () => {
+  const f = await mountInjury();
+  await submitKnee();
+  await fireEvent.press(screen.getByTestId('a-continue'));
+  await fireEvent.press(screen.getByTestId('a-continue'));
+  expect(f.requests).toHaveLength(1);
+  expect(screen.getByTestId('screen-onboarding-injury')).toBeTruthy();
+  expect(f.onDone).not.toHaveBeenCalled();
+  await f.acknowledge();
+  expect(screen.getByTestId('screen-onboarding-injury-check')).toBeTruthy();
+  expect(f.onDone).not.toHaveBeenCalled();
+});
+
+test('stale injury save reloads the server revision and retains local edits for explicit reapply', async () => {
+  const f = await mountInjury();
+  await submitKnee();
+  f.advanceServerRevision();
+  await f.reject(409, 'stale_revision');
+  expect(screen.getByText('This changed on another device. We’ve loaded the latest, so check it and save again.')).toBeTruthy();
+  expect(screen.getByTestId('screen-onboarding-injury')).toBeTruthy();
+  expect(screen.getByTestId('a-area-knee').props.accessibilityState).toMatchObject({ checked: true });
+  expect(f.requests).toHaveLength(1);
+  await fireEvent.press(screen.getByTestId('a-continue'));
+  expect(f.requests[1].body).toEqual({ ...f.requests[0].body, expectedRevision: 9 });
+  await f.acknowledge(1);
+  expect(screen.getByTestId('screen-onboarding-injury-check')).toBeTruthy();
+});
+
+test('unconfirmed injury save blocks new intent and explicitly retries the captured patch', async () => {
+  const f = await mountInjury();
+  await submitKnee();
+  const original = f.requests[0].body;
+  await f.reject(503, 'unavailable');
+  expect(screen.getByText('The result could not be confirmed. Retry this same action without changing it.')).toBeTruthy();
+  await fireEvent.changeText(screen.getByTestId('a-injury-note-input'), 'New local detail');
+  await fireEvent.press(screen.getByTestId('a-continue'));
+  expect(f.requests).toHaveLength(1);
+  expect(f.onDone).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByText('Try again'));
+  expect(f.requests).toHaveLength(2);
+  expect(f.requests[1].body).toEqual(original);
+  await f.acknowledge(1);
+  expect(screen.getByTestId('screen-onboarding-injury')).toBeTruthy();
+  expect(screen.getByTestId('a-injury-note-input').props.value).toBe('New local detail');
+  await fireEvent.press(screen.getByTestId('a-continue'));
+  expect(f.requests[2].body.expectedRevision).toBe(5);
+  expect(JSON.parse(f.requests[2].body.answers!.injuryHistory! as string).note).toBe('New local detail');
+  await f.acknowledge(2);
+  expect(screen.getByTestId('screen-onboarding-injury-check')).toBeTruthy();
 });
