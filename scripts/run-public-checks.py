@@ -89,6 +89,7 @@ API_TESTS = {
     "native-e2e-backend": ("tests/e2e/native-backend.test.ts",),
     "form196": ("tests/community/board/correction.test.ts", "tests/community/board/board.test.ts", "tests/community/board/persistence-races.test.ts"),
     "form208": ("tests/voice-coaching/standard-wire.test.ts", "tests/voice-coaching/turn-controller.test.ts",
+                "tests/voice-coaching/realtime/synthetic-composition.test.cjs",
                 "tests/usage-limits/standard-observation.test.ts", "tests/usage-limits/standard-composition.test.ts",
                 "tests/usage-limits/live-composition.test.ts"),
 }
@@ -141,6 +142,8 @@ def selection(root, requested):
         else:
             if group in API_TESTS:
                 sources = API_TESTS[group]
+                source_tests = [source for source in sources if source.endswith(".cjs")]
+                sources = tuple(source for source in sources if source not in source_tests)
                 emitted = ["dist/" + source.removesuffix(".ts") + ".js" for source in sources]
                 if group == "lifecycle-runtime":
                     sources = (*sources, "tests/runtime-modules/restore-drill-fixture.ts",
@@ -149,6 +152,10 @@ def selection(root, requested):
                 if group == "native-e2e-backend":
                     sources = (*sources, "tests/e2e/native-backend.ts", SOURCE_HOOK, SOURCE_RESOLVER)
                 add(group, API, ["node", "--test", "--test-concurrency=1", *emitted], sources)
+                if source_tests:
+                    add(group, API, ["node", "--experimental-transform-types", "--import", f"./{SOURCE_HOOK}",
+                                    "--test", "--test-isolation=none", "--test-concurrency=1", *source_tests],
+                        [SOURCE_HOOK, SOURCE_RESOLVER, *source_tests])
             if group in APP_TESTS:
                 sources = APP_TESTS[group]
                 add(group, APP, ["node", "--test", "--test-concurrency=1", *sources], sources)
