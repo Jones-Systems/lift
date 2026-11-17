@@ -44,8 +44,8 @@ class BreadthTests(unittest.TestCase):
         contract = breadth.selection(ROOT)
         manifest = json.loads((ROOT / breadth.MANIFEST).read_text())
         discovered, hosted = contract["discovered_test_files"], contract["existing_hosted_test_files"]
-        self.assertEqual(len(discovered), 315)
-        self.assertEqual(sum(len(g["files"]) for g in manifest["groups"]), 315)
+        self.assertEqual(len(discovered), 316)
+        self.assertEqual(sum(len(g["files"]) for g in manifest["groups"]), 316)
         self.assertEqual(len(hosted), 76)
         self.assertEqual(sum(len(g["files"]) for g in contract["blocked_groups"]), 32)
         self.assertFalse(contract["all_coverage_available"])
@@ -71,7 +71,16 @@ class BreadthTests(unittest.TestCase):
                          "--test-concurrency=1", "tests/adapter.test.mjs", "tests/domain-ports.test.mjs",
                          "tests/mcp-handler.test.mjs", "tests/oauth-resource.test.mjs"])
         self.assertIn("--import", selected["api-breadth"]["argv"])
-        self.assertIn("dist/tests/purchases/purchases.test.js", selected["api-breadth"]["argv"])
+        purchase = "services/api/tests/purchases/purchases.test.ts"
+        self.assertIn(purchase, breadth.selection(ROOT)["existing_hosted_test_files"])
+        hosted = breadth.load_public(ROOT).selection(ROOT, None)["commands"]
+        self.assertEqual(sum(c["test_sources"].count(purchase) for c in hosted), 1)
+        self.assertEqual(sum(c["argv"].count("dist/tests/purchases/purchases.test.js") for c in hosted), 1)
+        for command in commands:
+            self.assertNotIn("dist/tests/purchases/purchases.test.js", command["argv"])
+        inbox = "services/api/tests/purchases/notification-inbox.test.ts"
+        self.assertEqual(selected["api-breadth"]["test_sources"].count(inbox), 1)
+        self.assertEqual(selected["api-breadth"]["argv"].count("dist/tests/purchases/notification-inbox.test.js"), 1)
         self.assertNotIn("npm run build", json.dumps(commands))
         workflow = (ROOT / ".github/workflows/public-breadth.yml").read_text()
         self.assertIn("schedule:", workflow)
