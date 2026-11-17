@@ -1,5 +1,5 @@
 // Frozen structural contract: Form c6118bcf, src/wearables/native.ts and model.ts.
-// The base lacks those files; keep these shapes compatible until WS01 integrates them.
+// Those files now exist under src/wearables (native.ts, model.ts); keep these shapes compatible with them.
 export type HealthType = 'workouts' | 'steps' | 'activeEnergy' | 'restingHeartRate' | 'hrvSdnn' | 'sleep' | 'bodyMass';
 export type NativeHealthRecord = {
   id: string; kind: 'daily' | 'workout'; type: HealthType; day: string; zone: string | null;
