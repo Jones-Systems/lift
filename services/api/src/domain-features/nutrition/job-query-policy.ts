@@ -1,3 +1,5 @@
+// Default off: job-query mode needs an owner-approved mapping and a separately admitted
+// qualification, and this file supplies no mapping.
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { GroundingResult, SourceBinding } from '../../grounding/index.js';

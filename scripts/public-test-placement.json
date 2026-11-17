@@ -141,6 +141,8 @@
         "services/api/tests/domain-features/nutrition/citation-followthrough.test.ts",
         "services/api/tests/domain-features/nutrition/conversation.test.ts",
         "services/api/tests/domain-features/nutrition/grounding-adapter.test.ts",
+        "services/api/tests/domain-features/nutrition/job-query-adapters.test.ts",
+        "services/api/tests/domain-features/nutrition/job-query-policy.test.ts",
         "services/api/tests/domain-features/nutrition/nutrition.test.ts",
         "services/api/tests/domain-features/nutrition/synthesis-adapter.test.ts",
         "services/api/tests/domain-features/recovery/informative.test.ts",
