@@ -6,6 +6,7 @@ import { DomainError } from '../../src/errors.js';
 import { createManualMeasurements } from '../../src/body/measurements.js';
 import { createBodyMeasurementRoutes, createManualRetentionRoutes } from '../../src/body/routes.js';
 import { bodyCapabilities } from '../../src/body/index.js';
+import { MANUAL_RETENTION_EXPORT_ROW_CAP } from '../../src/body/manual-export.js';
 import { sourceManualRetentionMigration, manualRetentionOwnedTables } from '../../src/body/manual-retention-migration.js';
 import { MANUAL_RETENTION_PROTOCOL, MANUAL_RETENTION_STATEMENT, MANUAL_RETENTION_STATEMENT_SHA256,
   MANUAL_RETENTION_STATEMENT_BINDING, formatManualRetentionHeader, parseManualRetentionHeader } from '../../src/body/manual-retention-contract.js';
@@ -133,21 +134,42 @@ test('control and authority are original account/session/epoch scoped, including
   assert.throws(() => f.retention.current(f.two, g.decisionId), code('account_session_invalid'));
 });
 
-test('single lifecycle adapter inventories all relations and omits decision metadata from export', t => {
-  const f = setup(t), g = grant(); f.retention.grant(f.one, g, 'grant');
-  const saved = f.measurements.create(f.one, input, 'measurement', authority(g.decisionId));
-  const other = grant(); f.retention.grant(f.two, other, 'other');
+test('single lifecycle adapter inventories all relations and exports owner-only retained metadata after the unchanged measurements payload', t => {
+  const f = setup(t), g = grant(); f.retention.grant(f.one, g, 'secret-grant-key');
+  const saved = f.measurements.create(f.one, input, 'secret-measurement-key', authority(g.decisionId));
+  const other = grant(); f.retention.grant(f.two, other, 'secret-other-grant-key');
+  const otherSaved = f.measurements.create(f.two, { ...input, note: 'Other account note' }, 'secret-other-measurement-key', authority(other.decisionId));
   const adapter = f.writer.guardLifecycleAdapter(f.measurements.lifecycleAdapter);
   assert.equal(adapter.inventory(f.one).count, 5);
   const data: unknown[] = [], exported = adapter.export(f.one, { snapshotAtMs: Date.now(), append: (_category, value) => data.push(value) });
-  assert.deepEqual(data, [{ measurements: [saved] }]); assert.equal(exported.status, 'unavailable');
-  assert.equal(exported.reason, 'manual_retention_metadata_omitted');
+  assert.equal(data.length, 2);
+  assert.equal(JSON.stringify(data[0]), JSON.stringify({ measurements: [saved] }), 'first payload keeps its exact shape and bytes');
+  const decision = f.db.prepare('SELECT created_at,updated_at FROM body_manual_retention_decisions WHERE account_id=?').get(f.one.accountId) as { created_at: string; updated_at: string };
+  const retained = f.db.prepare('SELECT created_at FROM body_manual_retention_receipts WHERE account_id=?').get(f.one.accountId) as { created_at: string };
+  const attributed = f.db.prepare('SELECT created_at FROM body_manual_retention_attributions WHERE account_id=?').get(f.one.accountId) as { created_at: string };
+  assert.deepEqual(data[1], { schema: 'form.body-manual-retention-export/v1', retention: 'installed', statement: MANUAL_RETENTION_STATEMENT_BINDING,
+    decisions: [{ decisionId: g.decisionId, state: 'granted', revision: 1, statement: MANUAL_RETENTION_STATEMENT_BINDING, createdAt: decision.created_at, updatedAt: decision.updated_at }],
+    receipts: [{ operation: 'grant', decisionId: g.decisionId, outcome: 'granted', decisionRevision: 1, createdAt: retained.created_at }],
+    attributions: [{ measurementId: saved.id, decisionId: g.decisionId, decisionRevision: 1, createdAt: attributed.created_at }],
+    operations: [{ measurementId: saved.id, operation: 'create' }] });
+  assert.deepEqual({ category: exported.category, status: exported.status, reason: (exported as { reason?: string }).reason, count: exported.count },
+    { category: 'body', status: 'complete', reason: undefined, count: 1 });
   const accountExport = buildAccountExport(f.db, f.one, f.writer.lifecycle.assertActive, [adapter]);
-  const accountManifest = JSON.parse(accountExport.json).manifest as { categories: { category: string; status: string; reason: string }[] };
-  assert.equal(accountManifest.categories.find(entry => entry.category === 'body')?.reason, 'manual_retention_metadata_omitted');
-  assert.equal(accountManifest.categories.find(entry => entry.category === 'body')?.status, 'unavailable');
-  assert.equal(accountExport.json.includes(g.decisionId), false);
-  assert.equal(accountExport.complete, false);
+  const accountManifest = JSON.parse(accountExport.json).manifest as { categories: { category: string; status: string; reason?: string; count: number }[]; complete: boolean; omissions: { category: string }[] };
+  assert.deepEqual(accountManifest.categories.find(entry => entry.category === 'body'), { category: 'body', status: 'complete', count: 2 });
+  assert.equal(accountManifest.omissions.some(entry => entry.category === 'body'), false);
+  assert.equal(accountManifest.complete, false); assert.equal(accountExport.complete, false);
+  assert.ok(accountExport.json.includes(g.decisionId)); assert.ok(accountExport.json.includes(saved.id));
+  // Owner-only: nothing about the other account, and no key/auth/session/epoch/intent-hash material for either account.
+  for (const value of [other.decisionId, otherSaved.id, 'Other account note', 'secret-', 'grant:'])
+    assert.equal(accountExport.json.includes(value), false, `leaked ${value}`);
+  const secretValues = [...(f.db.prepare('SELECT intent_hash h FROM body_manual_receipts UNION SELECT intent_hash FROM body_manual_retention_receipts').all() as { h: string }[]).map(row => row.h),
+    ...(f.db.prepare('SELECT session_id s FROM body_manual_retention_decisions').all() as { s: string }[]).map(row => row.s).filter(value => value.length > 3)];
+  assert.ok(secretValues.length >= 4);
+  for (const value of secretValues) assert.equal(accountExport.json.includes(value), false, 'leaked secret/derivation value');
+  const bodyRecords = JSON.stringify((JSON.parse(accountExport.json) as { records: { category: string }[] }).records.filter(record => record.category === 'body'));
+  assert.deepEqual([...new Set(bodyRecords.match(/[0-9a-f]{64}/g) ?? [])], [MANUAL_RETENTION_STATEMENT_SHA256]);
+  assert.equal(/"(epoch|sessionId|session_id|authUserId|auth_user_id|key|intentHash|intent_hash|grantKey|measurementKey)"/.test(bodyRecords), false);
   assert.deepEqual(adapter.purge('request', f.one.accountId), { status: 'unavailable', reason: 'exact_purge_executor_binding_required' });
   assert.throws(() => f.measurements.lifecycleAdapter.suppress(f.one.accountId, 1), code('body_lifecycle_serialization_required'));
   f.db.transaction(() => {
@@ -207,4 +229,71 @@ test('each retained new relation alone requires the Body lifecycle adapter', asy
       assert.throws(() => new AccountLifecycle(f.db, adapters, f.ledger), code('lifecycle_adapter_required'));
     } finally { f.close(); }
   }
+});
+
+// Retained rows are immutable by trigger, so each corruption drops the guarding trigger first: this simulates damaged storage.
+type Fixture = ReturnType<typeof setup>;
+const exportCases: [string, (f: Fixture, ids: { decision: string; measurement: string; otherMeasurement: string; otherDecision: string }) => void, string][] = [
+  ['non-JSON retention receipt', f => { f.db.exec('DROP TRIGGER immutable_body_manual_retention_receipt');
+    f.db.prepare('UPDATE body_manual_retention_receipts SET receipt=? WHERE account_id=?').run('{"opaque":"value"}', f.one.accountId); }, 'body_manual_export_invalid_data'],
+  ['retention receipt naming another decision', f => { f.db.exec('DROP TRIGGER immutable_body_manual_retention_receipt');
+    f.db.prepare('UPDATE body_manual_retention_receipts SET receipt=? WHERE account_id=?').run(JSON.stringify({ operation: 'grant', decisionId: randomUUID(),
+      outcome: 'granted', decisionRevision: 1 }), f.one.accountId); }, 'body_manual_export_invalid_data'],
+  ['malformed intent hash', f => { f.db.prepare('UPDATE body_manual_receipts SET intent_hash=? WHERE account_id=?').run('not-a-digest', f.one.accountId); }, 'body_manual_export_invalid_data'],
+  ['decision with a foreign statement digest', f => { f.db.exec('DROP TRIGGER terminal_body_manual_retention_decision');
+    f.db.prepare('UPDATE body_manual_retention_decisions SET statement_sha256=? WHERE account_id=?').run('a'.repeat(64), f.one.accountId); }, 'body_manual_export_invalid_data'],
+  ['decision with a malformed instant', f => { f.db.exec('DROP TRIGGER terminal_body_manual_retention_decision');
+    f.db.prepare('UPDATE body_manual_retention_decisions SET created_at=? WHERE account_id=?').run('yesterday', f.one.accountId); }, 'body_manual_export_invalid_data'],
+  ['attribution without its creation record (partial)', f => { f.db.exec('DROP TRIGGER immutable_body_manual_retention_attribution');
+    f.db.prepare('UPDATE body_manual_retention_attributions SET measurement_id=? WHERE account_id=?').run(randomUUID(), f.one.accountId); }, 'body_manual_export_invalid_data'],
+  ['missing retained relation (partial schema)', f => { f.db.exec('DROP TABLE body_manual_retention_attributions'); }, 'body_manual_retention_migration_required'],
+  ['attribution pointing at another account measurement', (f, ids) => { f.db.exec('DROP TRIGGER immutable_body_manual_retention_attribution');
+    f.db.prepare('UPDATE body_manual_retention_attributions SET measurement_id=? WHERE account_id=?').run(ids.otherMeasurement, f.one.accountId); }, 'body_manual_export_scope_mismatch'],
+  ['operation history pointing at another account measurement', (f, ids) => { f.db.prepare('UPDATE body_manual_receipts SET measurement_id=? WHERE account_id=?')
+    .run(ids.otherMeasurement, f.one.accountId); }, 'body_manual_export_scope_mismatch'],
+  ['decision bound to another principal', f => { f.db.exec('DROP TRIGGER terminal_body_manual_retention_decision');
+    f.db.prepare('UPDATE body_manual_retention_decisions SET auth_user_id=? WHERE account_id=?').run(f.two.authUserId, f.one.accountId); }, 'body_manual_export_scope_mismatch'],
+  ['oversized operation history', f => {
+    f.db.prepare(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?)
+      INSERT INTO body_manual_receipts SELECT ?,'bulk-'||i,?,?,'create' FROM n`).run(MANUAL_RETENTION_EXPORT_ROW_CAP + 1, f.one.accountId, 'b'.repeat(64), randomUUID()); }, 'account_export_packaging_required'],
+];
+for (const [name, corrupt, expected] of exportCases) test(`export fails closed without partial output: ${name}`, t => {
+  const f = setup(t), g = grant(); f.retention.grant(f.one, g, 'grant');
+  const saved = f.measurements.create(f.one, input, 'measurement', authority(g.decisionId));
+  const other = grant(); f.retention.grant(f.two, other, 'other-grant');
+  const otherSaved = f.measurements.create(f.two, input, 'other-measurement', authority(other.decisionId));
+  const adapter = f.writer.guardLifecycleAdapter(f.measurements.lifecycleAdapter);
+  const baseline: unknown[] = []; adapter.export(f.one, { snapshotAtMs: Date.now(), append: (_category, value) => baseline.push(value) });
+  assert.equal(baseline.length, 2);
+  corrupt(f, { decision: g.decisionId, measurement: saved.id, otherMeasurement: otherSaved.id, otherDecision: other.decisionId });
+  const appended: unknown[] = [];
+  assert.throws(() => adapter.export(f.one, { snapshotAtMs: Date.now(), append: (_category, value) => appended.push(value) }), code(expected));
+  assert.deepEqual(appended, [], 'nothing is appended before every relation validates');
+  assert.throws(() => buildAccountExport(f.db, f.one, f.writer.lifecycle.assertActive, [adapter]), code(expected));
+  assert.equal(f.db.inTransaction, false);
+});
+
+test('export keeps the aggregate account export bound and still refuses disabled accounts', t => {
+  const f = setup(t), g = grant(); f.retention.grant(f.one, g, 'grant');
+  f.measurements.create(f.one, input, 'measurement', authority(g.decisionId));
+  const adapter = f.writer.guardLifecycleAdapter(f.measurements.lifecycleAdapter);
+  const whole = buildAccountExport(f.db, f.one, f.writer.lifecycle.assertActive, [adapter]);
+  assert.throws(() => buildAccountExport(f.db, f.one, f.writer.lifecycle.assertActive, [adapter], whole.bytes - 1), code('account_export_packaging_required'));
+  assert.equal(buildAccountExport(f.db, f.one, f.writer.lifecycle.assertActive, [adapter], whole.bytes).bytes, whole.bytes);
+  f.db.prepare('UPDATE account_lifecycle SET epoch=1 WHERE account_id=?').run(f.one.accountId);
+  assert.throws(() => adapter.export(f.one, { snapshotAtMs: Date.now(), append: () => assert.fail('disabled epoch must not append') }), code('account_epoch_changed'));
+});
+
+test('revoked-before-grant tombstones and terminal revocations export their state without fabricating authority', t => {
+  const f = setup(t), g = grant(), stopped = grant();
+  f.retention.revoke(f.one, stopped.decisionId, {}, 'stop-first'); f.retention.grant(f.one, stopped, 'late-grant');
+  f.retention.grant(f.one, g, 'grant'); f.retention.revoke(f.one, g.decisionId, {}, 'revoke');
+  const adapter = f.writer.guardLifecycleAdapter(f.measurements.lifecycleAdapter), data: { decisions?: { decisionId: string; state: string; revision: number; statement: unknown }[];
+    receipts?: { outcome: string }[]; attributions?: unknown[]; operations?: unknown[] }[] = [];
+  adapter.export(f.one, { snapshotAtMs: Date.now(), append: (_category, value) => data.push(value as never) });
+  const byId = new Map(data[1]!.decisions!.map(entry => [entry.decisionId, entry]));
+  assert.deepEqual(byId.get(stopped.decisionId), { ...byId.get(stopped.decisionId)!, state: 'revoked', revision: 1, statement: null });
+  assert.equal(byId.get(g.decisionId)!.state, 'revoked'); assert.equal(byId.get(g.decisionId)!.revision, 2);
+  assert.deepEqual(data[1]!.receipts!.map(entry => entry.outcome).sort(), ['blocked_by_revocation', 'granted', 'revoked', 'revoked']);
+  assert.deepEqual(data[1]!.attributions, []); assert.deepEqual(data[1]!.operations, []);
 });

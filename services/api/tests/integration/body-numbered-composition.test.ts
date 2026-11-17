@@ -302,9 +302,14 @@ test('numbered Body server uses guarded inventory export and ledger-proved origi
   assert.deepEqual(adapter.inventory(one.actor), { category: 'body', status: 'complete', count: 2 });
   assert.throws(() => adapter.inventory({ ...one.actor, sessionId: two.actor.sessionId }), { code: 'account_session_invalid' });
   const exported = buildAccountExport(server.db, one.actor, actor => lifecycle.assertActive(actor), [adapter]);
-  const exportManifest = JSON.parse(exported.json).manifest as { categories: { category: string; status: string; reason: string }[] };
-  assert.equal(exportManifest.categories.find(entry => entry.category === 'body')?.status, 'unavailable');
-  assert.equal(exportManifest.categories.find(entry => entry.category === 'body')?.reason, 'manual_retention_metadata_omitted');
+  const exportDocument = JSON.parse(exported.json) as { records: { category: string; value: Record<string, unknown> }[];
+    manifest: { complete: boolean; categories: { category: string; status: string; reason?: string; count: number }[] } };
+  assert.deepEqual(exportDocument.manifest.categories.find(entry => entry.category === 'body'), { category: 'body', status: 'complete', count: 2 });
+  assert.equal(exportDocument.manifest.complete, false);
+  const bodyRecords = exportDocument.records.filter(record => record.category === 'body');
+  assert.deepEqual(Object.keys(bodyRecords[0]!.value), ['measurements']);
+  // Numbered version 21 installs no retention relations: the export says so instead of omitting or inventing metadata.
+  assert.deepEqual(bodyRecords[1]!.value, { schema: 'form.body-manual-retention-export/v1', retention: 'not_installed' });
   assert.ok(exported.json.includes(first.body.id)); assert.equal(exported.json.includes(second.body.id), false);
   assert.equal(exported.json.includes('Synthetic account B must remain'), false); assert.equal(server.db.inTransaction, false);
   const before = bodyRows(server.db);
