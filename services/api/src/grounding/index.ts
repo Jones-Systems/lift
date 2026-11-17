@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { groundingStopWords } from './stop-words.js';
 
 export type AccessLevel = 'abstract' | 'partial' | 'full' | 'official' | 'unknown';
 export interface SourceObservation {
@@ -293,13 +294,15 @@ export function createGroundingRetriever(projection: unknown, binding: SourceBin
       requireValue(typeof req.query === 'string' && !/[\uD800-\uDFFF]/u.test(req.query), 'expected query string', 'invalid_request');
       const terms = tokens(req.query);
       requireValue(terms.length > 0, 'query must contain words or numbers', 'invalid_request');
+      const content = terms.filter(term => !groundingStopWords.has(term));
+      const matchTerms = content.length > 0 ? content : terms;
       requireValue(!('topic' in req) || typeof req.topic === 'string' && topics.has(req.topic), 'unbound topic filter', 'invalid_request');
       requireValue(!('access' in req) || typeof req.access === 'string' && accessLevels.has(req.access), 'unsupported access filter', 'invalid_request');
       const limit = 'limit' in req ? req.limit : 20;
       requireValue(typeof limit === 'number' && Number.isInteger(limit) && limit >= 1 && limit <= 100, 'limit must be an integer between 1 and 100', 'invalid_request');
       const matches = indexed.filter(({ entry, terms: available }) =>
         (!('topic' in req) || entry.record.topic_ids.includes(req.topic as string)) &&
-        (!('access' in req) || entry.record.access_level === req.access) && terms.every(term => available.has(term)));
+        (!('access' in req) || entry.record.access_level === req.access) && matchTerms.every(term => available.has(term)));
       const common: GroundingContext = {
         schema: 'form.observation-grounding/v1', source, clinicalReadiness: 'CL-0', corpusStatus: corpus.corpus_status,
         coverage: corpus.coverage, query: req.query, filters: { topic: req.topic as string ?? null, access: req.access as AccessLevel ?? null },
