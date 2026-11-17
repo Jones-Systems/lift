@@ -587,3 +587,131 @@ test('throwing empty-manual callback cannot retain review or skip cleanup', asyn
   assert.equal(count(f, 'stop'), 1); assert.equal(count(f, 'manual'), 1);
   assert.equal(JSON.stringify(f.states).includes('private'), false);
 });
+
+// ---- Teardown reasons, late provider callbacks, account fencing and unknown liability (source-level fakes only) ----
+const TEARDOWN_REASONS = ['user_stop', 'navigation', 'background', 'logout', 'account_changed', 'interruption', 'aborted', 'failed'];
+const reasonCalls = f => f.calls.filter(Array.isArray);
+const settledOrPending = promise => Promise.race([promise.then(() => 'settled'), tick().then(() => 'pending')]);
+const LATE_PHASES = ['capturing', 'processing', 'playing', 'completed'];
+
+for (const reason of TEARDOWN_REASONS) {
+  test(`${reason}: local release is requested with the exact reason before late provider callbacks, which are then ignored`, async () => {
+    for (const stage of ['capture', 'finish', 'turn', 'play']) {
+      const late = deferred(), release = deferred();
+      const f = fixture({ stop: () => release.promise, [stage]: () => late.promise });
+      const starting = f.consumer.start();
+      let operation = starting;
+      if (stage !== 'capture') { await starting; operation = f.consumer.finishAndSend(); }
+      await f.entered[stage].promise;
+      const before = f.states.length;
+      const stopping = f.consumer.stop(reason);
+      await tick();
+      assert.deepEqual(reasonCalls(f), [['stop', reason]], stage);
+      assert.equal(f.consumer.snapshot().cleanup, 'pending', stage);
+      late.resolve(stage === 'finish' ? audio() : stage === 'turn' ? success() : undefined);
+      await tick();
+      assert.equal(await settledOrPending(stopping), 'pending', `${stage}: a late provider callback cannot complete local release`);
+      assert.equal(f.states.slice(before).some(state => LATE_PHASES.includes(state.phase)), false, stage);
+      release.resolve({ status: 'released', failedSteps: [] });
+      assert.equal((await stopping).status, 'released', stage);
+      await operation;
+      assert.equal(f.states.slice(before).some(state => LATE_PHASES.includes(state.phase)), false, stage);
+      assert.equal(count(f, 'turn'), stage === 'turn' || stage === 'play' ? 1 : 0, stage);
+      assert.equal(count(f, 'play'), stage === 'play' ? 1 : 0, stage);
+      assert.equal(count(f, 'stop'), 1, stage);
+      assert.equal(f.consumer.snapshot().cleanup, 'released', stage);
+      assert.equal(f.consumer.review(), null, stage);
+      if (stage === 'turn') {
+        assert.equal(f.consumer.snapshot().outcome, 'unknown');
+        assert.equal(f.consumer.snapshot().accounting, 'unknown');
+      }
+    }
+  });
+}
+
+const settledAudio = () => ({ kind: 'succeeded', value: { audio: wave(), mediaType: 'audio/wav' } });
+const LATE_RESULTS = [
+  { outcome: { kind: 'not_dispatched', reason: 'synthetic' }, accounting: 'not_reserved' },
+  { outcome: { kind: 'not_dispatched', reason: 'synthetic' }, accounting: 'not_consumed' },
+  { outcome: { kind: 'rejected', reason: 'synthetic' }, accounting: 'released' },
+  { outcome: settledAudio(), accounting: 'released' },
+  { outcome: settledAudio(), accounting: 'settled' },
+  { outcome: settledAudio(), accounting: 'replay' },
+];
+const FORBIDDEN_ACCOUNTING = ['released', 'settled', 'not_reserved', 'not_consumed', 'replay'];
+for (const reason of TEARDOWN_REASONS) {
+  test(`${reason}: a possibly dispatched turn stays unknown after hangup and never reports released, settled or not-dispatched`, async () => {
+    for (const late of [...LATE_RESULTS, 'throw']) {
+      const turnDone = deferred(), f = fixture({ turn: () => turnDone.promise });
+      await f.consumer.start();
+      const sending = f.consumer.finishAndSend();
+      await f.entered.turn.promise;
+      const stopped = await f.consumer.stop(reason);
+      assert.equal(stopped.status, 'released');
+      assert.equal(f.consumer.snapshot().outcome, 'unknown');
+      assert.equal(f.consumer.snapshot().accounting, 'unknown');
+      if (late === 'throw') turnDone.reject(new Error('synthetic provider failure')); else turnDone.resolve(late);
+      await sending;
+      for (const state of f.states) {
+        assert.equal(FORBIDDEN_ACCOUNTING.includes(state.accounting), false, JSON.stringify(late));
+        assert.equal(['succeeded', 'not_dispatched', 'rejected'].includes(state.outcome), false, JSON.stringify(late));
+        assert.equal(LATE_PHASES.slice(2).includes(state.phase), false);
+      }
+      assert.equal(f.consumer.snapshot().outcome, 'unknown');
+      assert.equal(f.consumer.snapshot().accounting, 'unknown');
+      assert.equal(f.consumer.review(), null);
+      assert.equal(count(f, 'play'), 0);
+      assert.equal(count(f, 'stop'), 1);
+    }
+  });
+}
+
+test('account switch alone fences every late provider callback and tears down with the account_changed reason', async () => {
+  for (const stage of ['capture', 'finish', 'turn', 'play']) {
+    const late = deferred(), f = fixture({ [stage]: () => late.promise });
+    const starting = f.consumer.start();
+    let operation = starting;
+    if (stage !== 'capture') { await starting; operation = f.consumer.finishAndSend(); }
+    await f.entered[stage].promise;
+    const before = f.states.length;
+    f.stale();
+    // Nothing is torn down until a callback proves the switch; the stale scope still blocks every consequence.
+    late.resolve(stage === 'finish' ? audio() : stage === 'turn' ? success() : undefined);
+    await operation;
+    assert.deepEqual(reasonCalls(f), [['stop', 'account_changed']], stage);
+    assert.equal(f.states.slice(before).some(state => LATE_PHASES.includes(state.phase)), false, stage);
+    assert.equal(f.consumer.snapshot().failure, 'session_changed', stage);
+    assert.equal(f.consumer.snapshot().cleanup, 'released', stage);
+    assert.equal(count(f, 'play'), stage === 'play' ? 1 : 0, stage);
+    assert.equal(count(f, 'turn'), stage === 'turn' || stage === 'play' ? 1 : 0, stage);
+    assert.equal(f.consumer.review(), null);
+  }
+});
+
+test('credential expiry on a fake clock is an account switch: late capture and server speech never reach the old session', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1_000 });
+  const expiresAt = 5_000, turnDone = deferred();
+  const calls = [], states = [];
+  const scope = { account: { accountId: 'original', authSessionId: 'original-session', accountEpoch: 3 }, isCurrent: () => Date.now() < expiresAt };
+  const consumer = createStandardVoiceConsumer({ scope, newSessionId: () => 'expiring',
+    host: { async startStandard(captured) {
+      return { fence: { ...captured.account, generation: 1 }, assertCurrent() {},
+        async startCapture() { calls.push('capture'); }, async finishCapture() { calls.push('finish'); return audio(); },
+        async play() { calls.push('play'); }, async stop(reason) { calls.push(['stop', reason]); return { status: 'released', failedSteps: [] }; } };
+    } },
+    turn: { async run() { calls.push('turn'); return turnDone.promise; } }, onManual() {} });
+  consumer.subscribe(state => { states.push(state); });
+  await consumer.start();
+  const sending = consumer.finishAndSend();
+  await tick();
+  assert.deepEqual(calls, ['capture', 'finish', 'turn']);
+  t.mock.timers.tick(4_000);
+  turnDone.resolve(success());
+  await sending;
+  assert.deepEqual(calls.filter(Array.isArray), [['stop', 'account_changed']]);
+  assert.equal(calls.includes('play'), false);
+  assert.equal(consumer.snapshot().outcome, 'unknown');
+  assert.equal(consumer.snapshot().accounting, 'unknown');
+  assert.equal(states.some(state => ['playing', 'completed'].includes(state.phase)), false);
+  assert.equal(consumer.snapshot().cleanup, 'released');
+});

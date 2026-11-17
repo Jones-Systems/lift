@@ -244,7 +244,7 @@ function standardFixture(t, voiceOptions = {}) {
       availability: () => { calls.push(['availability']); return controls.availability(); },
       micOwner: { async acquire(input) {
         supplied.assertCurrent(input.fence); calls.push(['acquire', input.fence]);
-        const step = name => async () => { calls.push([name, input.fence]); await controls.cleanup(name, input.fence); };
+        const step = name => async reason => { calls.push([name, input.fence, reason]); await controls.cleanup(name, input.fence); };
         return controls.acquire({ fence: input.fence, stopCapture: step('stopCapture'), stopPlayback: step('stopPlayback'),
           deactivateAudio: step('deactivateAudio'), release: step('release') }, input);
       } },
@@ -549,4 +549,111 @@ test('pending acquisition interruption reaches the original Standard consumer sy
     assert.equal((await s.voice.stop('interruption')).status, 'released');
     assert.equal(teardownCalls(s).filter(call => call[0] === 'release').length, 1);
   } finally { late.resolve(); await starting; await producer.dispose(); await s.voice.stop('user_stop'); }
+});
+
+
+// ---- Teardown reasons, ownership, account/expiry fencing (source-level fakes only; no physical audio session) ----
+const TEARDOWN_REASONS = ['user_stop', 'navigation', 'background', 'logout', 'account_changed', 'interruption', 'aborted', 'failed'];
+const signedInApi = { captureAuthContext: () => ({ isCurrent: () => true }) };
+
+for (const reason of TEARDOWN_REASONS) {
+  test(`${reason}: every shared stop entry point fences the handle at once, then releases hardware in order with the exact reason and fence`, async t => {
+    for (const entry of ['handle', 'voice.stop', 'voice.stopScope']) {
+      const s = standardFixture(t), scope = s.account.capture(), wait = deferred(), entered = deferred();
+      s.controls.play = () => { entered.resolve(); return wait.promise; };
+      const handle = await s.voice.startStandard(scope, `session-${entry}`);
+      const rejected = assert.rejects(handle.play(new Blob(['synthetic'])));
+      await entered.promise;
+      const stopping = entry === 'handle' ? handle.stop(reason) : entry === 'voice.stop' ? s.voice.stop(reason) : s.voice.stopScope(scope, reason);
+      assert.throws(() => handle.assertCurrent(), undefined, entry);
+      assert.equal((await stopping).status, 'released', entry);
+      wait.resolve(); await rejected;
+      assert.deepEqual(teardownCalls(s).map(call => [call[0], call[2]]),
+        [['stopCapture', reason], ['stopPlayback', reason], ['deactivateAudio', reason], ['release', reason]], entry);
+      for (const call of teardownCalls(s)) assert.deepEqual(call[1], handle.fence);
+      const next = await s.voice.startStandard(s.account.capture(), `after-${entry}`);
+      assert.ok(next.fence.generation > handle.fence.generation, entry);
+      await next.stop('user_stop');
+    }
+  });
+
+  test(`${reason}: dictation hangup through the shared host cancels the native session once and frees the exclusive owner`, async t => {
+    for (const entry of ['voice.stop', 'voice.stopScope']) {
+      const s = fixture(t), scope = s.account.capture(), adapter = s.voice.speech(scope);
+      const id = await adapter.start('en-US');
+      const result = await (entry === 'voice.stop' ? s.voice.stop(reason) : s.voice.stopScope(scope, reason));
+      assert.equal(result.status, 'released', entry);
+      assert.deepEqual(s.calls.filter(call => call[0] === 'cancel'), [['cancel', id]], entry);
+      const next = s.voice.speech(s.account.capture());
+      assert.notEqual(await next.start('en-US'), id);
+      await next.cancel();
+    }
+  });
+}
+
+test('stopScope for another account or an older epoch never stops or is attributed to the active session', async t => {
+  const s = standardFixture(t), olderScope = s.account.capture();
+  s.account.replace();
+  const current = s.account.capture();
+  const handle = await s.voice.startStandard(current, 'epoch-two');
+  const foreign = captureSharedVoiceScope(signedInApi, { accountId: 'another-account', accountEpoch: 2, authSessionId: current.account.authSessionId }, () => true);
+  for (const [scope, reason] of [[foreign, 'logout'], [olderScope, 'account_changed']]) {
+    assert.deepEqual(await s.voice.stopScope(scope, reason), { status: 'released', failedSteps: [] });
+    assert.equal(teardownCalls(s).length, 0, reason);
+    handle.assertCurrent();
+  }
+  await handle.startCapture();
+  assert.equal((await s.voice.stopScope(current, 'logout')).status, 'released');
+  assert.deepEqual(teardownCalls(s).map(call => call[2]), ['logout', 'logout', 'logout', 'logout']);
+  assert.throws(() => handle.assertCurrent());
+});
+
+test('an account switch keeps the old session fenced and owning the microphone until its exact teardown; the replacement then starts fresh', async t => {
+  const s = standardFixture(t), old = await s.voice.startStandard(s.account.capture(), 'old');
+  s.account.replace();
+  assert.throws(() => old.assertCurrent(), { code: 'session_changed' });
+  await assert.rejects(old.startCapture(), { code: 'session_changed' });
+  await assert.rejects(old.finishCapture(), { code: 'session_changed' });
+  await assert.rejects(old.play(new Blob(['old'])), { code: 'session_changed' });
+  assert.equal(s.standardCalls.filter(call => ['startCapture', 'finishCapture', 'play'].includes(call[0])).length, 0);
+  await assert.rejects(s.voice.startStandard(s.account.capture(), 'replacement-too-early'), { code: 'voice_microphone_busy' });
+  assert.equal(teardownCalls(s).length, 0, 'the switch alone does not claim the hardware was released');
+  assert.equal((await old.stop('account_changed')).status, 'released');
+  assert.deepEqual(teardownCalls(s).map(call => call[2]), Array(4).fill('account_changed'));
+  const next = await s.voice.startStandard(s.account.capture(), 'replacement');
+  assert.ok(next.fence.generation > old.fence.generation);
+  assert.equal(next.fence.authSessionId, 'synthetic-shell:2');
+  next.assertCurrent();
+  const releases = s.standardCalls.filter(call => call[0] === 'release').length;
+  assert.equal((await old.stop('logout')).status, 'released');
+  s.invalidated(old.fence);
+  assert.equal(s.standardCalls.filter(call => call[0] === 'release').length, releases);
+  next.assertCurrent();
+  await next.stop('user_stop');
+});
+
+test('credential expiry on a fake clock fences late capture and playback until exact teardown; a refreshed scope starts fresh', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1_000 });
+  const s = standardFixture(t), expiresAt = 5_000, wait = deferred(), entered = deferred();
+  const scope = captureSharedVoiceScope(signedInApi, { accountId: 'synthetic-account', accountEpoch: 1, authSessionId: 'expiring' }, () => Date.now() < expiresAt);
+  s.controls.finish = () => { entered.resolve(); return wait.promise; };
+  const handle = await s.voice.startStandard(scope, 'expiring');
+  await handle.startCapture();
+  const rejected = assert.rejects(handle.finishCapture(), { code: 'session_changed' });
+  await entered.promise;
+  t.mock.timers.tick(4_000);
+  wait.resolve(new Blob(['late private capture']));
+  await rejected;
+  assert.throws(() => handle.assertCurrent(), { code: 'session_changed' });
+  await assert.rejects(handle.play(new Blob(['late'])), { code: 'session_changed' });
+  assert.equal(s.standardCalls.filter(call => call[0] === 'play').length, 0);
+  assert.equal(teardownCalls(s).length, 0);
+  await assert.rejects(s.voice.startStandard(scope, 'expired-scope'), { code: 'session_changed' });
+  assert.equal((await handle.stop('account_changed')).status, 'released');
+  assert.deepEqual(teardownCalls(s).map(call => call[2]), Array(4).fill('account_changed'));
+  const refreshed = captureSharedVoiceScope(signedInApi, { accountId: 'synthetic-account', accountEpoch: 2, authSessionId: 'refreshed' }, () => Date.now() < 10_000);
+  const next = await s.voice.startStandard(refreshed, 'fresh');
+  assert.ok(next.fence.generation > handle.fence.generation);
+  next.assertCurrent();
+  await next.stop('user_stop');
 });
