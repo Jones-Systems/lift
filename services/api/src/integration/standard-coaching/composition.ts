@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { DomainError } from '../../errors.js';
 import type { CoachingRequestScope } from '../../voice-coaching/contracts.js';
 import { createGroundedCompletionPreparation } from '../../voice-coaching/grounded-preparation.js';
@@ -13,10 +14,12 @@ export type StandardCoachingTurnBindings = Omit<ControllerBindings, 'prepareComp
    * Capture trusted state in the factory; do not call the supplied scope.assertCurrent from this guard. */
   assertCurrent(): void;
 }>;
+/** Per-turn facts a trusted factory may bind to usage: the optional client key and the SHA-256 of the exact wire request string. */
+export type StandardCoachingTurnRequest = Readonly<{ idempotencyKey: string | undefined; requestSha256: string }>;
 export type StandardCoachingConfiguration = Readonly<{
   limits: StandardWireLimits;
   deadlineMs: number;
-  forTurn(scope: CoachingRequestScope): StandardCoachingTurnBindings | undefined;
+  forTurn(scope: CoachingRequestScope, turn: StandardCoachingTurnRequest): StandardCoachingTurnBindings | undefined;
 }>;
 
 /** Trusted factories supply a new intent and authorization context for every independently admitted turn. */
@@ -28,9 +31,11 @@ export function createStandardCoachingComposition(configuration?: StandardCoachi
     throw new DomainError(503, 'standard_coaching_configuration_required');
   createStandardWireCodec(limits);
   return Object.freeze({ limits, deadlineMs,
-    async run(scope: CoachingRequestScope, request: string): Promise<string> {
+    async run(scope: CoachingRequestScope, request: string, options?: Readonly<{ idempotencyKey: string }>): Promise<string> {
       const signal = scope.signal, assertScopeCurrent = scope.assertCurrent.bind(scope);
       let assertTurnCurrent: (() => unknown) | undefined, checking = false;
+      const turn: StandardCoachingTurnRequest = Object.freeze({ idempotencyKey: options?.idempotencyKey,
+        requestSha256: createHash('sha256').update(request, 'utf8').digest('hex') });
       const guardedScope: CoachingRequestScope = Object.freeze({ actor: scope.actor, signal, assertCurrent() {
         signal.throwIfAborted();
         assertScopeCurrent();
@@ -53,7 +58,7 @@ export function createStandardCoachingComposition(configuration?: StandardCoachi
       const handler = createStandardWireHandler({ limits, controller: {
         async run(receivedScope, audio) {
           receivedScope.assertCurrent();
-          const bindings = forTurn(receivedScope);
+          const bindings = forTurn(receivedScope, turn);
           if (!bindings) throw new DomainError(503, 'standard_coaching_unavailable');
           if (typeof bindings.assertCurrent !== 'function') throw new DomainError(503, 'standard_coaching_currentness_required');
           assertTurnCurrent = bindings.assertCurrent.bind(bindings);

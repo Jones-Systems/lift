@@ -157,6 +157,7 @@
         "services/api/tests/integration/nutrition-conversation/host.test.ts",
         "services/api/tests/integration/nutrition-conversation/wire.test.ts",
         "services/api/tests/integration/source-resolution.test.mjs",
+        "services/api/tests/integration/standard-coaching-usage.test.ts",
         "services/api/tests/integration/test-discovery.test.mjs",
         "services/api/tests/integration/training-context.test.ts",
         "services/api/tests/integration/training-feedback/account-modules.test.ts",
