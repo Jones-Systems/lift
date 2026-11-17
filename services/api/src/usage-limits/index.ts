@@ -24,3 +24,5 @@ export {
 export type {
   UsageOperationKind, UsagePeriodRule, UsagePolicyConfig, UsageGrantsConfig, UsageLimitsConfiguration,
 } from './policy.js';
+export { usageCounterKinds, createUsageCounters } from './counters.js';
+export type { UsageCounterKind, UsageCounterRequest, UsageCounterAdmission, UsageCounters } from './counters.js';
