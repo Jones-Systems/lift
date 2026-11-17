@@ -45,6 +45,26 @@ const payload = { answers: [{ questionId: 'synthetic-question', questionRevision
 const code = (status: DomainError['status'], expected: string) => (error: unknown) =>
   error instanceof DomainError && error.status === status && error.code === expected;
 
+// Genuine migration 4 makes catalog id/data immutable, so a plain UPDATE would test that trigger instead of the
+// composer's row recheck. This test-only seam suspends exactly that trigger for one data rewrite inside the
+// composer's write transaction and recreates it from its original sqlite_master text before returning.
+type Database = ReturnType<typeof accountFixture>['db'];
+const catalogTrigger = (db: Database) => {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='immutable_catalog'").get() as { sql: string } | undefined;
+  assert.ok(row?.sql.includes('BEFORE UPDATE OF id,data ON exercises')); return row.sql;
+};
+const assertCatalogImmutable = (db: Database, exerciseId: string) =>
+  assert.throws(() => db.prepare('UPDATE exercises SET data=? WHERE id=?').run('{}', exerciseId), /immutable_catalog/);
+function driftCatalogRowData(db: Database, exerciseId: string, data: string) {
+  assert.equal(db.inTransaction, true);
+  const trigger = catalogTrigger(db);
+  db.exec('DROP TRIGGER immutable_catalog');
+  try { assert.equal(db.prepare('UPDATE exercises SET data=? WHERE id=?').run(data, exerciseId).changes, 1); }
+  finally { db.exec(trigger); }
+  assert.equal(catalogTrigger(db), trigger);
+  assert.deepEqual(db.prepare('SELECT data,retired FROM exercises WHERE id=?').get(exerciseId), { data, retired: 0 });
+}
+
 function fixture(t: TestContext) {
   const f = accountFixture(); t.after(() => { if (f.db.open) f.close(); });
   const migrations = selectSourceSubscriptionStatusMigrations(); assertSourceSubscriptionStatusSelection(migrations);
@@ -188,6 +208,7 @@ test('B03/B08: postwrite capture/R1/consent/metadata/registration/row revocation
     const f = fixture(t);
     const item = registration.entries.find(value => value.sourceIdentity.nativeId === FALLBACK_POLICY.recipe[0]!.exercise_id)!;
     const beforeRow = f.db.prepare('SELECT data,retired FROM exercises WHERE id=?').get(item.exerciseId);
+    const trigger = catalogTrigger(f.db); assertCatalogImmutable(f.db, item.exerciseId);
     f.state.afterWrite = () => {
       assert.equal(f.count('plans'), 1); assert.equal(f.count('plan_revisions'), 1); assert.equal(f.count('plan_item_ids'), 4);
       assert.equal(f.count('command_receipts'), 0); assert.ok(f.state.witnesses);
@@ -201,11 +222,12 @@ test('B03/B08: postwrite capture/R1/consent/metadata/registration/row revocation
       if (kind === 'legacy-bytes') f.state.registration.input.legacyBytes[0] = 0;
       if (kind === 'pins') f.state.registration.acceptedPins = [];
       if (kind === 'row') f.db.prepare('UPDATE exercises SET retired=1 WHERE id=?').run(item.exerciseId);
-      if (kind === 'row-data') f.db.prepare('UPDATE exercises SET data=? WHERE id=?').run('{}', item.exerciseId);
+      if (kind === 'row-data') driftCatalogRowData(f.db, item.exerciseId, '{}');
     };
     await assert.rejects(f.host.create(f.one, f.confirmation, kind), code(409, 'first_plan_sources_changed'));
     assert.equal(f.state.afterWrites, 1); f.noWrites();
     assert.deepEqual(f.db.prepare('SELECT data,retired FROM exercises WHERE id=?').get(item.exerciseId), beforeRow);
+    assert.equal(catalogTrigger(f.db), trigger); assertCatalogImmutable(f.db, item.exerciseId);
   }
 });
 
