@@ -11,25 +11,25 @@ const deferred = () => {
   return { promise, resolve, reject };
 };
 function fixture(options = {}) {
-  const calls = [], preparations = [], leases = [], peers = [], prepared = [];
+  const calls = [], reasons = [], preparations = [], leases = [], peers = [], prepared = [];
   const acquired = deferred(), connecting = deferred(), releasing = deferred();
   let listener, foreground = true, accountCurrent = true, sequence = 0;
   const owner = new ExclusiveMicOwner({ acquire(input) {
     calls.push(['acquire', input.fence]);
     const lease = {
       fence: input.fence,
-      stopCapture() { calls.push(['capture_stop']); },
-      stopPlayback() { calls.push(['playback_stop']); },
-      async deactivateAudio() { calls.push(['deactivate']); await options.deactivate?.(); },
-      async release() { calls.push(['release']); releasing.resolve(); await options.release?.(); },
+      stopCapture(reason) { calls.push(['capture_stop']); reasons.push(['capture_stop', reason]); },
+      stopPlayback(reason) { calls.push(['playback_stop']); reasons.push(['playback_stop', reason]); },
+      async deactivateAudio(reason) { calls.push(['deactivate']); reasons.push(['deactivate', reason]); await options.deactivate?.(); },
+      async release(reason) { calls.push(['release']); reasons.push(['release', reason]); releasing.resolve(); await options.release?.(); },
     };
     leases.push(lease); acquired.resolve();
     return options.acquire ? options.acquire(input, lease) : Promise.resolve(lease);
   } });
   const makePrepared = (operationId = `operation-${++sequence}`) => {
     const peer = {
-      close() { calls.push(['peer_close', operationId]); },
-      stopPlayback() { calls.push(['peer_silence', operationId]); },
+      close(reason) { calls.push(['peer_close', operationId]); reasons.push(['peer_close', reason]); },
+      stopPlayback(reason) { calls.push(['peer_silence', operationId]); reasons.push(['peer_silence', reason]); },
       cancelResponse() {}, clearPlayback() {},
     };
     peers.push(peer);
@@ -61,14 +61,14 @@ function fixture(options = {}) {
     return value;
   };
   const host = createRealtimeHostController({ account: options.account ?? account,
-    isCurrent: () => foreground && accountCurrent,
+    isCurrent: () => foreground && accountCurrent && (options.clockCurrent?.() ?? true),
     subscribeInvalidation(callback) { listener = callback; return { remove() { calls.push(['unsubscribe']); listener = undefined; } }; },
     prepareNewAttempt(input) {
       preparations.push(input); calls.push(['prepare', input.intentKey]);
       return options.prepare ? options.prepare(input, makePrepared) : Promise.resolve(makePrepared());
     },
   });
-  return { host, calls, preparations, leases, peers, prepared, acquired, connecting, releasing, makePrepared,
+  return { host, calls, reasons, preparations, leases, peers, prepared, acquired, connecting, releasing, makePrepared,
     start: key => host.startNewAttempt(key, new AbortController().signal),
     emit(reason) {
       if (reason === 'background') foreground = false;
@@ -363,5 +363,147 @@ test('an uncertain preparation failure is preserved without retaining its error 
   assert.equal(f.host.snapshot().admissionCleanup.unknown, true);
   assert.deepEqual(f.host.snapshot().cleanupFailures, ['prepareNewAttempt']);
   assert.equal(names(f).includes('acquire'), false);
+  await f.host.dispose().local;
+});
+
+// ---- Teardown ordering, expiry, concurrency, reconnect and unknown liability (source-level fakes only) ----
+const REASONS = ['user_stop', 'navigation', 'background', 'logout', 'account_changed', 'interruption', 'aborted', 'failed'];
+const EXPIRING = new Set(['navigation', 'logout', 'account_changed']);
+const flush = () => new Promise(resolve => setImmediate(resolve));
+const pending = promise => Promise.race([promise.then(() => 'settled'), flush().then(() => 'pending')]);
+
+for (const reason of REASONS) {
+  test(`host ${reason}: exact reason reaches native and peer release; later admission follows the host fence`, async () => {
+    const release = deferred(), f = fixture({ release: () => release.promise });
+    assert.equal((await f.start('intent')).status, 'connected');
+    const stop = f.host.stop(reason);
+    await f.releasing.promise;
+    assert.equal(f.host.snapshot().state, 'stopping');
+    assert.equal(f.host.snapshot().local, 'pending');
+    assert.equal(await pending(stop.local), 'pending');
+    // While hardware release is still in flight no admission may start, whether busy or fenced.
+    assert.equal((await f.start('too-early')).status, EXPIRING.has(reason) ? 'cancelled' : 'busy');
+    assert.equal(f.preparations.length, 1);
+    release.resolve();
+    assert.deepEqual(await stop.local, { status: 'released', failedSteps: [] });
+    assert.equal(f.host.snapshot().state, 'stopped');
+    for (const name of ['capture_stop', 'playback_stop', 'deactivate', 'release', 'peer_silence', 'peer_close']) {
+      assert.deepEqual(f.reasons.filter(entry => entry[0] === name), [[name, reason]], name);
+    }
+    const order = name => names(f).indexOf(name);
+    assert.ok(order('capture_stop') < order('deactivate') && order('playback_stop') < order('deactivate') && order('deactivate') < order('release'));
+    const next = await f.start('next-intent');
+    if (EXPIRING.has(reason)) {
+      assert.equal(next.status, 'cancelled');
+      assert.equal(f.preparations.length, 1);
+    } else {
+      assert.equal(next.status, 'connected');
+      assert.equal(f.preparations.length, 2);
+      assert.equal(names(f).filter(name => name === 'acquire').length, 2);
+    }
+    assert.equal((await f.host.dispose().local).status, 'released');
+  });
+}
+
+test('a second concurrent start is busy during preparation and while connected, and never reaches admission or the microphone', async () => {
+  const preparation = deferred(), f = fixture({ prepare: (_, build) => preparation.promise.then(() => build('only-operation')) });
+  const first = f.start('first');
+  assert.equal((await f.start('second-while-preparing')).status, 'busy');
+  assert.equal(f.preparations.length, 1);
+  preparation.resolve();
+  assert.equal((await first).status, 'connected');
+  assert.equal((await f.start('second-while-connected')).status, 'busy');
+  assert.equal(f.preparations.length, 1);
+  assert.equal(names(f).filter(name => name === 'acquire').length, 1);
+  assert.equal(names(f).filter(name => name === 'release').length, 0);
+  assert.equal(f.host.snapshot().operationId, 'only-operation');
+  assert.equal(f.host.snapshot().state, 'connected');
+  const racing = await Promise.all([f.host.stop('user_stop').local, f.start('during-stop')]);
+  assert.equal(racing[0].status, 'released');
+  assert.equal(racing[1].status, 'busy');
+  assert.equal(f.preparations.length, 1);
+  await f.host.dispose().local;
+});
+
+test('a transient failure is not retried by the host; the next explicit intent is a separate admission and operation', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  let failNext = true, failPrepare = false;
+  const f = fixture({
+    connect: (_, peer) => { if (failNext) { failNext = false; return Promise.reject(new Error('synthetic transient')); } return Promise.resolve(peer); },
+    prepare: (_, build) => { if (failPrepare) { failPrepare = false; return Promise.reject(new Error('synthetic admission transient')); } return Promise.resolve(build()); },
+  });
+  assert.equal((await f.start('first-intent')).status, 'failed');
+  t.mock.timers.tick(3_600_000);
+  await flush();
+  assert.equal(f.preparations.length, 1, 'no timer-driven re-admission');
+  assert.equal(names(f).filter(name => name === 'connect').length, 1, 'no timer-driven reconnect');
+  assert.equal((await f.host.stop('failed').local).status, 'released');
+  assert.equal(names(f).includes('abandon'), false, 'a started attempt keeps its reservation with the trusted owner');
+  const stale = f.prepared[0].attempt;
+  assert.equal((await f.start('retry-intent')).status, 'connected');
+  assert.equal(f.preparations.length, 2);
+  assert.notEqual(f.prepared[1].operationId, f.prepared[0].operationId);
+  assert.equal(f.host.snapshot().operationId, f.prepared[1].operationId);
+  assert.equal(stale.observe({ type: 'response.started', responseId: 'old' }), false);
+  assert.equal(f.prepared[1].attempt.observe({ type: 'response.started', responseId: 'new' }), true);
+  assert.deepEqual(await stale.interrupt(), { attempted: false, failures: [] });
+  assert.equal((await f.host.stop('user_stop').local).status, 'released');
+  // A transient admission failure stays visible as unknown and still does not block a later explicit start.
+  failPrepare = true;
+  assert.equal((await f.start('admission-failure')).status, 'failed');
+  assert.equal((await f.start('after-admission-failure')).status, 'connected');
+  assert.equal(f.host.snapshot().admissionCleanup.unknown, true);
+  assert.deepEqual(f.host.snapshot().cleanupFailures, ['prepareNewAttempt']);
+  await f.host.dispose().local;
+});
+
+test('hangup after a possibly dispatched start never releases the reservation or claims a server acknowledgement', async () => {
+  for (const reason of REASONS) {
+    const connection = deferred(), f = fixture({ connect: () => connection.promise });
+    const starting = f.start('intent'); await f.connecting.promise;
+    const stop = f.host.stop(reason);
+    connection.resolve(f.peers[0]);
+    assert.equal((await starting).status, 'cancelled');
+    assert.equal((await stop.local).status, 'released');
+    await f.host.settled();
+    assert.equal(names(f).includes('abandon'), false, reason);
+    assert.deepEqual(f.host.snapshot().admissionCleanup, { pending: 0, unknown: false }, reason);
+    assert.equal(await pending(stop.server), 'pending', `${reason}: local release is not a provider acknowledgement`);
+    await f.host.dispose().local;
+  }
+});
+
+test('host server stop reports acknowledged only for provider-terminal evidence and unknown for everything else', async () => {
+  for (const [server, expected] of [[() => Promise.resolve('confirmed'), 'acknowledged'], [() => Promise.resolve('unknown'), 'unknown'],
+    [() => Promise.reject(new Error('synthetic')), 'unknown']]) {
+    const f = fixture({ server });
+    await f.start('intent');
+    const stop = f.host.stop('user_stop');
+    assert.equal((await stop.local).status, 'released');
+    assert.equal((await stop.server).status, expected);
+    await f.host.dispose().local;
+  }
+  const early = fixture({ prepare: () => new Promise(() => {}) });
+  void early.start('never-admitted');
+  const stop = early.host.stop('background');
+  assert.equal((await stop.local).status, 'released');
+  assert.equal((await stop.server).status, 'unknown');
+  assert.equal(names(early).includes('server_stop'), false);
+});
+
+test('credential expiry on a fake clock cancels a late connection, releases hardware and fences later admission', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1_000 });
+  const expiresAt = 5_000, connection = deferred();
+  const f = fixture({ connect: () => connection.promise, clockCurrent: () => Date.now() < expiresAt });
+  const starting = f.start('intent'); await f.connecting.promise;
+  t.mock.timers.tick(4_000);
+  connection.resolve(f.peers[0]);
+  assert.equal((await starting).status, 'cancelled');
+  assert.equal((await f.host.stop('account_changed').local).status, 'released');
+  assert.equal(names(f).filter(name => name === 'peer_close').length, 1);
+  assert.equal(names(f).filter(name => name === 'release').length, 1);
+  t.mock.timers.setTime(1_000);
+  assert.equal((await f.start('after-expiry-reset')).status, 'cancelled', 'account_changed expires this host for good');
+  assert.equal(f.preparations.length, 1);
   await f.host.dispose().local;
 });

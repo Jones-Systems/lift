@@ -120,13 +120,16 @@ export function createRealtimeHostController(options: Readonly<{
       run.state = result.status === 'released' ? 'stopped' : 'blocked';
       local.resolve(result);
     };
-    run.abort.abort(reason);
     if (run.prepared) {
+      // Stop the attempt with the exact reason first: aborting its signal earlier would make the
+      // attempt's own abort listener win with a generic 'aborted' reason.
       const result = stopPrepared(run);
+      run.abort.abort(reason);
       void result.local.then(finishLocal);
       void result.server.then(server.resolve);
       abandon(run);
     } else {
+      run.abort.abort(reason);
       // Admission is inert: remote preparation/reconciliation cannot delay local hardware release.
       finishLocal(released());
       server.resolve(unknown());
