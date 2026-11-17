@@ -14,8 +14,8 @@ function load(name) {
     assert.ok(name.startsWith('.')); return load(path.relative(root, path.resolve(path.dirname(file), name)));
   }, module, module.exports); return module.exports;
 }
-const { FormTransport } = load('api/transport.ts');
-const { createStandardCoachingTransport } = load('integration/standardCoachingTransport.ts');
+const { FormTransport, ApiError } = load('api/transport.ts');
+const { createStandardCoachingTransport, standardResultUnknown } = load('integration/standardCoachingTransport.ts');
 const { createStandardWireCodec } = load('voice-coaching/standard/wire-codec.ts');
 const limits = { maxAudioBytes: 128, maxEnvelopeBytes: 2048, maxTextCharacters: 64 }, deadlineMs = 5000;
 const codec = createStandardWireCodec(limits), bytes = new Uint8Array([0, 1, 2]);
@@ -88,6 +88,108 @@ test('malformed results and redirects never retry or fabricate accounting', asyn
     await assert.rejects(createStandardCoachingTransport(f.api, { limits, deadlineMs }).run(input()));
     assert.equal(f.calls.length, 1);
   }
+});
+
+test('adapter sends one Idempotency-Key per turn in a header, never in the body', async () => {
+  const f = await fixture(async () => new Response(codec.encodeResult(result)));
+  const turn = createStandardCoachingTransport(f.api, { limits, deadlineMs });
+  await turn.run(input());
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0].headers['Idempotency-Key'], 'std-turn:turn');
+  assert.deepEqual(Object.keys(JSON.parse(f.calls[0].body)).sort(), ['audio', 'kind', 'version']);
+  assert.equal(f.calls[0].body.includes('std-turn'), false);
+  const next = input(); next.sessionId = 'turn-two';
+  await turn.run(next);
+  assert.equal(f.calls[1].headers['Idempotency-Key'], 'std-turn:turn-two');
+});
+
+test('exchangeStandardWire adds the key header only when asked and refuses a malformed key before any fetch', async () => {
+  const f = await fixture(async () => new Response(codec.encodeResult(result)));
+  const signal = new AbortController().signal, bounds = { maxEnvelopeBytes: 2048, deadlineMs };
+  await f.api.exchangeStandardWire('{}', signal, bounds);
+  assert.equal(Object.hasOwn(f.calls[0].headers, 'Idempotency-Key'), false);
+  await f.api.exchangeStandardWire('{}', signal, bounds, { idempotencyKey: 'std-turn:valid' });
+  assert.equal(f.calls[1].headers['Idempotency-Key'], 'std-turn:valid');
+  const sent = f.calls.length;
+  for (const key of ['', 'short', 'has space', 'a/b-key-1', 'k'.repeat(129), 'émoji-key-1', undefined, null, 7]) {
+    await assert.rejects(f.api.exchangeStandardWire('{}', signal, bounds, { idempotencyKey: key }),
+      { code: 'invalid_idempotency_key', effectUnknown: false }, String(key));
+  }
+  assert.equal(f.calls.length, sent);
+});
+
+test('retryUnknownResultOnce repeats a lost or 5xx delivery once with the same key, bytes and bearer', async () => {
+  for (const first of [() => { throw new TypeError('network down'); }, () => new Response('', { status: 503 })]) {
+    let n = 0;
+    const f = await fixture(async () => ++n === 1 ? first() : new Response(codec.encodeResult(result)));
+    const turn = createStandardCoachingTransport(f.api, { limits, deadlineMs, retryUnknownResultOnce: true });
+    assert.deepEqual(await turn.run(input()), result);
+    assert.equal(f.calls.length, 2);
+    assert.equal(f.calls[0].body, f.calls[1].body);
+    assert.equal(f.calls[0].headers['Idempotency-Key'], 'std-turn:turn');
+    assert.equal(f.calls[1].headers['Idempotency-Key'], 'std-turn:turn');
+    assert.equal(f.calls[0].headers.Authorization, 'Bearer original'); assert.equal(f.calls[1].headers.Authorization, 'Bearer original');
+  }
+});
+
+test('retryUnknownResultOnce never repeats a definite refusal, a second loss, or runs when absent', async () => {
+  for (const status of [400, 401, 403, 413, 415, 422]) {
+    const f = await fixture(async () => new Response('', { status }));
+    // A 401 also clears the session, so its rejection may surface as the session change it caused.
+    await assert.rejects(createStandardCoachingTransport(f.api, { limits, deadlineMs, retryUnknownResultOnce: true }).run(input()),
+      status === 401 ? Error : { status }, String(status));
+    assert.equal(f.calls.length, 1, String(status));
+  }
+  const lost = await fixture(async () => { throw new TypeError('network down'); });
+  await assert.rejects(createStandardCoachingTransport(lost.api, { limits, deadlineMs, retryUnknownResultOnce: true }).run(input()),
+    { code: 'wire_result_unknown' });
+  assert.equal(lost.calls.length, 2);
+  for (const configuration of [{ limits, deadlineMs }, { limits, deadlineMs, retryUnknownResultOnce: false }]) {
+    const off = await fixture(async () => { throw new TypeError('network down'); });
+    await assert.rejects(createStandardCoachingTransport(off.api, configuration).run(input()), { code: 'wire_result_unknown' });
+    assert.equal(off.calls.length, 1);
+  }
+  const api = new FormTransport('https://form.example.invalid', { load: async () => null, save: async () => {}, clear: async () => {} }, async () => assert.fail());
+  for (const value of ['yes', 1, null, {}]) {
+    assert.throws(() => createStandardCoachingTransport(api, { limits, deadlineMs, retryUnknownResultOnce: value }),
+      { message: 'standard_transport_retry_invalid' });
+  }
+});
+
+test('an account switch before the retry blocks it, so the turn key never reaches the replacement session', async () => {
+  // setToken is the transport's own synchronous mutation; replace() is async and cannot land exactly between two attempts.
+  let n = 0;
+  const f = await fixture(async () => { ++n; throw new TypeError('network down'); });
+  const first = input();
+  first.assertCurrent = () => { if (n > 0) f.api.setToken('replacement'); };
+  await assert.rejects(createStandardCoachingTransport(f.api, { limits, deadlineMs, retryUnknownResultOnce: true }).run(first));
+  assert.equal(f.calls.length, 1); assert.equal(n, 1);
+  assert.equal(f.calls.some(call => call.headers.Authorization === 'Bearer replacement'), false);
+  // A change during the first attempt is a session change, which is never retried either.
+  let late = 0, hold;
+  const g = await fixture(async () => { ++late; await hold(); return new Response(new ReadableStream({ start() {} })); });
+  hold = () => g.replace();
+  await assert.rejects(createStandardCoachingTransport(g.api, { limits, deadlineMs, retryUnknownResultOnce: true }).run(input()),
+    { code: 'session_changed' });
+  assert.equal(g.calls.length, 1); assert.equal(late, 1);
+});
+
+test('standardResultUnknown is true only for a lost response or a 5xx whose effect is unknown', () => {
+  const make = (code, status, effectUnknown, original = false) => new ApiError(status, code, 'synthetic', effectUnknown, original);
+  const rows = [
+    [make('transport_interrupted', 0, true), true], [make('wire_result_unknown', 0, true), true],
+    [make('wire_response_rejected', 500, true), true], [make('wire_response_rejected', 503, true), true],
+    [make('transport_interrupted', 0, false), false], [make('wire_result_unknown', 0, false), false],
+    [make('transport_interrupted', 0, true, true), false], [make('wire_response_rejected', 503, false), false],
+    ...[302, 400, 401, 403, 413, 415, 422].map(status => [make('wire_response_rejected', status, true), false]),
+    [make('session_changed', 409, false, true), false], [make('session_changed', 409, true), false],
+    [make('unauthenticated', 401, false), false], [make('wire_size', 413, false), false], [make('wire_size', 502, true), false],
+    [make('invalid_response', 502, true), false], [make('invalid_transport_limits', 400, false), false],
+    [make('invalid_idempotency_key', 400, false), false],
+    [new Error('transport_interrupted'), false], [new TypeError('x'), false], [{ code: 'transport_interrupted', effectUnknown: true }, false],
+    [null, false], [undefined, false], ['transport_interrupted', false],
+  ];
+  for (const [error, expected] of rows) assert.equal(standardResultUnknown(error), expected, String(error?.code ?? error));
 });
 
 const { createStandardCoachingProducer } = load('integration/standardCoachingSession.ts');

@@ -14,6 +14,8 @@ export type StandardClientTurnResult = Readonly<{
   outcome: StandardClientOutcome;
   accounting: StandardClientAccounting;
   review?: StandardTurnReview;
+  /** Set by the wire port only for a reserved (kind, reason, accounting) triple; never present on the wire itself. */
+  usage?: StandardUsageOutcome;
 }>;
 export type StandardClientTurnPort = Readonly<{
   run(input: Readonly<{
@@ -37,6 +39,8 @@ export type StandardVoicePhase = 'idle' | 'acquiring' | 'capturing' | 'processin
 export type StandardVoiceFailure = 'host_unavailable' | 'turn_unavailable' | 'session_changed' | 'session_id_invalid'
   | 'acquisition_failed' | 'capture_failed' | 'audio_invalid' | 'turn_rejected' | 'turn_not_dispatched'
   | 'turn_unknown' | 'accounting_unresolved' | 'playback_failed' | 'cleanup_failed' | 'manual_unavailable';
+/** Typed server usage outcome for a turn that never dispatched; carries no copy, number, limit or reset time. */
+export type StandardUsageOutcome = 'limit_reached' | 'not_entitled' | 'unconfigured' | 'key_conflict' | 'unavailable' | 'replayed';
 export type StandardVoiceSnapshot = Readonly<{
   reviewAvailable: boolean;
   phase: StandardVoicePhase;
@@ -44,6 +48,7 @@ export type StandardVoiceSnapshot = Readonly<{
   failure?: StandardVoiceFailure;
   outcome?: StandardClientOutcome['kind'];
   accounting?: StandardClientAccounting;
+  usage?: StandardUsageOutcome;
 }>;
 export type StandardVoiceConsumer = Readonly<{
   start(): Promise<void>;

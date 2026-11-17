@@ -2,7 +2,7 @@ import type { SharedVoiceScope } from '../../integration/sharedVoice';
 import type { LocalTeardownResult, StandardTurnReview, TeardownReason, VoiceFence } from '../contracts';
 import type {
   StandardClientAccounting, StandardClientTurnResult, StandardVoiceConsumer, StandardVoiceConsumerOptions,
-  StandardVoiceFailure, StandardVoiceHandle, StandardVoicePhase, StandardVoiceSnapshot,
+  StandardUsageOutcome, StandardVoiceFailure, StandardVoiceHandle, StandardVoicePhase, StandardVoiceSnapshot,
 } from './contracts';
 
 type Operation = {
@@ -20,6 +20,8 @@ type Operation = {
   failure?: StandardVoiceFailure;
 };
 const accountingValues = new Set<StandardClientAccounting>(['not_reserved', 'replay', 'released', 'settled', 'not_consumed', 'unknown', 'unresolved']);
+// Value-free on purpose: this module is loaded natively by tests, so the wire port classifies and this only validates.
+const usageValues = new Set<StandardUsageOutcome>(['limit_reached', 'not_entitled', 'unconfigured', 'key_conflict', 'unavailable', 'replayed']);
 const released = (): LocalTeardownResult => Object.freeze({ status: 'released', failedSteps: Object.freeze([]) });
 const incomplete = (): LocalTeardownResult => Object.freeze({ status: 'incomplete', failedSteps: Object.freeze(['standard_handle']) });
 const fail = (code: string): Error => new Error(code);
@@ -229,7 +231,9 @@ export function createStandardVoiceConsumer(options: StandardVoiceConsumerOption
         assertCurrent(op);
         currentReview = acceptedReview ? Object.freeze({ op, value: acceptedReview }) : undefined;
         op.terminal = true;
-        publish({ ...state, outcome: result.outcome.kind, accounting: result.accounting });
+        const usage = result.outcome.kind === 'not_dispatched' && result.usage !== undefined && usageValues.has(result.usage)
+          ? result.usage : undefined;
+        publish({ ...state, outcome: result.outcome.kind, accounting: result.accounting, ...(usage ? { usage } : {}) });
         assertCurrent(op);
         if (result.outcome.kind !== 'succeeded') {
           await finishFailure(op, result.outcome.kind === 'unknown' ? 'turn_unknown'
