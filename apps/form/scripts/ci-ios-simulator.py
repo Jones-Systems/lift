@@ -5,18 +5,27 @@ import argparse
 from collections import deque
 from contextlib import contextmanager
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
+import plistlib
 import re
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import tarfile
 import tempfile
 import time
 import urllib.request
+
+
+helper_spec = importlib.util.spec_from_file_location('ios_e2e', Path(__file__).with_name('ios_e2e.py'))
+e2e = importlib.util.module_from_spec(helper_spec)
+helper_spec.loader.exec_module(e2e)
+CANCELLED = False
 
 
 @contextmanager
@@ -27,6 +36,9 @@ def owned_scratch(parent, manifest):
         yield path
     finally:
         original_error = sys.exc_info()[0] is not None
+        if CANCELLED:
+            for sig in e2e.SIGNALS:
+                signal.signal(sig, signal.SIG_IGN)
         try:
             shutil.rmtree(path)
         except OSError as exc:
@@ -54,13 +66,25 @@ def run(command, *, cwd, env, log, timeout=None, check=True):
         try:
             status = process.wait(timeout=timeout)
         except BaseException:
-            if process.poll() is None:
-                os.killpg(process.pid, signal.SIGTERM)
+            if CANCELLED:
+                for sig in e2e.SIGNALS:
+                    signal.signal(sig, signal.SIG_IGN)
             try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
+                if process.poll() is None:
+                    try:
+                        os.killpg(process.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                try:
+                    process.wait(timeout=1 if CANCELLED else 10)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait(timeout=0.3 if CANCELLED else 2)
+            except (OSError, subprocess.TimeoutExpired) as cleanup_error:
+                stream.write('Child cleanup error: ' + str(cleanup_error) + '\n')
             raise
         if status and check:
             stream.flush()
@@ -254,10 +278,177 @@ def check_launch(*, device, bundle_id, pid, launch_epoch, built, cwd, env, outpu
 
 
 def interrupted(signum, _frame):
+    global CANCELLED
+    CANCELLED = True
     raise SystemExit(128 + signum)
 
 
+E2E_ENTITLEMENTS = {'application-identifier': 'com.jonessystems.form.private',
+                    'keychain-access-groups': ['com.jonessystems.form.private']}
+
+E2E_LINK_SCRIPT = r"""
+const fs = require('fs');
+const project = require('xcode').project(process.argv[1]);
+project.parseSync();
+const unquote = value => typeof value === 'string' ? value.replace(/^"|"$/g, '') : value;
+const targets = Object.values(project.pbxNativeTargetSection()).filter(target =>
+    target && unquote(target.name) === 'Form' &&
+    unquote(target.productType) === 'com.apple.product-type.application');
+if (targets.length !== 1) throw new Error('Expected exactly one Form app target');
+const list = project.pbxXCConfigurationList()[targets[0].buildConfigurationList];
+const configurations = project.pbxXCBuildConfigurationSection();
+const release = list.buildConfigurations.map(ref => configurations[ref.value])
+    .filter(config => unquote(config.name) === 'Release');
+if (release.length !== 1) throw new Error('Expected exactly one Form Release configuration');
+const settings = release[0].buildSettings;
+const existing = settings.OTHER_LDFLAGS;
+const flags = existing === undefined ? ['"$(inherited)"'] :
+    (Array.isArray(existing) ? existing.slice() : [existing]);
+settings.OTHER_LDFLAGS = flags.concat(JSON.parse(process.argv[2]).map(flag => JSON.stringify(flag)));
+fs.writeFileSync(process.argv[1], project.writeSync());
+"""
+
+
+def prepare_e2e_entitlements(*, app, scratch, env, output, manifest):
+    xml = scratch / 'e2e-simulator-entitlements.plist'
+    der = scratch / 'e2e-simulator-entitlements.der'
+    xml.write_bytes(plistlib.dumps(E2E_ENTITLEMENTS))
+    xml_input = xml.read_bytes()
+    if plistlib.loads(xml_input) != E2E_ENTITLEMENTS:
+        raise RuntimeError('E2E XML encoder input mismatch')
+    # Simulator entitlements belong in Mach-O sections, never the host signature.
+    # Encoding/linking follows rules_apple 27c50237 (see BUILD.md).
+    run(['/usr/bin/derq', 'query', '-f', 'xml', '-i', str(xml), '-o', str(der), '--raw'],
+        cwd=app, env=env, log=output / 'simulator-entitlements-encode.log', timeout=30)
+    if xml.read_bytes() != xml_input:
+        raise RuntimeError('E2E XML encoder input changed')
+    if not der.is_file() or not 0 < der.stat().st_size <= 65536:
+        raise RuntimeError('missing, empty or oversized E2E DER encoder output')
+    expected_der = der.read_bytes()
+    for path in (xml, der):
+        shutil.copyfile(path, output / ('simulator-entitlements-input' + path.suffix))
+    flags = []
+    for section, path in [('__entitlements', xml), ('__ents_der', der)]:
+        for argument in ('-sectcreate', '__TEXT', section, str(path)):
+            flags.extend(['-Xlinker', argument])
+    run(['node', '-e', E2E_LINK_SCRIPT, str(app / 'ios/Form.xcodeproj/project.pbxproj'), json.dumps(flags)],
+        cwd=app, env=env, log=output / 'simulator-entitlements-link.log', timeout=30)
+    manifest['simulator_entitlements_link_flags'] = flags
+    # Carry this invocation's encoder output through compilation, not an artifact path.
+    return expected_der
+
+
+def simulator_macho_evidence(executable):
+    # Read only bounded arm64 load commands/sections; leave linker-signed bytes intact.
+    with executable.open('rb') as stream:
+        total = executable.stat().st_size
+        def read(offset, size, limit=1024 * 1024):
+            if offset < 0 or size <= 0 or size > limit or offset + size > total:
+                raise RuntimeError('invalid Mach-O evidence range')
+            stream.seek(offset)
+            data = stream.read(size)
+            if len(data) != size:
+                raise RuntimeError('truncated Mach-O evidence')
+            return data
+        header = struct.unpack('<8I', read(0, 32))
+        if header[:2] != (0xfeedfacf, 0x100000c) or header[3] != 2:
+            raise RuntimeError('expected a thin arm64 Mach-O executable')
+        count, length = header[4:6]
+        if not 0 < count <= 4096:
+            raise RuntimeError('invalid Mach-O command count')
+        commands = read(32, length)
+        cursor, ranges, signature_range = 0, {}, None
+        for _ in range(count):
+            if cursor + 8 > length:
+                raise RuntimeError('truncated Mach-O command')
+            kind, size = struct.unpack_from('<II', commands, cursor)
+            if size < 8 or cursor + size > length:
+                raise RuntimeError('invalid Mach-O command size')
+            command = commands[cursor:cursor + size]
+            if kind == 0x19:  # LC_SEGMENT_64
+                if size < 72:
+                    raise RuntimeError('truncated Mach-O segment')
+                nsects = struct.unpack_from('<I', command, 64)[0]
+                if 72 + nsects * 80 != size:
+                    raise RuntimeError('invalid Mach-O section count')
+                for index in range(nsects):
+                    section = command[72 + index * 80:72 + (index + 1) * 80]
+                    name, segment, _, section_size, offset = struct.unpack_from('<16s16sQQI', section)
+                    name, segment = name.rstrip(b'\0'), segment.rstrip(b'\0')
+                    if segment == b'__TEXT' and name in (b'__entitlements', b'__ents_der'):
+                        if command[8:24].rstrip(b'\0') != segment or name in ranges:
+                            raise RuntimeError('ambiguous Mach-O entitlement section')
+                        ranges[name] = (offset, section_size)
+            elif kind == 0x1d:  # LC_CODE_SIGNATURE
+                if size != 16 or signature_range is not None:
+                    raise RuntimeError('ambiguous Mach-O signature')
+                signature_range = struct.unpack_from('<II', command, 8)
+            cursor += size
+        if cursor != length or set(ranges) != {b'__entitlements', b'__ents_der'} or signature_range is None:
+            raise RuntimeError('missing or malformed simulator sections/signature')
+        sections = {name.decode(): read(*position, limit=65536) for name, position in ranges.items()}
+        signature = read(*signature_range, limit=16 * 1024 * 1024)
+        if len(signature) < 12:
+            raise RuntimeError('truncated code signature')
+        magic, blob_length, blob_count = struct.unpack_from('>III', signature)
+        if magic != 0xfade0cc0 or not 12 + 8 * blob_count <= blob_length <= len(signature) or blob_count > 64:
+            raise RuntimeError('invalid code signature index')
+        slots, flags = [], None
+        for index in range(blob_count):
+            slot, offset = struct.unpack_from('>II', signature, 12 + index * 8)
+            if slot in slots or offset < 12 + 8 * blob_count or offset + 8 > blob_length:
+                raise RuntimeError('invalid code signature slot')
+            slots.append(slot)
+            blob_magic, size = struct.unpack_from('>II', signature, offset)
+            if size < 8 or offset + size > blob_length:
+                raise RuntimeError('invalid code signature blob')
+            if slot == 0:
+                if blob_magic != 0xfade0c02 or size < 16:
+                    raise RuntimeError('invalid CodeDirectory')
+                flags = struct.unpack_from('>I', signature, offset + 12)[0]
+        # No XML/DER entitlement slots; require CS_ADHOC | CS_LINKER_SIGNED.
+        if 5 in slots or 7 in slots or flags is None or flags & 0x20002 != 0x20002:
+            raise RuntimeError('expected linker ad-hoc signature without entitlement slots')
+        return sections, slots, flags
+
+
+def verify_e2e_simulator(built, *, expected_der, cwd, env, output, manifest):
+    info = plistlib.loads((built / 'Info.plist').read_bytes())
+    if (info.get('CFBundleIdentifier') != E2E_ENTITLEMENTS['application-identifier'] or
+            info.get('CFBundleExecutable') != 'Form' or
+            info.get('CFBundleSupportedPlatforms') != ['iPhoneSimulator']):
+        raise RuntimeError('E2E verification requires the Form simulator app')
+    manifest.update(signing='linker-ad-hoc-simulator-unverified', signing_verified=False)
+    if not isinstance(expected_der, bytes) or not 0 < len(expected_der) <= 65536:
+        raise RuntimeError('missing, empty or oversized expected E2E DER input')
+    executable = built / 'Form'
+    sections, slots, flags = simulator_macho_evidence(executable)
+    xml = output / 'simulator-entitlements-embedded.plist'
+    der = output / 'simulator-entitlements-embedded.der'
+    xml.write_bytes(sections['__entitlements'])
+    der.write_bytes(sections['__ents_der'])
+    if plistlib.loads(xml.read_bytes()) != E2E_ENTITLEMENTS:
+        raise RuntimeError('E2E XML entitlement readback mismatch')
+    if sections['__ents_der'] != expected_der:
+        raise RuntimeError('E2E DER section differs from this invocation encoder output')
+    for source, name in [(executable, 'diagnostic-Form-executable.bin'),
+                         (built / 'Info.plist', 'diagnostic-Form-Info.plist')]:
+        destination = output / name
+        shutil.copyfile(source, destination)
+        manifest.setdefault('diagnostic_files_sha256', {})[name] = sha256(destination)
+    # The linker signature seals executable bytes, without a bundle resource envelope.
+    run(['codesign', '--verify', '--strict', '--ignore-resources', str(executable)],
+        cwd=cwd, env=env, log=output / 'signing-verification.log', timeout=30)
+    run(['codesign', '--display', '--verbose=4', str(executable)],
+        cwd=cwd, env=env, log=output / 'signing-details.log', timeout=30)
+    manifest.update(signing='linker-ad-hoc-simulator', signing_verified=True,
+                    simulator_entitlements=E2E_ENTITLEMENTS, simulator_der_matches_input=True,
+                    host_signature_slots=slots,
+                    host_signature_flags=hex(flags))
+
+
 def build(args):
+    mode = getattr(args, 'mode', 'launch')
     source = Path(args.source).resolve()
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -265,6 +456,7 @@ def build(args):
                 'status': 'failed', 'stage': 'identity', 'configuration': 'Release',
                 'scheme': 'Form', 'architecture': 'arm64', 'signing': 'disabled',
                 'api_url': 'http://127.0.0.1:9', 'authenticated_acceptance': False,
+                'mode': mode,
                 'run_id': os.environ.get('GITHUB_RUN_ID'),
                 'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
                 'runner_image': os.environ.get('ImageOS'),
@@ -281,6 +473,10 @@ def build(args):
             raise ValueError('source checkout must be clean')
         if sys.platform != 'darwin' or capture(['uname', '-m'], cwd=source, env=env) != 'arm64':
             raise RuntimeError('requires an arm64 macOS runner')
+        if mode == 'e2e':
+            contract = e2e.load_contract(source / 'apps/form/e2e/journeys.json')
+            manifest.update(api_url=contract['api_origin'],
+                            acceptance_scope=f"synthetic local API and {len(contract['flows'])} installed-app journeys; no private corpus or external providers")
         manifest['xcode'] = capture(['xcodebuild', '-version'], cwd=source, env=env)
         if manifest['xcode'] != 'Xcode 27.0\nBuild version 27A266a':
             raise RuntimeError('unexpected Xcode toolchain; requalify the image')
@@ -295,7 +491,7 @@ def build(args):
                        CP_CACHE_DIR=str(scratch / 'cocoapods-cache'),
                        COCOAPODS_DISABLE_STATS='true',
                        EXPO_NO_DOTENV='1', EXPO_NO_TELEMETRY='1', CI='1',
-                       EXPO_PUBLIC_FORM_API_URL='http://127.0.0.1:9')
+                       EXPO_PUBLIC_FORM_API_URL=manifest['api_url'])
             archive = scratch / 'source.tar'
             subprocess.run(['git', 'archive', '--format=tar', '-o', str(archive), args.sha],
                            cwd=source, check=True)
@@ -304,6 +500,11 @@ def build(args):
             with tarfile.open(archive) as package:
                 package.extractall(tree, filter='data')
             app = tree / 'apps/form'
+            if mode == 'e2e':
+                manifest['stage'] = 'api-install'
+                manifest['api_package_lock_sha256'] = sha256(tree / 'services/api/package-lock.json')
+                run(['npm', 'ci', '--no-audit', '--no-fund'], cwd=tree / 'services/api',
+                    env=env, log=output / 'api-install.log')
             manifest['stage'] = 'install'
             run(['npm', 'ci', '--no-audit', '--no-fund'], cwd=app, env=env, log=output / 'install.log')
             autolinking = capture(['node', 'node_modules/expo-modules-autolinking/bin/expo-modules-autolinking.js',
@@ -329,6 +530,9 @@ def build(args):
             run(['pod', 'install'], cwd=app / 'ios', env=env, log=output / 'pods.log')
             (app / 'ios/.xcode.env.local').write_text('export NODE_BINARY=' + json.dumps(shutil.which('node')) + '\n')
             manifest['pod_lock_sha256'] = sha256(app / 'ios/Podfile.lock')
+            if mode == 'e2e':
+                manifest['stage'] = 'simulator-entitlements'
+                expected_der = prepare_e2e_entitlements(app=app, scratch=scratch, env=env, output=output, manifest=manifest)
             manifest['stage'] = 'build'
             derived = scratch / 'DerivedData'
             run(['xcodebuild', '-workspace', str(app / 'ios/Form.xcworkspace'),
@@ -341,10 +545,14 @@ def build(args):
             bundle = built / 'main.jsbundle'
             if not bundle.is_file() or not bundle.stat().st_size:
                 raise RuntimeError('Release app is missing its embedded JS bundle')
+            if mode == 'e2e':
+                manifest['stage'] = 'signing'
+                verify_e2e_simulator(built, expected_der=expected_der, cwd=app, env=env,
+                                   output=output, manifest=manifest)
             manifest['embedded_js_sha256'] = sha256(bundle)
             manifest['executable_sha256'] = sha256(built / 'Form')
             manifest['stage'] = 'package'
-            zipped = output / 'Form-simulator-arm64.zip'
+            zipped = output / ('Form-e2e-simulator-arm64.zip' if mode == 'e2e' else 'Form-simulator-arm64.zip')
             run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(built), str(zipped)],
                 cwd=app, env=env, log=output / 'package.log')
             manifest['archive_sha256'] = sha256(zipped)
@@ -357,34 +565,47 @@ def build(args):
             for command in [['boot', device], ['bootstatus', device, '-b'],
                             ['install', device, str(built)]]:
                 run(['xcrun', 'simctl', *command], cwd=app, env=env, log=output / 'simulator.log')
-            manifest['stage'] = 'launch'
-            bundle_id = 'com.jonessystems.form.private'
-            launch_epoch = time.time()
-            manifest['launch_started_epoch'] = launch_epoch
-            launched = capture(['xcrun', 'simctl', 'launch', device, bundle_id], cwd=app, env=env)
-            (output / 'launch.txt').write_text(launched + '\n')
-            manifest['launch_result'] = launched
-            pid = launched.rsplit(': ', 1)[-1]
-            if not pid.isdigit():
-                raise RuntimeError('simctl did not return an app process ID')
-            time.sleep(15)
-            check_launch(device=device, bundle_id=bundle_id, pid=pid, launch_epoch=launch_epoch,
-                         built=built, cwd=app, env=env, output=output, manifest=manifest)
-            manifest.update(status='passed', stage='complete', process_alive_after_seconds=15)
+            if mode == 'e2e':
+                manifest['stage'] = 'journeys'
+                e2e.execute(tree=tree, scratch=scratch, output=output, device=device, env=env, manifest=manifest)
+                manifest.update(status='passed', stage='complete', authenticated_acceptance=True)
+            else:
+                manifest['stage'] = 'launch'
+                bundle_id = 'com.jonessystems.form.private'
+                launch_epoch = time.time()
+                manifest['launch_started_epoch'] = launch_epoch
+                launched = capture(['xcrun', 'simctl', 'launch', device, bundle_id], cwd=app, env=env)
+                (output / 'launch.txt').write_text(launched + '\n')
+                manifest['launch_result'] = launched
+                pid = launched.rsplit(': ', 1)[-1]
+                if not pid.isdigit():
+                    raise RuntimeError('simctl did not return an app process ID')
+                time.sleep(15)
+                check_launch(device=device, bundle_id=bundle_id, pid=pid, launch_epoch=launch_epoch,
+                             built=built, cwd=app, env=env, output=output, manifest=manifest)
+                manifest.update(status='passed', stage='complete', process_alive_after_seconds=15)
     except BaseException as exc:
         manifest['error'] = str(exc)
         raise
     finally:
-        if device:
-            for operation in ['shutdown', 'delete']:
-                result = subprocess.run(['xcrun', 'simctl', operation, device], capture_output=True, text=True)
-                if result.returncode:
-                    manifest.setdefault('cleanup_errors', []).append(operation + ': ' + result.stderr.strip())
+        with e2e.cleanup_signals(CANCELLED):
+            if device:
+                for operation in ['shutdown', 'delete']:
+                    try:
+                        result = subprocess.run(['xcrun', 'simctl', operation, device], capture_output=True,
+                                                text=True, timeout=1 if CANCELLED else 20)
+                        if result.returncode:
+                            manifest.setdefault('cleanup_errors', []).append(operation + ': ' + result.stderr.strip())
+                    except (OSError, subprocess.TimeoutExpired) as exc:
+                        manifest.setdefault('cleanup_errors', []).append(operation + ': ' + str(exc))
         manifest['scratch_removed'] = not Path(manifest.get('scratch_root', '/')).exists()
         cleanup_failed = bool(manifest.get('cleanup_errors')) and manifest['status'] == 'passed'
         if cleanup_failed:
             manifest['status'] = 'failed'
-        (output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+        if mode == 'e2e':
+            e2e.write_evidence_manifest(output, manifest)
+        else:
+            (output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
         print('Build manifest:\n' + json.dumps(manifest, indent=2), flush=True)
         if cleanup_failed:
             raise RuntimeError('simulator cleanup failed; see manifest')
@@ -394,6 +615,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for option in ['source', 'output', 'scratch-parent', 'sha']:
         parser.add_argument('--' + option, required=True)
+    parser.add_argument('--mode', choices=['launch', 'e2e'], default='launch')
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, interrupted)
     build(parser.parse_args())

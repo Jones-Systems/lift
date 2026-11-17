@@ -60,6 +60,13 @@ advancing alone does not emit a PR event: edit the Lift PR body to request fresh
 runs, or update the branch under its existing Git owner. Wait for the new runs;
 an older success is not fresh qualification of a changed base.
 
+Do not blindly rerun simulator runs cancelled by a newer PR synchronize event.
+Leave superseded-head runs cancelled and qualify the latest exact head with the
+current base instead. Cancellation is not success: both named Lift workflows
+must finish green for that head/base before fresh Form verification. If the
+latest required run is itself cancelled, restore its qualification under the
+existing pair owner; an older run or shadow identity receipt cannot replace it.
+
 Form workflow commands and stale-result rules live in its private operating guide.
 Before integrating a feature, the contributor must obtain a fresh Form verification
 for its current source head and Lift pair, then satisfy its original review and

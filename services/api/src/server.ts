@@ -177,9 +177,9 @@ async function createServerCandidate(config: ServerConfig): Promise<FormServer> 
       : createRetainedNutritionController({ lifecycle: bindings,
       ...(config.sourceNutritionConversations ? { projectionBytes: config.sourceNutritionConversations.projectionBytes } : {}) });
     runtime?.stage('server:factories');
-    const factoryInput = {db, lifecycle:bindings, subjectEligibilityFor:(actor:AccountContext)=>createSubjectEligibilityProvider(db,actor)};
+    const factoryInput = {db, lifecycle:bindings, purgeReadiness:writer.purgeReadiness, subjectEligibilityFor:(actor:AccountContext)=>createSubjectEligibilityProvider(db,actor)};
     const runtimeFactories=runtime?createRuntimeRequestFactories({...factoryInput,owner:runtime}):undefined;
-    const requestFactories = runtimeFactories ?? (config.sourceRequestFactories ? createSourceRequestFactories({ db, lifecycle: bindings,
+    const requestFactories = runtimeFactories ?? (config.sourceRequestFactories ? createSourceRequestFactories({ ...factoryInput,
       configuration: config.sourceRequestFactories, subjectEligibilityFor: actor => createSubjectEligibilityProvider(db, actor) }) : undefined);
     const tableInstalled = (table: string) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
     const lifecycleFactories = requestFactories ?? (config.lifecycle &&
@@ -396,8 +396,12 @@ async function createServerCandidate(config: ServerConfig): Promise<FormServer> 
       if (!trainingFeedback) throw new DomainError(503, 'training_feedback_bindings_unavailable');
       trainingFeedback.invalidateWithinWrite(actor, sources);
     };
-    const firstPlan = createFirstPlanHost(domain, config.sourceFirstPlan, { writer,
-      afterPlanWriteWithinWrite: (actor, plan) => invalidateTraining(actor, [{ kind: 'plan', id: plan.id }]) });
+    const afterPlanWriteWithinWrite = (actor: AccountContext, plan: { id: string }): void => {
+      writer.assertWithinWrite(actor);
+      invalidateTraining(actor, [{ kind: 'plan', id: plan.id }]);
+      writer.assertWithinWrite(actor);
+    };
+    const firstPlan = createFirstPlanHost(domain, config.sourceFirstPlan, { writer, afterPlanWriteWithinWrite });
     const changed = <T>(c: ApiContext, effect: () => T, sources: (result: T) => readonly FeedbackSourceKey[]): T => {
       const actor = Object.freeze({ ...c.get('accountContext') });
       writer.assertWithinWrite(actor);
@@ -476,8 +480,9 @@ async function createServerCandidate(config: ServerConfig): Promise<FormServer> 
     });
     app.get('/v1/plans/:planId', c => c.json(domain.plan(account(c), id(c, 'planId'))));
     app.patch('/v1/plans/:planId', async c => { const input = await body(c, s.planPatch);
-      return c.json(bindings.withActiveWrite(c.get('accountContext'), () => changed(c,
-        () => domain.patchPlan(account(c), id(c, 'planId'), input), plan => [{ kind: 'plan', id: plan.id }]))); });
+      const actor = Object.freeze({ ...c.get('accountContext') });
+      return c.json(bindings.withActiveWrite(actor, () => domain.patchPlan(account(c), id(c, 'planId'), input,
+        plan => afterPlanWriteWithinWrite(actor, plan)))); });
     app.post('/v1/plans/:planId/archive', async c => {
       const planId = id(c, 'planId'), input = await body(c, s.revisionCommand);
       return receipt(c, `plan.archive:${planId}`, input, () => { domain.plan(account(c), planId); },

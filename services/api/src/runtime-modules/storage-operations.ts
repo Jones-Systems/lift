@@ -12,7 +12,12 @@ const inputSchema = z.object({configuration:runtimeModulesConfiguration,mainPath
   action:z.enum(['check','backup']),destination:z.string().optional()}).strict();
 export type ClosedStorageInput = z.infer<typeof inputSchema>;
 // Offline source seam only: active/nonclean ownership is never borrowed from the API.
-export async function operateClosedStorage(raw:ClosedStorageInput):Promise<void> {
+export type ClosedStorageManifest = {
+  source: {path:string; digest:string}; backup: {path:string; digest:string} | null;
+  authorityId:string; admissionRevision:number; databaseGeneration:number; migrationDigests:string[];
+  suppressionSequence:number; suppressionHead:string; encryption:'none_held'; offhost:'none_held';
+};
+export async function operateClosedStorage(raw:ClosedStorageInput):Promise<ClosedStorageManifest> {
   const input=inputSchema.parse(raw),config=input.configuration;
   assertSeparate(config.authorityDirectory,input.mainPath);
   if(input.action==='backup') {
@@ -40,7 +45,12 @@ export async function operateClosedStorage(raw:ClosedStorageInput):Promise<void>
     });
     assertClosedMain(input.mainPath);assertIdentity(input.mainPath,config.ownerUid,value.main);
     if(fileDigest(input.mainPath,config.ownerUid)!==value.closedDigest||admission.read().revision!==value.revision||authority.checkpoint().revision!==witness.revision)throw new Error('Closed storage changed during operation');
-    authority.close();lock.release();
+    const manifest:ClosedStorageManifest={source:{path:input.mainPath,digest:value.closedDigest},
+      backup:input.action==='backup'?{path:input.destination!,digest:fileDigest(input.destination!,config.ownerUid)}:null,
+      authorityId:config.authorityId,admissionRevision:value.revision,databaseGeneration:value.databaseGeneration,
+      migrationDigests:[...migrationDigests],suppressionSequence:witness.committedSequence,suppressionHead:witness.committedHeadDigest,
+      encryption:'none_held',offhost:'none_held'};
+    authority.close();lock.release();return manifest;
   } catch(error) {
     try { authority?.close(); } catch(cleanupError) { throw new AggregateError([error,cleanupError],'Closed storage failed and authority close failed'); }
     throw error;

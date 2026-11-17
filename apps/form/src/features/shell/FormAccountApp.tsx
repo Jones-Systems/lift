@@ -421,12 +421,13 @@ export function FormAccountApp(props: FormAccountAppProps) {
     epochRef.current += 1;
     const who: Actor = { epoch: epochRef.current, accountId: null };
     setPhase('restoring'); setFatal(null);
-    void loadCapabilities();
     try {
       const restored = await resources.api.restore();
       if (!isCurrent(who)) return;
-      if (restored) await loadAccount();
-      else signedOut(null);
+      const accountLoad = restored ? loadAccount() : signedOut(null);
+      // Both branches establish the active epoch before capabilities capture it.
+      void loadCapabilities();
+      await accountLoad;
     } catch (error) {
       if (!isCurrent(who)) return;
       setFatal(errorCopy(error));

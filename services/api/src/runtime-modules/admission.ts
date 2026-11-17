@@ -1,17 +1,17 @@
 import Database from 'better-sqlite3';
 import { z } from 'zod';
-import { constants, closeSync, existsSync, mkdirSync, openSync, rmdirSync, unlinkSync } from 'node:fs';
+import { constants, closeSync, copyFileSync, existsSync, mkdirSync, openSync, rmdirSync, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DomainError } from '../errors.js';
-import type { Sqlite } from '../storage.js';
+import { integrity, type Sqlite } from '../storage.js';
 import type { AccountLifecycle } from '../lifecycle/service.js';
 import type { AuthoritativeRestoreState } from '../community/index.js';
 import { suppressionLedgerSchema, ExistingSuppressionLedger } from '../lifecycle/ledger.js';
 import { CurrentSuppressionAuthority, digestSchema, genesisHead, ledgerSchemaDigest, witnessSchema } from './currentness.js';
-import { AuthorityLock, JsonFile, assertClosedMain, assertIdentity, assertSeparate, canonicalPath, fileDigest, identitySchema, sameIdentity, syncDirectory, syncFile, type FaultPoint, noFault } from './files.js';
+import { AuthorityLock, JsonFile, assertClosedMain, assertIdentity, assertSeparate, canonicalPath, lexicalPath, fileDigest, identitySchema, sameIdentity, syncDirectory, syncFile, type FaultPoint, noFault } from './files.js';
 import { migrationDigests } from './migrations.js';
-import { readClosedReceipts, assertStrictClosedMain } from './closed-read.js';
+import { readClosedReceipts, inspectClosedStorageSnapshot, closedSnapshotInspectionSettled, assertStrictClosedMain } from './closed-read.js';
 import { runtimeModulesConfiguration, type RuntimeModulesConfiguration } from './configuration.js';
 const counter = z.number().int().nonnegative().safe();
 export const admissionSchema = z.object({ version: z.literal(1), authorityId: z.uuid(), revision: counter, databaseGeneration: counter,
@@ -115,6 +115,85 @@ export function prepareAdmission(raw: PrepareAdmissionInput): void {
     authority.close(); lock.release();
   } catch(error) {
     try { authority?.close(); } catch(cleanupError) { throw new AggregateError([error,cleanupError],'Admission preparation failed and authority close failed'); }
+    throw error;
+  }
+}
+const relocatedSchema = z.object({ configuration: runtimeModulesConfiguration, mainPath: z.string(),
+  expectedMain: identitySchema, expectedRevision: counter, expectedGeneration: counter, expectedPredecessorDigest: digestSchema,
+  backupPath: z.string(), expectedBackupDigest: digestSchema, destination: z.string(), operationId: z.uuid(),
+  provenance: z.string().min(1).max(256), oldWriterStopped: z.literal(true),
+}).strict();
+export type PrepareRelocatedAdmissionInput = z.infer<typeof relocatedSchema>;
+// Offline, synchronous new-target restore. A failed candidate is retained for inspection;
+// retry uses a fresh destination. No source or independent authority is reset.
+export function prepareRelocatedAdmission(raw: PrepareRelocatedAdmissionInput, fault: FaultPoint = noFault): Admission {
+  const input = relocatedSchema.parse(raw), config = input.configuration, uid = config.ownerUid;
+  for (const path of [input.mainPath, input.backupPath, input.destination]) assertSeparate(config.authorityDirectory, path);
+  lexicalPath(input.destination);
+  if (input.destination === input.mainPath || input.destination === input.backupPath) throw new Error('Relocation destination aliases source');
+  const parent = canonicalPath(dirname(input.destination), uid, true);
+  const lock = new AuthorityLock(config.authorityDirectory, uid, input.operationId);
+  let authority: CurrentSuppressionAuthority | undefined, commitStarted = false, inspectionStarted = false;
+  try {
+    const file = new JsonFile(join(config.authorityDirectory, 'admission.json'), uid, admissionSchema, fault), previous = file.read();
+    if (previous.state !== 'closed_clean' || previous.authorityId !== config.authorityId || previous.mainPath !== input.mainPath ||
+      previous.revision !== input.expectedRevision || previous.databaseGeneration !== input.expectedGeneration ||
+      previous.closedDigest !== input.expectedPredecessorDigest || !sameIdentity(previous.main, input.expectedMain) ||
+      !Number.isSafeInteger(previous.revision + 1) || !Number.isSafeInteger(previous.databaseGeneration + 1) ||
+      JSON.stringify(previous.migrationDigests) !== JSON.stringify(migrationDigests) ||
+      JSON.stringify(previous.appliedDigests) !== JSON.stringify(migrationDigests)) throw new Error('Relocation predecessor mismatch');
+    const sourceUnchanged = (): void => {
+      lock.assert(); assertIdentity(input.mainPath, uid, input.expectedMain); assertStrictClosedMain(input.mainPath);
+      if (fileDigest(input.mainPath, uid) !== input.expectedPredecessorDigest) throw new Error('Relocation source changed');
+    };
+    sourceUnchanged();
+    const witnessFile = new JsonFile(join(config.authorityDirectory, 'currentness.json'), uid, witnessSchema);
+    if (witnessFile.read().pending) throw new Error('Relocation requires settled suppression authority');
+    authority = new CurrentSuppressionAuthority(lock, witnessFile, join(config.authorityDirectory, 'ledger.sqlite'), config.authorityId);
+    const witness = authority.checkpoint();
+    if (previous.suppressionSequence > witness.committedSequence ||
+      (previous.suppressionSequence === witness.committedSequence && previous.suppressionHead !== witness.committedHeadDigest)) throw new Error('Relocation suppression mismatch');
+    const backup = canonicalPath(input.backupPath, uid);
+    if (sameIdentity(backup, previous.main) || sameIdentity(backup, witness.ledger)) throw new Error('Relocation backup aliases authority or source');
+    assertStrictClosedMain(input.backupPath);
+    if (fileDigest(input.backupPath, uid) !== input.expectedBackupDigest) throw new Error('Relocation backup digest mismatch');
+    assertIdentity(dirname(input.destination), uid, parent, true); assertStrictClosedMain(input.destination);
+    copyFileSync(input.backupPath, input.destination, constants.COPYFILE_EXCL);
+    const main = canonicalPath(input.destination, uid);
+    assertIdentity(input.backupPath, uid, backup); assertStrictClosedMain(input.backupPath);
+    if (sameIdentity(main, previous.main) || sameIdentity(main, witness.ledger) || sameIdentity(main, backup) ||
+      fileDigest(input.destination, uid) !== input.expectedBackupDigest || fileDigest(input.backupPath, uid) !== input.expectedBackupDigest) throw new Error('Relocation copy mismatch');
+    // Validate a captured disposable snapshot so WAL read sidecars never touch the destination.
+    inspectionStarted = true;
+    const appliedDigests = inspectClosedStorageSnapshot(lock, input.destination, main, input.expectedBackupDigest, db => {
+      integrity(db);
+      const rows = db.prepare('SELECT version,checksum FROM form_migrations ORDER BY version LIMIT ?').all(migrationDigests.length + 1) as {version:number;checksum:string}[];
+      const digests = rows.map(row => row.checksum);
+      if (rows.length !== migrationDigests.length || rows.some((row,index) => row.version !== index+1) ||
+        JSON.stringify(digests) !== JSON.stringify(migrationDigests)) throw new Error('Relocation runtime migration mismatch');
+      return digests;
+    }, fault);
+    assertStrictClosedMain(input.destination); syncFile(input.destination, uid);
+    fault('relocation:before-commit'); sourceUnchanged(); assertIdentity(dirname(input.destination), uid, parent, true);
+    assertIdentity(input.destination, uid, main);
+    if (fileDigest(input.destination, uid) !== input.expectedBackupDigest) throw new Error('Relocation destination changed');
+    const current = authority.checkpoint();
+    if (current.revision !== witness.revision || current.committedHeadDigest !== witness.committedHeadDigest) throw new Error('Relocation authority changed');
+    const next: Admission = {...previous, revision:previous.revision+1, databaseGeneration:previous.databaseGeneration+1,
+      mainPath:input.destination, main, appliedDigests, state:'prepared_restore', operationId:input.operationId,
+      closedDigest:input.expectedBackupDigest, suppressionSequence:current.committedSequence, suppressionHead:current.committedHeadDigest,
+      reason:`relocated_restore: ${input.provenance}`.slice(0,256)};
+    // Once replacement starts, failure is an unknown outcome: retain custody, never roll back.
+    commitStarted = true; file.replace(next, 'relocated-admission');
+    fault('relocation:after-commit'); sourceUnchanged(); assertIdentity(input.destination, uid, main);
+    if (fileDigest(input.destination, uid) !== next.closedDigest) throw new Error('Relocation committed destination changed');
+    const result = file.read(); authority.close(); lock.release(); return result;
+  } catch (error) {
+    const errors: unknown[] = [error];
+    try { authority?.close(); } catch (closeError) { errors.push(closeError); }
+    // Only this invocation's known lock can be released. Unknown postcommit effects stay held.
+    if (!commitStarted && errors.length === 1 && (!inspectionStarted || closedSnapshotInspectionSettled(lock))) try { lock.release(); } catch (releaseError) { errors.push(releaseError); }
+    if (errors.length > 1) throw new AggregateError(errors, 'Relocation failed with retained custody');
     throw error;
   }
 }

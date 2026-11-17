@@ -1,4 +1,19 @@
 export type AccountContext = Readonly<{ accountId: string; authUserId: string; sessionId: string; epoch: number }>;
+export type SourceActionPurpose = 'account_delete' | 'account_export';
+export type SourceActionMethod = 'email_action_code' | 'phone_action_code';
+export type SourceActionState = 'dispatching' | 'ready' | 'failed' | 'unknown' | 'invalidated' | 'expired' | 'consumed';
+export type SourceActionConfiguration = Readonly<{ mode: 'source-only'; cohort: 'action-reauthentication-v1' }>;
+export type SourceActionIssue = Readonly<{ purpose: SourceActionPurpose; method: SourceActionMethod; requestKey: string }>;
+export type SourceActionVerify = Readonly<{ challengeId: string; purpose: SourceActionPurpose; code: string }>;
+export type SourceActionChallenge = Readonly<{ challengeId: string; purpose: SourceActionPurpose; method: SourceActionMethod; expiresAt: string; state: SourceActionState }>;
+export type SourceActionDeliveryRequest = Readonly<{ challengeId: string; purpose: SourceActionPurpose; method: SourceActionMethod;
+  authUserId: string; destination: string; subjectDigest: string; code: string; deadlineAtMs: number }>;
+// Fulfillment attests producer/resource completion; an acknowledgment alone is insufficient.
+export type SourceActionDeliveryResult = Readonly<{ challengeId: string; method: SourceActionMethod; subjectDigest: string;
+  disposition: 'accepted' | 'rejected' | 'unknown' }>;
+export type SourceActionDelivery = Readonly<{ start: (request: SourceActionDeliveryRequest) => Readonly<{
+  settled: Promise<SourceActionDeliveryResult>; cancel: () => Promise<void> }> }>;
+export type SourceActionKeys = Readonly<{ currentKeyId: () => string; lookup: (keyId: string) => Uint8Array | null }>;
 export type LifecycleResult = Readonly<{ status: 'complete' | 'pending' | 'unavailable' | 'unknown' | 'retained'; reason?: string; count?: number }>;
 export type ScopedInventory = LifecycleResult & Readonly<{ category: string }>;
 export type ExportSnapshot = Readonly<{ snapshotAtMs: number; append: (category: string, value: unknown) => void }>;

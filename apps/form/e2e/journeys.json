@@ -1,0 +1,36 @@
+{
+  "schema": "form.native-e2e/v1",
+  "api_origin": "http://127.0.0.1:47621",
+  "control_port": 47622,
+  "account": {
+    "email": "e2e-primary@synthetic.invalid",
+    "password": "Synthetic-E2E-Only-2026!",
+    "name": "E2E Athlete"
+  },
+  "expected": {
+    "displayName": "E2E Athlete",
+    "loadUnit": "lb"
+  },
+  "flows": [
+    {
+      "name": "01-account-first-plan",
+      "screenshot": "01-account-first-plan"
+    },
+    {
+      "name": "03-workout-log",
+      "screenshot": "03-workout-log"
+    },
+    {
+      "name": "04-session-lifecycle",
+      "screenshot": "04-session-lifecycle"
+    },
+    {
+      "name": "06-settings",
+      "screenshot": "06-settings"
+    },
+    {
+      "name": "07-body-session-only",
+      "screenshot": "07-body-session-only"
+    }
+  ]
+}

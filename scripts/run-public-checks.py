@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -21,7 +22,7 @@ HELPER = "scripts/run-public-checks.py"
 HARNESS_TEST = "scripts/run-public-checks.test.py"
 SOURCE_HOOK = "scripts/integration/source-hook.mjs"
 SOURCE_RESOLVER = "scripts/integration/source-resolution.mjs"
-GROUP_IDS = ("runner-contract", "api-compile", "app-static", "form104-139", "form196", "form203", "form208", "simulator-portable")
+GROUP_IDS = ("runner-contract", "api-compile", "app-static", "form104-139", "form196", "form203", "form208", "simulator-portable", "native-e2e-backend", "native-e2e-app", "lifecycle-runtime", "lifecycle-wire-v2", "plan-revision")
 BASELINE_HEALTH = (
     "tests/wearables/app.test.mjs", "tests/wearables/ingestion.test.mjs",
     "tests/wearables/providers.test.mjs", "tests/wearables/suggestions.test.mjs",
@@ -34,11 +35,58 @@ BASELINE_HEALTH = (
     "tests/direct-provider-transport/auth-state.test.mjs",
 )
 APP_TESTS = {
+    "lifecycle-wire-v2": ("src/account-lifecycle/__tests__/contracts-v2.test.cjs",
+                          "src/account-lifecycle/__tests__/lifecycle.test.cjs"),
+    "native-e2e-app": ("src/integration/tests/account-switch-session.test.cjs",
+                       "src/integration/tests/settings-mode-http.test.cjs",
+                       "src/integration/tests/manual-progress-session.test.cjs",
+                       "src/integration/tests/runtime-lifecycle-composition.test.cjs"),
     "form196": ("src/features/feature-board/tests/controller.test.cjs",),
     "form203": ("src/api/tests/community-group-role-controller.test.cjs", "src/community/matching/__tests__/controller.test.cjs"),
     "form208": ("src/voice-coaching/standard/tests/wire-codec.test.cjs",),
 }
 API_TESTS = {
+    "plan-revision": ("tests/planning/plan-revision-port.test.ts", "tests/backend.test.ts"),
+    "lifecycle-wire-v2": ("tests/lifecycle-wire-v2.test.ts",),
+    "lifecycle-runtime": (
+        "tests/bug-intake/lifecycle-chain.test.ts",
+        "tests/integration/account-modules/canonical-writer.test.ts",
+        "tests/integration/account-modules/composition.test.ts",
+        "tests/integration/account-modules/server.test.ts",
+        "tests/integration/request-factories.test.ts",
+        "tests/lifecycle-completion.test.ts",
+        "tests/lifecycle-coverage.test.ts",
+        "tests/lifecycle-evidence-codec.test.ts",
+        "tests/lifecycle-evidence.test.ts",
+        "tests/lifecycle-export.test.ts",
+        "tests/lifecycle-http.test.ts",
+        "tests/lifecycle-provider-revocation-apple.test.ts",
+        "tests/lifecycle-provider-revocation.test.ts",
+        "tests/lifecycle-purge-executor.test.ts",
+        "tests/lifecycle-reauthentication-source.test.ts",
+        "tests/lifecycle-reauthentication.test.ts",
+        "tests/lifecycle.test.ts",
+        "tests/purchases/purchases.test.ts",
+        "tests/purchases/reconciliation.test.ts",
+        "tests/purchases/status-codec.test.ts",
+        "tests/purchases/status-projection.test.ts",
+        "tests/purchases/status-source.test.ts",
+        "tests/purchases/status.test.ts",
+        "tests/runtime-modules/authority-currentness.test.ts",
+        "tests/runtime-modules/capability-and-denial.test.ts",
+        "tests/runtime-modules/closed-read-admission.test.ts",
+        "tests/runtime-modules/closed-read-storage.test.ts",
+        "tests/runtime-modules/composition-http.test.ts",
+        "tests/runtime-modules/configuration-and-lifetime.test.ts",
+        "tests/runtime-modules/export-http.test.ts",
+        "tests/runtime-modules/late-boundary-regression.test.ts",
+        "tests/runtime-modules/migrations-and-restart.test.ts",
+        "tests/runtime-modules/relocated-admission.test.ts",
+        "tests/runtime-modules/restore-admission.test.ts",
+        "tests/runtime-modules/restore-drill.test.ts",
+        "tests/usage-limits/lifecycle.test.ts",
+    ),
+    "native-e2e-backend": ("tests/e2e/native-backend.test.ts",),
     "form196": ("tests/community/board/correction.test.ts", "tests/community/board/board.test.ts", "tests/community/board/persistence-races.test.ts"),
     "form208": ("tests/voice-coaching/standard-wire.test.ts", "tests/voice-coaching/turn-controller.test.ts",
                 "tests/usage-limits/standard-observation.test.ts", "tests/usage-limits/standard-composition.test.ts",
@@ -54,8 +102,8 @@ def selection(root, requested):
     chosen = set(requested or GROUP_IDS)
     if chosen - set(GROUP_IDS):
         raise ValueError("Unknown public check group")
-    # APP interop and the board's worker load fresh emitted API JavaScript.
-    if chosen & {"form196", "form208"}:
+    # Interop, native E2E smoke tests and board workers load fresh emitted API JavaScript.
+    if chosen & {"form196", "form208", "native-e2e-backend", "native-e2e-app", "lifecycle-runtime", "lifecycle-wire-v2", "plan-revision"}:
         chosen.add("api-compile")
     groups = [group for group in GROUP_IDS if group in chosen]
     health = sorted(str(path.relative_to(root / API)) for directory in
@@ -88,14 +136,26 @@ def selection(root, requested):
         elif group == "simulator-portable":
             test = "scripts/ci-ios-simulator.test.py"
             add(group, APP, [sys.executable, "-B", test], [test, "scripts/ci-ios-simulator.py"])
+            test = "scripts/ios_e2e.test.py"
+            add(group, APP, [sys.executable, "-B", test], [test, "scripts/ios_e2e.py"])
         else:
             if group in API_TESTS:
                 sources = API_TESTS[group]
                 emitted = ["dist/" + source.removesuffix(".ts") + ".js" for source in sources]
+                if group == "lifecycle-runtime":
+                    sources = (*sources, "tests/runtime-modules/restore-drill-fixture.ts",
+                               "tests/lifecycle-reauthentication-fixture.ts",
+                               "tests/purchases/status-source-fixture.ts")
+                if group == "native-e2e-backend":
+                    sources = (*sources, "tests/e2e/native-backend.ts", SOURCE_HOOK, SOURCE_RESOLVER)
                 add(group, API, ["node", "--test", "--test-concurrency=1", *emitted], sources)
             if group in APP_TESTS:
                 sources = APP_TESTS[group]
                 add(group, APP, ["node", "--test", "--test-concurrency=1", *sources], sources)
+            if group == "native-e2e-app":
+                renderer = "tests/renderer/onboarding-save.test.tsx"
+                add(group, APP, ["npm", "run", "test:renderer", "--", "--runTestsByPath", renderer],
+                    [renderer, "jest.config.cjs", "tests/renderer/setup.ts", "tests/renderer/resolver.cjs"])
     payload = {"schema": "lift.public-check-groups/v1", "groups": groups, "commands": commands}
     payload["manifest_sha256"] = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     return payload
@@ -117,7 +177,16 @@ def copy_inputs(root, destination, install):
 
 @contextmanager
 def owned_workspace(root, install):
-    with tempfile.TemporaryDirectory(prefix=".lift-public-", dir=root) as temporary:
+    parent = Path.home()
+    if not parent.is_absolute() or parent.resolve(strict=True) != parent or parent.is_relative_to(root.resolve()):
+        raise ValueError("Unsafe public workspace parent: HOME must be canonical and outside the source checkout")
+    for ancestor in (parent, *parent.parents):
+        metadata = ancestor.lstat()
+        if not stat.S_ISDIR(metadata.st_mode) or metadata.st_mode & 0o022:
+            raise ValueError("Unsafe public workspace parent: directory ancestors must not be symlinks or group/other writable")
+        if ancestor == parent and metadata.st_uid != os.getuid():
+            raise ValueError("Unsafe public workspace parent: HOME must belong to the current user")
+    with tempfile.TemporaryDirectory(prefix=".lift-public-", dir=parent) as temporary:
         workspace = Path(temporary)
         copy_inputs(root, workspace, install)
         yield workspace
@@ -175,7 +244,9 @@ def execute(root, output, contract, install=False):
     try:
         with cancellation_handlers(), owned_workspace(root, install) as workspace:
             receipt["scratch_root"] = str(workspace)
-            environment = {**os.environ, "TMPDIR": str(workspace), "TMP": str(workspace), "TEMP": str(workspace),
+            home = workspace / "home"
+            home.mkdir(mode=0o700)
+            environment = {**os.environ, "HOME": str(home), "TMPDIR": str(workspace), "TMP": str(workspace), "TEMP": str(workspace),
                            "PYTHONDONTWRITEBYTECODE": "1", "CI": "1", "EXPO_NO_TELEMETRY": "1",
                            "EXPO_NO_DOTENV": "1", "EXPO_PUBLIC_FORM_API_URL": "http://127.0.0.1:9",
                            "npm_config_cache": str(workspace / "npm-cache")}

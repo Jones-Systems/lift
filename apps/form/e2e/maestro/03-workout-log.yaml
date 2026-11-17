@@ -1,0 +1,145 @@
+appId: com.jonessystems.form.private
+name: 03-workout-log
+---
+- runFlow: helpers/ensure-home.yaml
+- runFlow: helpers/today-settled.yaml
+- scrollUntilVisible:
+    element:
+      id: a-today-primary
+    direction: DOWN
+    timeout: 20000
+    centerElement: false
+- tapOn:
+    id: a-today-primary
+- extendedWaitUntil:
+    visible:
+      id: screen-workout-start
+    timeout: 30000
+- assertVisible:
+    id: "a-start-plan-.+"
+    text: "Native E2E plan, 15 min"
+- scrollUntilVisible:
+    element:
+      id: a-start
+    direction: DOWN
+    timeout: 20000
+    centerElement: false
+- tapOn:
+    id: a-start
+- extendedWaitUntil:
+    visible:
+      id: screen-workout
+    timeout: 30000
+- scrollUntilVisible:
+    element:
+      id: a-workout-primary
+    direction: DOWN
+    timeout: 20000
+    centerElement: false
+- tapOn:
+    id: a-workout-primary
+- scrollUntilVisible:
+    element:
+      id: a-setlog-1
+    direction: DOWN
+    timeout: 20000
+    centerElement: false
+- assertVisible: "Set 1.*12 reps.*Saved"
+- scrollUntilVisible:
+    element:
+      id: a-workout-primary
+    direction: UP
+    timeout: 20000
+    centerElement: false
+- tapOn:
+    id: a-workout-primary
+- scrollUntilVisible:
+    element:
+      id: a-setlog-2
+    direction: DOWN
+    timeout: 20000
+    centerElement: false
+- assertVisible: "Set 2.*12 reps.*Saved"
+- tapOn:
+    id: a-setlog-1
+- extendedWaitUntil:
+    visible:
+      id: a-edit-set
+    timeout: 30000
+- tapOn: "Increase Reps"
+- tapOn:
+    id: a-set-save
+- extendedWaitUntil:
+    visible:
+      id: a-setlog-1
+    timeout: 30000
+- assertVisible: "Set 1.*13 reps.*Saved"
+- tapOn:
+    id: a-setlog-2
+- extendedWaitUntil:
+    visible:
+      id: a-edit-set
+    timeout: 30000
+- tapOn:
+    id: a-set-remove
+- extendedWaitUntil:
+    visible:
+      id: a-remove-sheet
+    timeout: 30000
+- tapOn:
+    id: a-set-remove-confirm
+- assertVisible: "Set 2.*Removed"
+- scrollUntilVisible:
+    element:
+      id: a-workout-finish
+    direction: UP
+    timeout: 20000
+    centerElement: false
+- tapOn:
+    id: a-workout-finish
+- extendedWaitUntil:
+    visible:
+      id: a-finish-sheet
+    timeout: 30000
+- tapOn:
+    id: a-finish-confirm
+- extendedWaitUntil:
+    visible:
+      id: screen-session
+    timeout: 30000
+- assertVisible: "Completed"
+- assertVisible: "1 set logged"
+- tapOn:
+    id: a-back
+- extendedWaitUntil:
+    visible:
+      id: screen-stats
+    timeout: 30000
+- assertVisible: "1 workouts finished"
+- scrollUntilVisible:
+    element:
+      id: a-history-all
+    direction: DOWN
+    timeout: 20000
+    centerElement: false
+- tapOn:
+    id: a-history-all
+- extendedWaitUntil:
+    visible:
+      id: screen-history
+    timeout: 30000
+- tapOn:
+    id: "a-history-.+"
+    text: "Native E2E plan,.*"
+- extendedWaitUntil:
+    visible:
+      id: screen-session
+    timeout: 30000
+- assertVisible: "Completed"
+- assertVisible: "1 set logged"
+- takeScreenshot: 03-workout-log
+- tapOn: "Today"
+- extendedWaitUntil:
+    visible:
+      id: screen-today
+    timeout: 30000

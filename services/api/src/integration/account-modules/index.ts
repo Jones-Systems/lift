@@ -1,12 +1,12 @@
 import type { Sqlite } from '../../storage.js';
 import { DomainError } from '../../errors.js';
 import { hasLifecycleSchema, suppressionAuthority } from '../../lifecycle/guards.js';
-import type { AccountContext, LifecycleAdapter, LifecycleBindings, LifecycleResult } from '../../lifecycle/types.js';
+import type { AccountContext, LifecycleAdapter, LifecycleBindings } from '../../lifecycle/types.js';
 import { createUsageLedger } from '../../usage-limits/index.js';
 import { createBugIntakeLifecycleAdapter, createBugIntakeServiceFactory } from '../../bug-intake/index.js';
 import type { Domain } from '../../domain.js';
 import type { ActivityService } from '../../activity/service.js';
-import type { CanonicalAccountWriter } from './canonical-writer.js';
+import { createCanonicalAccountWriter, type CanonicalAccountWriter } from './canonical-writer.js';
 import { captureCurrentAnalysisWithinWrite, type CurrentAnalysisAssociation } from '../training-feedback/context-association.js';
 import { createProgressComparisonService } from '../../progress-comparison/service.js';
 import type { ProgressComparisonDependencies } from '../../progress-comparison/persistence-types.js';
@@ -23,7 +23,6 @@ import type { FeedbackCommand, FeedbackCurrentView, FeedbackContextWitness, Feed
 export { selectAccountModuleMigrations, sourceBugIntakeMigration, sourceProgressComparisonMigration, sourceFeedbackMigration,
   type SourceAccountModuleConfiguration } from './migrations.js';
 
-const unavailablePurge = (): LifecycleResult => ({ status: 'unavailable', reason: 'exact_purge_executor_binding_required' });
 export type TrainingRegistration = Pick<FeedbackServiceDependencies, 'derivations' | 'comparisonRegistry' | 'derivationAuthorityWithinWrite'> &
   Pick<ProgressComparisonDependencies, 'comparisonBindingFor'>;
 export type RetentionRequest = Readonly<{ operation: 'read' }> | Readonly<{ operation: 'mutate'; command: FeedbackCommand }> |
@@ -135,15 +134,19 @@ function compose(db: Sqlite, lifecycle: LifecycleBindings, training: SourceTrain
         row.epoch !== epoch || row.suppression_seq !== record.sequence)
       throw new DomainError(503, 'canonical_suppression_unproved');
   };
+  const writer = createCanonicalAccountWriter(db);
   const ledger = createUsageLedger({ db, lifecycle, now: Date.now, lifecycleControl: {
-    assertSuppression, assertPurge: () => { throw new DomainError(503, 'exact_purge_executor_binding_required'); },
+    assertSuppression, assertPurge: (requestId, accountId) => {
+      if (writer.purgeReadiness(requestId, accountId).status !== 'ready')
+        throw new DomainError(503, 'exact_purge_executor_binding_required');
+    },
   } });
-  const bugDependencies = { db, lifecycle, lifecycleControl: { assertSuppression, purgeReadiness: unavailablePurge } };
+  const bugDependencies = { db, lifecycle, lifecycleControl: { assertSuppression, purgeReadiness: writer.purgeReadiness } };
   const bugFactory = createBugIntakeServiceFactory(bugDependencies);
   const guarded = (adapter: LifecycleAdapter): LifecycleAdapter => Object.freeze({ ...adapter,
     suppress: (accountId: string, epoch: number) => { assertSuppression(accountId, epoch); return adapter.suppress(accountId, epoch); },
     verifySuppressed: (accountId: string, epoch: number) => { assertSuppression(accountId, epoch); return adapter.verifySuppressed(accountId, epoch); },
-    purge: unavailablePurge,
+    purge: writer.guardLifecycleAdapter(adapter).purge,
   });
   const bugFor = (context: AccountContext) => {
     const actor = Object.freeze({ ...context });

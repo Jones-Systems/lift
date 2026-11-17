@@ -1,0 +1,14 @@
+flows:
+  - "01-account-first-plan.yaml"
+  - "03-workout-log.yaml"
+  - "04-session-lifecycle.yaml"
+  - "06-settings.yaml"
+  - "07-body-session-only.yaml"
+executionOrder:
+  continueOnFailure: false
+  flowsOrder:
+    - 01-account-first-plan
+    - 03-workout-log
+    - 04-session-lifecycle
+    - 06-settings
+    - 07-body-session-only

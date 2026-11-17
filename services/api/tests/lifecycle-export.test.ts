@@ -16,6 +16,10 @@ import type { AccountContext, LifecycleAdapter } from '../src/lifecycle/types.js
 import { lifecycleMigration } from '../src/lifecycle/migration.js';
 import { createActivityLifecycleAdapter, type ActivityPlanSnapshot, type PersonalExercise } from '../src/activity/index.js';
 import { fixture as activityFixture, personalFields, unknownLoad } from './activity/fixture.js';
+import { createManualMeasurements } from '../src/body/measurements.js';
+import { manualMeasurementMigrationSql } from '../src/body/manual-measurement-migration.js';
+import { manualRetentionMigrationSql } from '../src/body/manual-retention-migration.js';
+import { suppressionLedger } from './integration/account-modules/fixture.js';
 
 const context: AccountContext = { accountId: 'form-a', authUserId: 'auth-a', sessionId: 'auth-session-a', epoch: 0 };
 const date = '2026-10-09T00:00:00.000Z';
@@ -168,8 +172,60 @@ test('export covers current/history markers and unique receipts, with exact acco
   assert.equal(payload.manifest.provenance.consistency, 'single-connection-snapshot');
 }));
 
-test('existing lifecycle schema exports deletion metadata and excludes grants, hashes and internal evidence', () => fixture(db => {
+test('phone export follows immutable subject across contact reassociation and leaves foreign/unbound bytes untouched', () => fixture(db => {
+  const phone = '+12025550111';
+  const omitted: string[] = [];
+  for (const [id, auth, stamp] of [
+    ['own-historical', context.authUserId, 88770011],
+    ['same-number-unbound', null, 88770022],
+    ['same-number-foreign', 'auth-b', 88770033],
+  ] as const) {
+    const values = [`${id}-opaque-link`, `${id}-opaque-start`, `${id}-opaque-provider`, `${id}-opaque-operation`, `${id}-opaque-intent`];
+    omitted.push(id, ...values);
+    db.prepare('INSERT INTO phone_challenges VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(id, phone, values[0]!, values[1]!, 'consumed', values[2]!, stamp, stamp + 5, stamp + 1, 1, 1, stamp + 2, auth);
+    db.prepare('INSERT INTO phone_operations VALUES(?,?,?,?,?,?)').run(id, 'check', values[3]!, values[4]!, 'done', stamp + 3);
+  }
+  const persisted = () => ({ challenges: db.prepare('SELECT * FROM phone_challenges ORDER BY id').all(),
+    operations: db.prepare('SELECT * FROM phone_operations ORDER BY challenge_id,operation,key').all() });
+  const before = persisted();
+  const read = () => buildAccountExport(db, context, () => {});
+  const phoneRecords = (json: string) => unpack(json).records.filter(row => ['phoneChallengeHistory', 'phoneOperationHistory'].includes(row.category));
+  const initial = read();
+  assert.equal(phoneRecords(initial.json).filter(row => row.category === 'phoneChallengeHistory').length, 2);
+  assert.equal(phoneRecords(initial.json).filter(row => row.category === 'phoneOperationHistory').length, 2);
+  assert.ok(initial.json.includes('88770011')); assert.ok(initial.json.includes('88770014'));
+  for (const stamp of ['88770022', '88770025', '88770033', '88770036']) assert.equal(initial.json.includes(stamp), false);
+  for (const value of omitted) assert.equal(initial.json.includes(value), false, `leaked omitted source value ${value}`);
+  db.prepare('UPDATE "user" SET phoneNumber=NULL WHERE id=?').run('auth-b');
+  db.prepare('UPDATE "user" SET phoneNumber=? WHERE id=?').run('+12025550199', context.authUserId);
+  db.prepare('UPDATE "user" SET phoneNumber=? WHERE id=?').run(phone, 'auth-b');
+  const reassociated = read();
+  assert.deepEqual(phoneRecords(reassociated.json), phoneRecords(initial.json), 'contact ownership cannot import foreign or unbound history');
+  for (const actor of [{ ...context, authUserId: 'auth-b' }, { ...context, accountId: 'form-b' },
+    { ...context, accountId: 'missing-account' }]) {
+    assert.throws(() => buildAccountExport(db, actor, () => {}), error => error instanceof DomainError && error.code === 'account_session_mismatch');
+  }
+  const residual = (json: string) => unpack(json).manifest.residuals.find(value =>
+    (value as { category: string }).category === 'unboundPhoneChallenges');
+  assert.deepEqual(residual(initial.json), { category: 'unboundPhoneChallenges', status: 'unavailable',
+    reason: 'exact_subject_attribution_requires_qualified_phone_adapter' });
+  assert.deepEqual(persisted(), before);
+  db.prepare('INSERT INTO phone_challenges VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run('unrelated-unbound', '+12025550188', 'opaque-link-extra', 'opaque-start-extra', 'unknown', null, 88770044, 88770055, 88770044, 1, 0, null, null);
+  const withExtra = persisted(), extraExport = read();
+  assert.deepEqual(residual(extraExport.json), residual(initial.json), 'unbound residual releases no global inventory count');
+  assert.deepEqual(phoneRecords(extraExport.json), phoneRecords(initial.json));
+  assert.deepEqual(persisted(), withExtra);
+  assert.equal(db.inTransaction, false);
+}));
+
+test('deletion and Body retention history leave privacyChoices unavailable and exclude grant/security evidence', () => fixture(db => {
   if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_lifecycle'").get()) db.exec(lifecycleMigration.sql);
+  db.exec(manualMeasurementMigrationSql); db.exec(manualRetentionMigrationSql);
+  bindSuppressionAuthority(db, suppressionLedger().ledger);
+  const writer = createCanonicalAccountWriter(db);
+  const body = createManualMeasurements(db, writer.lifecycle);
   for (const suffix of ['a', 'b']) {
     db.prepare('INSERT INTO account_deletion_requests(id,account_id,command_key,intent_hash,policy_version,phase,requested_at_ms,status_token_hash,status_token_expires_at_ms) VALUES (?,?,?,?,?,?,?,?,?)')
       .run(`delete-${suffix}`, `form-${suffix}`, `delete-command-key-${suffix}`, `delete-intent-hash-${suffix}`, 'synthetic-policy',
@@ -178,8 +234,22 @@ test('existing lifecycle schema exports deletion metadata and excludes grants, h
       .run(`delete-${suffix}`, 'syntheticCategory', 'pending', 'private-policy-ref', null, 'private-evidence-ref', 1);
     db.prepare('INSERT INTO account_action_grants VALUES (?,?,?,?,?,?,?,?,?)')
       .run(`action-grant-secret-hash-${suffix}`, `form-${suffix}`, `auth-session-${suffix}`, 0, 'account_export', 'password', 1, 9999999999999, null);
+    db.prepare('INSERT INTO body_manual_measurements VALUES(?,?,?,?,?,?,?,?,?)')
+      .run(`body-measurement-${suffix}`, `form-${suffix}`, 'weight', 70, 'kg', 'kg', '2026-10-09', `body-note-${suffix}`, date);
+    db.prepare('INSERT INTO body_manual_receipts VALUES(?,?,?,?,?)')
+      .run(`form-${suffix}`, `body-key-${suffix}`, `body-intent-${suffix}`, `body-measurement-${suffix}`, 'create');
+    for (const state of ['granted', 'revoked']) {
+      db.prepare('INSERT INTO body_manual_retention_decisions VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+        .run(`form-${suffix}`, `body-decision-${state}-${suffix}`, `auth-${suffix}`, `auth-session-${suffix}`, 0, state,
+          state === 'granted' ? 1 : 2, `body-statement-${suffix}`, `body-grant-key-${suffix}`, date, date);
+    }
+    db.prepare('INSERT INTO body_manual_retention_receipts VALUES(?,?,?,?,?,?)')
+      .run(`form-${suffix}`, `body-retention-key-${suffix}`, `body-retention-intent-${suffix}`, `body-decision-granted-${suffix}`,
+        JSON.stringify({ opaque: `body-retention-receipt-${suffix}` }), date);
+    db.prepare('INSERT INTO body_manual_retention_attributions VALUES(?,?,?,?,?,?,?)')
+      .run(`form-${suffix}`, `body-key-${suffix}`, `body-measurement-${suffix}`, `body-decision-granted-${suffix}`, 1, `body-statement-${suffix}`, date);
   }
-  const result = buildAccountExport(db, context, () => {});
+  const result = buildAccountExport(db, context, actor => writer.lifecycle.assertActive(actor), [body.lifecycleAdapter]);
   const payload = unpack(result.json);
   const status = payload.manifest.categories.find(entry => entry.category === 'deletionStatus');
   assert.equal(status?.status, 'complete'); assert.equal(status?.count, 1);
@@ -187,6 +257,17 @@ test('existing lifecycle schema exports deletion metadata and excludes grants, h
   assert.ok(result.json.includes('awaiting_reauthentication'));
   for (const secret of ['delete-command-key', 'delete-intent-hash', 'deletion-status-secret-hash', 'private-policy-ref', 'private-evidence-ref', 'action-grant-secret-hash'])
     assert.equal(result.json.includes(secret), false, `leaked lifecycle ${secret}`);
+  assert.equal(payload.manifest.categories.find(entry => entry.category === 'deletionSteps')?.count, 1);
+  assert.deepEqual(payload.manifest.categories.find(entry => entry.category === 'privacyChoices'), {
+    category: 'privacyChoices', status: 'unavailable', count: 0, reason: 'qualified_adapter_not_supplied' });
+  assert.equal(payload.manifest.categories.find(entry => entry.category === 'body')?.status, 'unavailable');
+  assert.equal(payload.manifest.categories.find(entry => entry.category === 'body')?.reason, 'manual_retention_metadata_omitted');
+  assert.ok(result.json.includes('body-measurement-a')); assert.ok(result.json.includes('body-note-a'));
+  assert.equal(result.json.includes('body-measurement-b'), false); assert.equal(result.json.includes('body-note-b'), false);
+  for (const value of ['body-decision', 'body-key', 'body-intent', 'body-statement', 'body-grant-key', 'body-retention-key',
+    'body-retention-intent', 'body-retention-receipt', 'auth-session', 'auth-a', 'auth-b'])
+    assert.equal(result.json.includes(value), false, `leaked Body/auth source value ${value}`);
+  assert.equal(payload.manifest.complete, false);
   assert.equal(result.complete, false);
 }));
 

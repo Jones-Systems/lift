@@ -1,3 +1,4 @@
+import { issueLocalPurgeAuthority } from '../../src/lifecycle/purge-executor.js';
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import Database from 'better-sqlite3';
@@ -179,7 +180,7 @@ test('canonical purgeLocal completes usage purge after provider reconciliation a
   assert.deepEqual(f.db.prepare('SELECT state FROM usage_reservations WHERE id=?').get(undispatched.handle.reservationId), { state: 'released' });
   assert.deepEqual(f.db.prepare('SELECT state FROM usage_reservations WHERE id=?').get(uncertain.handle.reservationId), { state: 'unknown' });
   const held = f.snapshot();
-  const pending = f.lifecycle.purgeLocal(f.requestId);
+  const pending = f.lifecycle.purgeLocal(issueLocalPurgeAuthority(f.lifecycle, { requestId: f.requestId, operationId: 'synthetic-purge' }));
   assert.equal(pending.localPurged, false);
   assert.equal(pending.complete, false);
   assert.deepEqual(f.snapshot(), held);
@@ -188,7 +189,7 @@ test('canonical purgeLocal completes usage purge after provider reconciliation a
     (error: unknown) => error instanceof DomainError && error.code === 'account_session_invalid');
 
   f.ledger.trusted.reconcile(uncertain.handle, { outcome: 'not_consumed', evidenceId: 'synthetic-authoritative-not-consumed' });
-  const purged = f.lifecycle.purgeLocal(f.requestId);
+  const purged = f.lifecycle.purgeLocal(issueLocalPurgeAuthority(f.lifecycle, { requestId: f.requestId, operationId: 'synthetic-purge' }));
   assert.deepEqual(f.snapshot(), otherOnly);
   assert.equal(f.db.prepare('SELECT 1 FROM usage_suppressions WHERE account_id=?').get(f.context.accountId), undefined);
   assert.equal(purged.localPurged, true, 'canonical purgeLocal must qualify the empty usage module after authoritative reconciliation');
@@ -202,7 +203,7 @@ test('canonical purgeLocal completes usage purge after provider reconciliation a
     (error: unknown) => error instanceof DomainError && error.code === 'account_disabled');
   assert.throws(() => f.ledger.usage.reserve(f.context, intent('canonical-after-purge')),
     (error: unknown) => error instanceof DomainError && error.code === 'account_session_invalid');
-  assert.equal(f.lifecycle.purgeLocal(f.requestId).localPurged, true);
+  assert.equal(f.lifecycle.purgeLocal(issueLocalPurgeAuthority(f.lifecycle, { requestId: f.requestId, operationId: 'synthetic-purge' })).localPurged, true);
   assert.equal(f.verify().status, 'complete');
   assert.deepEqual(f.snapshot(), otherOnly);
   assert.deepEqual(f.authority.lookup(f.context.accountId), suppression);
@@ -231,7 +232,7 @@ test('canonical usage verification requires trusted authority and cannot accept 
   const remaining = f.snapshot();
   assert.ok(remaining.some(table => table.rows.length > 0));
   assert.deepEqual(f.verify(), { status: 'unknown', reason: 'usage_suppression_unproved' });
-  assert.equal(f.lifecycle.purgeLocal(f.requestId).localPurged, false);
+  assert.equal(f.lifecycle.purgeLocal(issueLocalPurgeAuthority(f.lifecycle, { requestId: f.requestId, operationId: 'synthetic-purge' })).localPurged, false);
   assert.deepEqual(f.snapshot(), remaining);
   assert.deepEqual(f.db.pragma('foreign_key_check'), []);
 });

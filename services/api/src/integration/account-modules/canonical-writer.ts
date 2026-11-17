@@ -1,3 +1,4 @@
+import { currentLocalPurgeFrame, currentLocalPurgeCategory, withLocalPurgeCategory, type LocalPurgeFrame } from '../../lifecycle/purge-executor.js';
 import type { Sqlite } from '../../storage.js';
 import { DomainError } from '../../errors.js';
 import { assertActive, withActiveWrite, adultEligibility, suppressionAuthority } from '../../lifecycle/guards.js';
@@ -7,6 +8,7 @@ import type { SqliteAuthStoreOptions } from '../../wearables/direct-provider-tra
 export type CanonicalPurgeUnavailable = Readonly<{
   status: 'unavailable'; reason: 'exact_purge_executor_binding_required';
 }>;
+export type CanonicalPurgeReadiness = CanonicalPurgeUnavailable | Readonly<{ status: 'ready'; epoch: number }>;
 export type CanonicalAccountWriter = Readonly<{
   lifecycle: LifecycleBindings;
   assertWithinWrite: (context: AccountContext) => void;
@@ -14,12 +16,13 @@ export type CanonicalAccountWriter = Readonly<{
   lifecycleStoreOptions: SqliteAuthStoreOptions;
   assertAccountCurrent: (context: AccountContext) => void;
   assertSuppression: (accountId: string, epoch: number) => void;
-  purgeReadiness: (requestId: string, accountId: string) => CanonicalPurgeUnavailable;
+  purgeReadiness: (requestId: string, accountId: string) => CanonicalPurgeReadiness;
   guardLifecycleAdapter: (adapter: LifecycleAdapter) => LifecycleAdapter;
 }>;
 type Frame = { live: boolean; db: Sqlite } & (
   { kind: 'active'; actor: AccountContext } |
-  { kind: 'suppression'; accountId: string; epoch: number; sequence: number }
+  { kind: 'suppression'; accountId: string; epoch: number; sequence: number } |
+  ({ kind: 'purge'; category: string; authority: LocalPurgeFrame } & LocalPurgeFrame)
 );
 const sameActor = (a: AccountContext, b: AccountContext): boolean => a.accountId === b.accountId &&
   a.authUserId === b.authUserId && a.sessionId === b.sessionId && a.epoch === b.epoch;
@@ -48,7 +51,11 @@ export function createCanonicalAccountWriter(db: Sqlite): CanonicalAccountWriter
     const admitted = frame;
     if (!admitted?.live || admitted.db !== db) return denied();
     if (admitted.kind === 'active') assertActive(db, admitted.actor);
-    else if (suppressionProof(admitted.accountId, admitted.epoch) !== admitted.sequence) denied();
+    else {
+      if (suppressionProof(admitted.accountId, admitted.epoch) !== admitted.sequence) denied();
+      if (admitted.kind === 'purge' && (currentLocalPurgeFrame(db) !== admitted.authority ||
+          currentLocalPurgeCategory(db) !== admitted.category)) denied();
+    }
     if (frame !== admitted || !admitted.live) denied();
     return admitted;
   };
@@ -58,7 +65,7 @@ export function createCanonicalAccountWriter(db: Sqlite): CanonicalAccountWriter
   };
   const assertSuppression = (accountId: string, epoch: number): void => {
     const admitted = currentFrame();
-    if (admitted.kind !== 'suppression' || admitted.accountId !== accountId || admitted.epoch !== epoch) denied();
+    if ((admitted.kind !== 'suppression' && admitted.kind !== 'purge') || admitted.accountId !== accountId || admitted.epoch !== epoch) denied();
   };
   function admit<T>(next: Frame, effect: () => T): T {
     transaction();
@@ -67,7 +74,9 @@ export function createCanonicalAccountWriter(db: Sqlite): CanonicalAccountWriter
       currentFrame();
       if (previous.kind !== next.kind || (previous.kind === 'active' && next.kind === 'active' && !sameActor(previous.actor, next.actor)) ||
         (previous.kind === 'suppression' && next.kind === 'suppression' &&
-          (previous.accountId !== next.accountId || previous.epoch !== next.epoch || previous.sequence !== next.sequence))) denied();
+          (previous.accountId !== next.accountId || previous.epoch !== next.epoch || previous.sequence !== next.sequence)) ||
+        (previous.kind === 'purge' && next.kind === 'purge' &&
+          (previous.authority !== next.authority || previous.category !== next.category))) denied();
     }
     frame = next;
     try { currentFrame(); const result = synchronous(effect()); currentFrame(); return result; }
@@ -88,8 +97,14 @@ export function createCanonicalAccountWriter(db: Sqlite): CanonicalAccountWriter
     },
     assertRootWriter: (candidate: Sqlite): void => { if (candidate !== db) denied(); currentFrame(); },
   });
-  const purgeReadiness = (_requestId: string, _accountId: string): CanonicalPurgeUnavailable =>
-    ({ status: 'unavailable', reason: 'exact_purge_executor_binding_required' });
+  const unavailablePurge = (): CanonicalPurgeUnavailable => ({ status: 'unavailable', reason: 'exact_purge_executor_binding_required' });
+  const purgeReadiness = (requestId: string, accountId: string): CanonicalPurgeReadiness => {
+    const authority = currentLocalPurgeFrame(db), category = currentLocalPurgeCategory(db);
+    if (!authority || authority.requestId !== requestId || authority.accountId !== accountId ||
+        !category || !authority.qualifiedCategories.includes(category)) return unavailablePurge();
+    if (suppressionProof(accountId, authority.epoch) !== authority.sequence) return unavailablePurge();
+    return { status: 'ready', epoch: authority.epoch };
+  };
   const guardLifecycleAdapter = (adapter: LifecycleAdapter): LifecycleAdapter => {
     const active = <T>(context: AccountContext, effect: (actor: AccountContext) => T): T => {
       const actor = Object.freeze({ ...context });
@@ -106,7 +121,14 @@ export function createCanonicalAccountWriter(db: Sqlite): CanonicalAccountWriter
       export: (context: AccountContext, snapshot: ExportSnapshot) => active(context, actor => adapter.export(actor, snapshot)),
       suppress: (accountId: string, epoch: number) => suppressed(accountId, epoch, () => adapter.suppress(accountId, epoch)),
       verifySuppressed: (accountId: string, epoch: number) => suppressed(accountId, epoch, () => adapter.verifySuppressed(accountId, epoch)),
-      purge: purgeReadiness,
+      purge: (requestId: string, accountId: string) => {
+        const authority = currentLocalPurgeFrame(db);
+        if (!authority || authority.requestId !== requestId || authority.accountId !== accountId ||
+            !authority.qualifiedCategories.includes(adapter.category) ||
+            (currentLocalPurgeCategory(db) !== undefined && currentLocalPurgeCategory(db) !== adapter.category)) return unavailablePurge();
+        return withLocalPurgeCategory(db, adapter.category, () => admit({ ...authority, live: true, kind: 'purge',
+          authority, category: adapter.category }, () => adapter.purge(requestId, accountId)));
+      },
     });
   };
   return Object.freeze({ lifecycle, assertWithinWrite, lifecycleStoreOptions, assertAccountCurrent: assertWithinWrite,
