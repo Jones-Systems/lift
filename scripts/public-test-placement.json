@@ -272,6 +272,7 @@
         "apps/form/src/native/__tests__/speech.test.cjs",
         "apps/form/src/native/__tests__/storeKitDelivery.test.cjs",
         "apps/form/src/settings/__tests__/model.test.cjs",
+        "apps/form/src/settings/context-editors/__tests__/model.test.cjs",
         "apps/form/src/voice-coaching/native/tests/dictation-driver.test.cjs",
         "apps/form/src/voice-coaching/native/tests/driver.test.cjs",
         "apps/form/src/voice-coaching/realtime/tests/controller.test.cjs",
@@ -291,7 +292,8 @@
         "apps/form/tests/renderer/context-review.test.tsx",
         "apps/form/tests/renderer/runtime-auth.test.tsx",
         "apps/form/tests/renderer/source-plan-detail.test.tsx",
-        "apps/form/tests/renderer/training-context-runtime.test.tsx"
+        "apps/form/tests/renderer/training-context-runtime.test.tsx",
+        "apps/form/tests/renderer/context-editors.test.tsx"
       ]
     },
     {

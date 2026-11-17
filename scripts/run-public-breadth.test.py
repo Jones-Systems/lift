@@ -44,7 +44,7 @@ class BreadthTests(unittest.TestCase):
         contract = breadth.selection(ROOT)
         manifest = json.loads((ROOT / breadth.MANIFEST).read_text())
         discovered, hosted = contract["discovered_test_files"], contract["existing_hosted_test_files"]
-        self.assertEqual(len(discovered), 322)
+        self.assertEqual(len(discovered), 324)
         self.assertEqual(len(hosted), 76)
         self.assertEqual(sum(len(g["files"]) for g in contract["blocked_groups"]), 32)
         self.assertFalse(contract["all_coverage_available"])
@@ -61,13 +61,13 @@ class BreadthTests(unittest.TestCase):
     def test_commands_preserve_nested_voice_transport_and_adapter_selection(self):
         commands = breadth.selection(ROOT)["commands"]
         selected = {c["group"]: c for c in commands}
-        self.assertEqual(len(selected["app-breadth"]["test_sources"]), 83)
+        self.assertEqual(len(selected["app-breadth"]["test_sources"]), 84)
         for source in ("src/features/training/__tests__/context-review-presentation.test.cjs",
                        "src/features/training/__tests__/source-plan-detail-presentation.test.cjs",
                        "src/integration/tests/account-security-host.test.cjs"):
             self.assertIn("apps/form/" + source, selected["app-breadth"]["test_sources"])
             self.assertEqual(selected["app-breadth"]["argv"].count(source), 1)
-        self.assertEqual(len(selected["app-renderer"]["test_sources"]), 7)
+        self.assertEqual(len(selected["app-renderer"]["test_sources"]), 8)
         for source in ("tests/renderer/context-review.test.tsx", "tests/renderer/source-plan-detail.test.tsx",
                        "tests/renderer/training-context-runtime.test.tsx",
                        "tests/renderer/change-password.test.tsx", "tests/renderer/change-email.test.tsx",
