@@ -79,6 +79,33 @@ class PublicChecksTests(unittest.TestCase):
                 checks.selection(self.root, ["plan-revision"])
             path.write_bytes((ROOT / relative).read_bytes())
 
+    def test_grounding_synthetic_compiles_first_and_requires_fixtures(self):
+        contract = checks.selection(ROOT, ["grounding-synthetic"])
+        self.assertEqual(contract["groups"], ["api-compile", "grounding-synthetic"])
+        sources = ("tests/grounding/grounding.test.ts", "tests/grounding/stop-words.test.ts",
+                   "tests/grounding/abstention.test.ts")
+        self.assertEqual(checks.API_TESTS["grounding-synthetic"], sources)
+        self.assertEqual(contract["commands"][0]["argv"],
+                         ["node", "node_modules/typescript/bin/tsc", "-p", "tsconfig.json"])
+        command = contract["commands"][1]
+        self.assertEqual(command["argv"], ["node", "--test", "--test-concurrency=1",
+                                          "dist/tests/grounding/grounding.test.js",
+                                          "dist/tests/grounding/stop-words.test.js",
+                                          "dist/tests/grounding/abstention.test.js"])
+        fixtures = ("tests/grounding/fixture.ts", "tests/domain-features/cardio/fixture.ts")
+        self.assertEqual(command["test_sources"], ["services/api/" + source for source in (*sources, *fixtures)])
+        self.assertEqual(checks.selection(ROOT, [])["commands"].count(command), 1)
+        for source in command["test_sources"]:
+            path = self.root / source
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes((ROOT / source).read_bytes())
+        for source in (*sources, *fixtures):
+            path = self.root / "services/api" / source
+            path.unlink()
+            with self.assertRaises(FileNotFoundError):
+                checks.selection(self.root, ["grounding-synthetic"])
+            path.write_bytes((ROOT / "services/api" / source).read_bytes())
+
     def test_lifecycle_runtime_compiles_first_and_requires_candidate_coverage(self):
         contract = checks.selection(ROOT, ["lifecycle-runtime"])
         self.assertEqual(contract["groups"], ["api-compile", "lifecycle-runtime"])
