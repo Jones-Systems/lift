@@ -17,7 +17,7 @@ prove that a new test was selected.
 | Placement/group | Files | Execution and reason |
 | --- | ---: | --- |
 | Existing hosted | 76 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
-| `api-breadth` | 89 | Compile API TypeScript with `tsc`; run emitted TS tests and original MJS/CJS tests using the existing source hook. Never run the private projection build. |
+| `api-breadth` | 90 | Compile API TypeScript with `tsc`; run emitted TS tests and original MJS/CJS tests using the existing source hook. Never run the private projection build. |
 | `app-breadth` | 83 | Compile the transport compatibility output, then run explicit CJS files serially. Phone sign-in embeds the standalone transport suite exactly once. |
 | `app-renderer` | 7 | Existing Jest renderer command selects runtime auth, context review, source-plan detail, the Training context runtime mount, both frozen credential leaves and the account-security host composition; onboarding remains in the existing hosted group. |
 | `website` | 29 | Explicit recursive Node test paths include nested voice modules. Require the real portable session-controller source before execution. |
@@ -25,7 +25,7 @@ prove that a new test was selected.
 | `breadth-contract` | 1 | This runner's selection, result and lifecycle contract runs inside the breadth job. |
 | Blocked | 32 | Exact files, reasons, missing inputs and intended private/manual qualification routes remain in the manifest. |
 
-Current discovery has 321 files. The public runner's `lifecycle-runtime` group
+Current discovery has 322 files. The public runner's `lifecycle-runtime` group
 selects exactly 36 API modules, including purchases, reconciliation, status
 reader, codec and both Source27 suites exactly once. The three existing purchase
 suites move from `api-breadth` to existing hosted placement; the two new suites
@@ -55,7 +55,7 @@ execution, and moves the existing v1 app lifecycle suite from `app-breadth` to
 hosted execution exactly once. Its API compilation precedes actual
 backend-encoder/client-parser interop. These unmounted syntax and compatibility
 tests do not qualify future producers, evidence authority, transport or consumer
-exposure. There are 208 additional public product test files, plus the breadth
+exposure. There are 213 additional public product test files, plus the breadth
 contract.
 The default `plan-revision` group moves the existing backend suite from
 `api-breadth` to hosted placement exactly once and adds the planning revision
