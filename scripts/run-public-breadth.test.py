@@ -44,9 +44,9 @@ class BreadthTests(unittest.TestCase):
         contract = breadth.selection(ROOT)
         manifest = json.loads((ROOT / breadth.MANIFEST).read_text())
         discovered, hosted = contract["discovered_test_files"], contract["existing_hosted_test_files"]
-        self.assertEqual(len(discovered), 313)
+        self.assertEqual(len(discovered), 315)
         self.assertEqual(len(hosted), 76)
-        self.assertEqual(sum(len(g["files"]) for g in contract["blocked_groups"]), 32)
+        self.assertEqual(sum(len(g["files"]) for g in contract["blocked_groups"]), 33)
         self.assertFalse(contract["all_coverage_available"])
         for files in (discovered + ["scripts/new.test.py"], discovered[1:]):
             with self.assertRaisesRegex(ValueError, "Placement drift"):
@@ -79,6 +79,11 @@ class BreadthTests(unittest.TestCase):
         inbox = "services/api/tests/purchases/notification-inbox.test.ts"
         self.assertEqual(selected["api-breadth"]["test_sources"].count(inbox), 1)
         self.assertEqual(selected["api-breadth"]["argv"].count("dist/tests/purchases/notification-inbox.test.js"), 1)
+        fallback = "services/api/tests/planning/first-plan/operational-fallback-source.test.mjs"
+        self.assertEqual(selected["api-breadth"]["test_sources"].count(fallback), 1)
+        self.assertEqual(selected["api-breadth"]["argv"].count("tests/planning/first-plan/operational-fallback-source.test.mjs"), 1)
+        blocked = {g["id"]: g["files"] for g in breadth.selection(ROOT)["blocked_groups"]}
+        self.assertIn("services/api/tests/integration/first-plan/operational-fallback-source.test.ts", blocked["private-grounding"])
         self.assertNotIn("npm run build", json.dumps(commands))
         workflow = (ROOT / ".github/workflows/public-breadth.yml").read_text()
         self.assertIn("schedule:", workflow)
