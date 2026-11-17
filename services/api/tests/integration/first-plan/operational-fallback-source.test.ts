@@ -51,7 +51,8 @@ const code = (status: DomainError['status'], expected: string) => (error: unknow
 type Database = ReturnType<typeof accountFixture>['db'];
 const catalogTrigger = (db: Database) => {
   const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='immutable_catalog'").get() as { sql: string } | undefined;
-  assert.ok(row?.sql.includes('BEFORE UPDATE OF id,data ON exercises')); return row.sql;
+  assert.ok(row, 'immutable_catalog trigger is missing');
+  assert.ok(row.sql.includes('BEFORE UPDATE OF id,data ON exercises')); return row.sql;
 };
 const assertCatalogImmutable = (db: Database, exerciseId: string) =>
   assert.throws(() => db.prepare('UPDATE exercises SET data=? WHERE id=?').run('{}', exerciseId), /immutable_catalog/);
