@@ -33,7 +33,14 @@ test('manual measurement CRUD isolates accounts, canonicalizes units and hard de
   assert.equal((await request(`/${value.id}/delete`, {}, 'a', 'delete')).status, 200);
   assert.equal(db.prepare('SELECT 1 FROM body_manual_measurements WHERE id=?').get(value.id), undefined);
   assert.equal((await request('', input)).status, 404, 'creation receipt cannot resurrect deleted values');
-  const exported: unknown[] = []; service.lifecycleAdapter.export(a, { snapshotAtMs: Date.now(), append: (_category, data) => exported.push(data) }); assert.deepEqual(exported, [{ measurements: [weight] }]);
+  const exported: unknown[] = []; service.lifecycleAdapter.export(a, { snapshotAtMs: Date.now(), append: (_category, data) => exported.push(data) });
+  assert.equal(JSON.stringify(exported[0]), JSON.stringify({ measurements: [weight] }), 'first payload is byte-compatible with the pre-retention export');
+  assert.equal(exported.length, 2);
+  const retained = exported[1] as { retention: string; decisions: { decisionId: string; state: string }[]; attributions: { measurementId: string }[]; operations: { measurementId: string; operation: string }[] };
+  assert.equal(retained.retention, 'installed'); assert.deepEqual(retained.decisions.map(entry => entry.state), ['granted']);
+  assert.deepEqual(retained.attributions.map(entry => entry.measurementId).sort(), [value.id, weight.id].sort());
+  assert.deepEqual(retained.operations, [{ measurementId: value.id, operation: 'create' }, { measurementId: weight.id, operation: 'create' }, { measurementId: value.id, operation: 'delete' }]);
+  assert.equal(/"(key|intentHash|epoch|sessionId|authUserId)"/.test(JSON.stringify(exported)), false);
   db.transaction(() => { assert.equal(service.lifecycleAdapter.purge('synthetic', a.accountId).status, 'complete'); assert.equal(service.lifecycleAdapter.verifySuppressed(a.accountId, 1).status, 'complete'); }).immediate();
   assert.equal(service.list(a).items.length, 0);
 });
@@ -60,8 +67,18 @@ test('legacy body lifecycle adapter exports only its account and purges historic
   const first = seedHistoricalMeasurement(db, contexts[0]!.accountId, { kind: 'weight', value: 80, unit: 'kg', measuredOn: '2026-10-10', note: 'Synthetic account one' }, 'measurement', { value: 80, unit: 'kg' });
   const second = seedHistoricalMeasurement(db, contexts[1]!.accountId, { kind: 'weight', value: 90, unit: 'kg', measuredOn: '2026-10-10', note: 'Synthetic account two' }, 'measurement', { value: 90, unit: 'kg' });
   assert.throws(() => service.create(contexts[0]!, { kind: 'weight', value: 80, unit: 'kg', measuredOn: '2026-10-10' }, 'new'), { code: 'body_manual_retention_required' });
+  // The shared seed helper writes a placeholder created_at; a genuine row stores an ISO instant, which export validates.
+  assert.throws(() => buildAccountExport(db, contexts[0]!, actor => assertActive(db, actor), [service.lifecycleAdapter]), { code: 'body_manual_export_invalid_data' });
+  const createdAt = '2026-10-10T07:30:00.000Z';
+  db.prepare('UPDATE body_manual_measurements SET created_at=?').run(createdAt);
   const exported = buildAccountExport(db, contexts[0]!, actor => assertActive(db, actor), [service.lifecycleAdapter]);
   assert.ok(exported.json.includes(first.id)); assert.equal(exported.json.includes(second.id), false); assert.equal(exported.json.includes('Synthetic account two'), false);
+  const body = (JSON.parse(exported.json) as { records: { category: string; value: unknown }[]; manifest: { complete: boolean; categories: { category: string; status: string; count: number; reason?: string }[] } });
+  assert.deepEqual(body.records.filter(record => record.category === 'body').map(record => record.value),
+    [{ measurements: [first] }, { schema: 'form.body-manual-retention-export/v1', retention: 'not_installed',
+      measurementMetadata: [{ measurementId: first.id, createdAt }], operations: [{ measurementId: first.id, operation: 'create' }] }]);
+  assert.deepEqual(body.manifest.categories.find(entry => entry.category === 'body'), { category: 'body', status: 'complete', count: 2 });
+  assert.equal(body.manifest.complete, false);
   db.transaction(() => service.lifecycleAdapter.purge('synthetic-request', contexts[0]!.accountId)).immediate();
   assert.equal(service.list(contexts[0]!).items.length, 0); assert.equal(service.list(contexts[1]!).items.length, 1);
   assert.equal(db.prepare('SELECT 1 FROM body_manual_receipts WHERE account_id=?').get(contexts[0]!.accountId), undefined);

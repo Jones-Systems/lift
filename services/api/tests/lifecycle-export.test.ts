@@ -16,7 +16,10 @@ import type { AccountContext, LifecycleAdapter } from '../src/lifecycle/types.js
 import { lifecycleMigration } from '../src/lifecycle/migration.js';
 import { createActivityLifecycleAdapter, type ActivityPlanSnapshot, type PersonalExercise } from '../src/activity/index.js';
 import { fixture as activityFixture, personalFields, unknownLoad } from './activity/fixture.js';
-import { createManualMeasurements } from '../src/body/measurements.js';
+import { createManualMeasurements, type ManualMeasurement } from '../src/body/measurements.js';
+import { createManualRetention } from '../src/body/manual-retention.js';
+import { MANUAL_RETENTION_STATEMENT_SHA256 } from '../src/body/manual-retention-contract.js';
+import { manualRetentionGrant, manualRetentionAttempt, seedHistoricalMeasurement } from './body/manual-retention-fixture.js';
 import { manualMeasurementMigrationSql } from '../src/body/manual-measurement-migration.js';
 import { manualRetentionMigrationSql } from '../src/body/manual-retention-migration.js';
 import { suppressionLedger } from './integration/account-modules/fixture.js';
@@ -225,7 +228,8 @@ test('deletion and Body retention history leave privacyChoices unavailable and e
   db.exec(manualMeasurementMigrationSql); db.exec(manualRetentionMigrationSql);
   bindSuppressionAuthority(db, suppressionLedger().ledger);
   const writer = createCanonicalAccountWriter(db);
-  const body = createManualMeasurements(db, writer.lifecycle);
+  const body = createManualMeasurements(db, writer.lifecycle), retention = createManualRetention(db, writer.lifecycle);
+  const bodySeed: Record<string, { measurement: ManualMeasurement; granted: string; stopped: string }> = {};
   for (const suffix of ['a', 'b']) {
     db.prepare('INSERT INTO account_deletion_requests(id,account_id,command_key,intent_hash,policy_version,phase,requested_at_ms,status_token_hash,status_token_expires_at_ms) VALUES (?,?,?,?,?,?,?,?,?)')
       .run(`delete-${suffix}`, `form-${suffix}`, `delete-command-key-${suffix}`, `delete-intent-hash-${suffix}`, 'synthetic-policy',
@@ -234,20 +238,17 @@ test('deletion and Body retention history leave privacyChoices unavailable and e
       .run(`delete-${suffix}`, 'syntheticCategory', 'pending', 'private-policy-ref', null, 'private-evidence-ref', 1);
     db.prepare('INSERT INTO account_action_grants VALUES (?,?,?,?,?,?,?,?,?)')
       .run(`action-grant-secret-hash-${suffix}`, `form-${suffix}`, `auth-session-${suffix}`, 0, 'account_export', 'password', 1, 9999999999999, null);
-    db.prepare('INSERT INTO body_manual_measurements VALUES(?,?,?,?,?,?,?,?,?)')
-      .run(`body-measurement-${suffix}`, `form-${suffix}`, 'weight', 70, 'kg', 'kg', '2026-10-09', `body-note-${suffix}`, date);
-    db.prepare('INSERT INTO body_manual_receipts VALUES(?,?,?,?,?)')
-      .run(`form-${suffix}`, `body-key-${suffix}`, `body-intent-${suffix}`, `body-measurement-${suffix}`, 'create');
-    for (const state of ['granted', 'revoked']) {
-      db.prepare('INSERT INTO body_manual_retention_decisions VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-        .run(`form-${suffix}`, `body-decision-${state}-${suffix}`, `auth-${suffix}`, `auth-session-${suffix}`, 0, state,
-          state === 'granted' ? 1 : 2, `body-statement-${suffix}`, `body-grant-key-${suffix}`, date, date);
-    }
-    db.prepare('INSERT INTO body_manual_retention_receipts VALUES(?,?,?,?,?,?)')
-      .run(`form-${suffix}`, `body-retention-key-${suffix}`, `body-retention-intent-${suffix}`, `body-decision-granted-${suffix}`,
-        JSON.stringify({ opaque: `body-retention-receipt-${suffix}` }), date);
-    db.prepare('INSERT INTO body_manual_retention_attributions VALUES(?,?,?,?,?,?,?)')
-      .run(`form-${suffix}`, `body-key-${suffix}`, `body-measurement-${suffix}`, `body-decision-granted-${suffix}`, 1, `body-statement-${suffix}`, date);
+    // Real Body helpers create every retained row, so the export is checked against valid persisted shapes.
+    const actor: AccountContext = { accountId: `form-${suffix}`, authUserId: `auth-${suffix}`, sessionId: `auth-session-${suffix}`, epoch: 0 };
+    const granted = manualRetentionGrant(), stopped = manualRetentionGrant();
+    retention.grant(actor, granted, `body-grant-key-${suffix}`);
+    retention.grant(actor, stopped, `body-stopped-grant-key-${suffix}`);
+    retention.revoke(actor, stopped.decisionId, {}, `body-retention-key-${suffix}`);
+    const measurement = seedHistoricalMeasurement(db, actor.accountId, { kind: 'weight', value: 70, unit: 'kg', measuredOn: '2026-10-09',
+      note: `body-note-${suffix}` }, `body-key-${suffix}`, { value: 70, unit: 'kg' });
+    db.prepare('UPDATE body_manual_measurements SET created_at=? WHERE id=?').run(`2026-10-09T0${suffix === 'a' ? 1 : 2}:00:00.000Z`, measurement.id);
+    db.transaction(() => retention.attributeWithinWrite(actor, manualRetentionAttempt(granted.decisionId), `body-key-${suffix}`, measurement.id)).immediate();
+    bodySeed[suffix] = { measurement, granted: granted.decisionId, stopped: stopped.decisionId };
   }
   const result = buildAccountExport(db, context, actor => writer.lifecycle.assertActive(actor), [body.lifecycleAdapter]);
   const payload = unpack(result.json);
@@ -260,13 +261,34 @@ test('deletion and Body retention history leave privacyChoices unavailable and e
   assert.equal(payload.manifest.categories.find(entry => entry.category === 'deletionSteps')?.count, 1);
   assert.deepEqual(payload.manifest.categories.find(entry => entry.category === 'privacyChoices'), {
     category: 'privacyChoices', status: 'unavailable', count: 0, reason: 'qualified_adapter_not_supplied' });
-  assert.equal(payload.manifest.categories.find(entry => entry.category === 'body')?.status, 'unavailable');
-  assert.equal(payload.manifest.categories.find(entry => entry.category === 'body')?.reason, 'manual_retention_metadata_omitted');
-  assert.ok(result.json.includes('body-measurement-a')); assert.ok(result.json.includes('body-note-a'));
-  assert.equal(result.json.includes('body-measurement-b'), false); assert.equal(result.json.includes('body-note-b'), false);
-  for (const value of ['body-decision', 'body-key', 'body-intent', 'body-statement', 'body-grant-key', 'body-retention-key',
-    'body-retention-intent', 'body-retention-receipt', 'auth-session', 'auth-a', 'auth-b'])
+  const bodyEntry = payload.manifest.categories.find(entry => entry.category === 'body');
+  assert.deepEqual(bodyEntry, { category: 'body', status: 'complete', count: 2 });
+  assert.equal(payload.manifest.omissions.some(entry => (entry as { category: string }).category === 'body'), false);
+  const [measurementsRecord, retainedRecord, ...otherBody] = payload.records.filter(record => record.category === 'body');
+  assert.deepEqual(otherBody, []); assert.ok(measurementsRecord); assert.ok(retainedRecord);
+  assert.deepEqual(measurementsRecord.value, { measurements: [bodySeed.a!.measurement] });
+  const retained = retainedRecord.value as { schema: string; retention: string; decisions: { decisionId: string; state: string; revision: number }[];
+    receipts: { decisionId: string; operation: string; outcome: string }[]; attributions: { measurementId: string; decisionId: string }[];
+    operations: { measurementId: string; operation: string }[]; measurementMetadata: { measurementId: string; createdAt: string }[] };
+  assert.equal(retained.schema, 'form.body-manual-retention-export/v1'); assert.equal(retained.retention, 'installed');
+  assert.deepEqual(retained.decisions.map(entry => [entry.decisionId, entry.state, entry.revision]).sort(),
+    [[bodySeed.a!.granted, 'granted', 1], [bodySeed.a!.stopped, 'revoked', 2]].sort());
+  assert.deepEqual(retained.receipts.map(entry => [entry.decisionId, entry.operation, entry.outcome]),
+    [[bodySeed.a!.granted, 'grant', 'granted'], [bodySeed.a!.stopped, 'grant', 'granted'], [bodySeed.a!.stopped, 'revoke', 'revoked']]);
+  assert.deepEqual(retained.attributions.map(entry => [entry.measurementId, entry.decisionId]), [[bodySeed.a!.measurement.id, bodySeed.a!.granted]]);
+  assert.deepEqual(retained.operations, [{ measurementId: bodySeed.a!.measurement.id, operation: 'create' }]);
+  assert.deepEqual(retained.measurementMetadata, [{ measurementId: bodySeed.a!.measurement.id, createdAt: '2026-10-09T01:00:00.000Z' }]);
+  assert.ok(result.json.includes(bodySeed.a!.measurement.id)); assert.ok(result.json.includes('body-note-a'));
+  for (const value of [bodySeed.b!.measurement.id, bodySeed.b!.granted, bodySeed.b!.stopped, 'body-note-b'])
+    assert.equal(result.json.includes(value), false, `leaked other-account Body value ${value}`);
+  for (const value of ['body-key', 'body-grant-key', 'body-stopped-grant-key', 'body-retention-key', 'auth-session', 'auth-a', 'auth-b'])
     assert.equal(result.json.includes(value), false, `leaked Body/auth source value ${value}`);
+  const bodyJson = JSON.stringify([measurementsRecord, retainedRecord]);
+  const intentHashes = [...db.prepare('SELECT intent_hash h FROM body_manual_receipts UNION SELECT intent_hash FROM body_manual_retention_receipts').all() as { h: string }[]];
+  assert.ok(intentHashes.length >= 4);
+  for (const { h } of intentHashes) assert.equal(bodyJson.includes(h), false, 'leaked Body intent hash');
+  assert.deepEqual([...new Set(bodyJson.match(/[0-9a-f]{64}/g) ?? [])], [MANUAL_RETENTION_STATEMENT_SHA256], 'only the public statement digest is exported');
+  assert.equal(/"(epoch|sessionId|authUserId|key|intentHash|grantKey|measurementKey)"/.test(bodyJson), false);
   assert.equal(payload.manifest.complete, false);
   assert.equal(result.complete, false);
 }));
@@ -382,6 +404,12 @@ test('adapter statuses and missing projections cannot produce complete claims', 
   assert.throws(() => buildAccountExport(db, context, () => {}, [adapter('synthetic.bad', 'complete', (_context, snapshot) => {
     snapshot.append('documents', { name: 'forged' }); return { category: 'synthetic.bad', status: 'complete' };
   })]), error => error instanceof DomainError && error.code === 'account_export_invalid_category');
+  // Adapter-supplied reasons are never echoed: the retired Body residual reason has no special manifest path.
+  const retiredReason = unpack(buildAccountExport(db, context, () => {}, [adapter('body', 'unavailable',
+    () => ({ category: 'body', status: 'unavailable', reason: 'manual_retention_metadata_omitted' }))]).json);
+  assert.deepEqual(retiredReason.manifest.categories.find(entry => entry.category === 'body'),
+    { category: 'body', status: 'unavailable', count: 0, reason: 'adapter_reported_unavailable' });
+  assert.equal(JSON.stringify(retiredReason.manifest).includes('manual_retention_metadata_omitted'), false);
 }));
 
 // The capture content below is invented test data, not a configured production consent inventory.

@@ -268,8 +268,7 @@ export function buildAccountExport(db: Sqlite, context: AccountContext, assertAc
         throw new DomainError(503, 'account_export_invalid_adapter');
       entry.status = section.status;
       if (section.status === 'complete') delete entry.reason;
-      else entry.reason = adapter.category === 'body' && section.reason === 'manual_retention_metadata_omitted'
-        ? 'manual_retention_metadata_omitted' : `adapter_reported_${section.status}`;
+      else entry.reason = `adapter_reported_${section.status}`;
     }
     for (const category of requiredAdapters) if (!categories.has(category))
       categories.set(category, { category, status: 'unavailable', count: 0, reason: 'qualified_adapter_not_supplied' });
