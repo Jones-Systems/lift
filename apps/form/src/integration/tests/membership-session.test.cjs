@@ -219,3 +219,98 @@ test('late entitlement reads are suppressed by the original resource binding', a
     assert.equal(f.calls.length, 1);
   } finally { f.dispose(); }
 });
+
+const product = () => ({ id: proof.productId, displayName: '会員', description: 'اشتراك', displayPrice: '12,00\u00a0€',
+  price: '12.000000000000000001', currencyCode: 'EUR', type: 'opaque.native.type', subscriptionMetadata: {
+    version: 1, status: 'available', subscriptionGroupId: 'synthetic', period: { unit: 'month', value: 3 },
+    introductoryOffer: { status: 'available', paymentMode: 'free_trial', displayPrice: '無料', price: '0.00',
+      period: { unit: 'week', value: 2 }, periodCount: 1 }, introductoryOfferEligibility: 'unknown' } });
+const catalog = () => ({ products: [product()], missingProductIds: [] });
+
+test('direct product port decodes exact native values and nested copies without any purchase/delivery/entitlement request', async () => {
+  const input = catalog(), calls = [];
+  const f = fixture({ native: { products: async ids => { calls.push(ids); return input; } } });
+  try {
+    const result = await f.ports.native.products();
+    assert.deepEqual(result, input);
+    input.products[0].subscriptionMetadata.period.value = 99;
+    input.products[0].subscriptionMetadata.introductoryOffer.period.unit = 'year';
+    assert.equal(result.products[0].subscriptionMetadata.period.value, 3);
+    assert.deepEqual(result.products[0].subscriptionMetadata.introductoryOffer.period, { unit: 'week', value: 2 });
+    assert.deepEqual(calls, [[proof.productId]]); assert.deepEqual(f.calls, []);
+  } finally { f.dispose(); }
+});
+
+test('direct product boundary handles legacy and future metadata and rejects foreign/incomplete native catalogs', async () => {
+  for (const reason of ['legacy_bridge', 'unsupported_version', 'invalid_metadata']) {
+    const input = catalog();
+    if (reason === 'legacy_bridge') delete input.products[0].subscriptionMetadata;
+    if (reason === 'unsupported_version') input.products[0].subscriptionMetadata = { version: 77 };
+    if (reason === 'invalid_metadata') input.products[0].subscriptionMetadata = { version: 1 };
+    const f = fixture({ native: { products: async () => input } });
+    try { assert.deepEqual((await f.ports.native.products()).products[0].subscriptionMetadata, { version: 1, status: 'unavailable', reason }); }
+    finally { f.dispose(); }
+  }
+  for (const input of [null, { products: [], missingProductIds: [] }, { products: [product()], missingProductIds: [proof.productId] },
+    { products: [{ ...product(), id: 'foreign' }], missingProductIds: [] }, { products: [product(), product()], missingProductIds: [] }]) {
+    const f = fixture({ native: { products: async () => input } });
+    try { await assert.rejects(f.ports.native.products(), { code: 'invalid_products' }); assert.deepEqual(f.calls, []); }
+    finally { f.dispose(); }
+  }
+});
+
+test('direct product lookup rechecks captured session after await for same-account auth, account change and disposal', async () => {
+  for (const action of ['same-account', 'account', 'dispose']) {
+    const pending = deferred(), calls = [];
+    const f = fixture({ native: { products: ids => { calls.push(ids); return pending.promise; } } });
+    try {
+      const result = f.ports.native.products(), rejected = assert.rejects(result, changed);
+      if (action === 'same-account') f.replaceAuth();
+      if (action === 'account') f.expire();
+      if (action === 'dispose') f.dispose();
+      pending.resolve(catalog()); await rejected;
+      assert.deepEqual(calls, [[proof.productId]]); assert.deepEqual(f.calls, []);
+    } finally { f.dispose(); }
+  }
+});
+
+test('direct overlapping lookups return only the newest catalog', async () => {
+  const old = deferred(), latest = deferred(); let calls = 0;
+  const f = fixture({ native: { products: () => ++calls === 1 ? old.promise : latest.promise } });
+  try {
+    const first = f.ports.native.products(), second = f.ports.native.products();
+    const rejected = assert.rejects(first, { code: 'products_stale' });
+    const updated = catalog(); updated.products[0].subscriptionMetadata.introductoryOfferEligibility = 'ineligible';
+    latest.resolve(updated);
+    assert.equal((await second).products[0].subscriptionMetadata.introductoryOfferEligibility, 'ineligible');
+    old.resolve(catalog()); await rejected; assert.deepEqual(f.calls, []);
+  } finally { f.dispose(); }
+});
+
+test('direct lookup copies configured and dispatched IDs instead of trusting later mutations', async () => {
+  const ids = [proof.productId], seen = [];
+  const f = fixture({ allowedProductIds: ids, native: { products: async requested => {
+    seen.push([...requested]); requested.push('foreign'); return { products: [], missingProductIds: requested };
+  } } });
+  try {
+    ids[0] = 'mutated-configuration';
+    await assert.rejects(f.ports.native.products(), { code: 'invalid_products' });
+    assert.deepEqual(seen, [[proof.productId]]); assert.deepEqual(f.calls, []);
+  } finally { f.dispose(); }
+  for (const allowedProductIds of [[proof.productId, proof.productId], ['bad id'], Array.from({ length: 33 }, (_, i) => `id${i}`)])
+    assert.throws(() => fixture({ allowedProductIds }), { code: 'invalid_products' });
+});
+
+test('two independent session/device catalogs do not share eligibility or nested mutations', async () => {
+  const older = fixture({ native: { products: async () => catalog() } });
+  const input = catalog(); input.products[0].subscriptionMetadata.introductoryOfferEligibility = 'eligible';
+  const newer = fixture({ native: { products: async () => input } });
+  try {
+    const first = await older.ports.native.products(), second = await newer.ports.native.products();
+    second.products[0].subscriptionMetadata.period.unit = 'year';
+    assert.equal(first.products[0].subscriptionMetadata.period.unit, 'month');
+    assert.equal(first.products[0].subscriptionMetadata.introductoryOfferEligibility, 'unknown');
+    assert.equal(second.products[0].subscriptionMetadata.introductoryOfferEligibility, 'eligible');
+    assert.deepEqual(older.calls, []); assert.deepEqual(newer.calls, []);
+  } finally { older.dispose(); newer.dispose(); }
+});

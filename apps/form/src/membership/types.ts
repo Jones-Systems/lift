@@ -1,7 +1,7 @@
 import type { Entitlements } from '../api/domain';
 import type {
   StoreKitAccountBinding, StoreKitDeliveryOutcome, StoreKitDeliveryRequest,
-  StoreKitProduct, StoreKitProof, StoreKitPurchaseResult, StoreKitTransactions,
+  StoreKitProduct, StoreKitProductSnapshot, StoreKitProductsSnapshot, StoreKitProof, StoreKitPurchaseResult, StoreKitTransactions,
 } from '../native/storeKit.types';
 
 export type MembershipStatus = 'unavailable' | 'products-loading' | 'products' | 'purchasing'
@@ -9,7 +9,7 @@ export type MembershipStatus = 'unavailable' | 'products-loading' | 'products' |
 
 export type MembershipState = {
   status: MembershipStatus;
-  products: readonly StoreKitProduct[];
+  products: readonly StoreKitProductSnapshot[];
   entitlements: Entitlements | null;
   reason: string | null;
   canPurchase: boolean;
@@ -33,7 +33,7 @@ export interface MembershipPorts {
   captureSession(): MembershipSession | null;
   configuration(): { purchases: 'configured' | 'unavailable'; promos: boolean };
   native: {
-    products(): Promise<{ products: StoreKitProduct[]; missingProductIds: string[] }>;
+    products(): Promise<{ products: StoreKitProduct[]; missingProductIds: string[] } | StoreKitProductsSnapshot>;
     purchase(productId: string, appAccountToken: string): Promise<StoreKitPurchaseResult>;
     restore(): Promise<StoreKitTransactions>;
     currentEntitlements(): Promise<StoreKitTransactions>;

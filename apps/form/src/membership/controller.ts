@@ -1,5 +1,6 @@
 import type { Entitlements } from '../api/domain';
-import type { StoreKitProduct, StoreKitProof, StoreKitTransactions } from '../native/storeKit.types';
+import type { StoreKitProductSnapshot, StoreKitProof, StoreKitTransactions } from '../native/storeKit.types';
+import { copyStoreKitProduct, decodeStoreKitProduct } from '../native/storeKitProducts';
 import type { MembershipPorts, MembershipRecovery, MembershipSession, MembershipState, MembershipStatus } from './types';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -15,7 +16,8 @@ export class MembershipController {
   private readonly listeners = new Set<() => void>();
   private busy = false;
   private disposed = false;
-  private products: StoreKitProduct[] = [];
+  private products: StoreKitProductSnapshot[] = [];
+  private productLookup = 0;
   private entitlements: Entitlements | null = null;
   private purchaseEffect: MembershipRecovery['purchase'] = null;
   private readonly deliveries = new Map<string, MembershipRecovery['deliveries'][number]>();
@@ -29,7 +31,7 @@ export class MembershipController {
 
   getState(): MembershipState {
     if (!this.current()) return hidden(this.disposed ? 'disposed' : this.owner ? 'session_changed' : 'authentication_required');
-    return { ...this.state, products: this.state.products.map(product => ({ ...product })),
+    return { ...this.state, products: this.state.products.map(copyStoreKitProduct),
       entitlements: this.state.entitlements ? copyEntitlements(this.state.entitlements) : null };
   }
 
@@ -50,16 +52,24 @@ export class MembershipController {
   async load(): Promise<void> {
     const session = this.begin();
     if (!session) return;
+    const lookup = ++this.productLookup;
+    this.products = [];
     try {
       this.publish('products-loading');
       await this.read(session);
-      if (!session.isCurrent()) return;
+      if (!this.current() || !session.isCurrent() || lookup !== this.productLookup) return;
       if (this.configured()) {
         const result = await this.ports.native.products();
-        this.products = result.products.map(product => ({ ...product }));
+        if (!this.currentProducts(session, lookup) || !this.configured()) return;
+        this.products = result.products.map(decodeStoreKitProduct);
       }
       this.settle();
-    } catch { this.publish(this.unresolved() ? 'unknown' : 'failed', 'membership_load_failed'); }
+    } catch {
+      if (lookup === this.productLookup) {
+        this.products = [];
+        this.publish(this.unresolved() ? 'unknown' : 'failed', 'membership_load_failed');
+      }
+    }
     finally { this.end(); }
   }
 
@@ -156,6 +166,8 @@ export class MembershipController {
 
   dispose(): void {
     this.disposed = true;
+    ++this.productLookup;
+    this.products = [];
     this.listeners.clear();
   }
 
@@ -168,6 +180,12 @@ export class MembershipController {
   }
 
   private current(): boolean { return !this.disposed && !!this.owner?.isCurrent(); }
+  private currentProducts(session: MembershipSession, lookup: number): boolean {
+    if (!this.current() || !session.isCurrent() || lookup !== this.productLookup) return false;
+    const captured = this.capture();
+    return !!captured && captured.generation === session.generation && captured.account.accountId === session.account.accountId
+      && captured.account.appAccountToken.toLowerCase() === session.account.appAccountToken.toLowerCase();
+  }
   private configured(): boolean { return this.ports.configuration().purchases === 'configured'; }
   private unresolved(): boolean { return !!this.purchaseEffect || this.deliveries.size > 0 || !!this.promo; }
 

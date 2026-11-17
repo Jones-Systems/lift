@@ -2,6 +2,7 @@ import { ApiError } from '../api/transport';
 import type { FeatureSlotContext } from '../features/contract';
 import type { MembershipPorts, MembershipSession } from '../membership/types';
 import { isStoreKitAccountBinding, StoreKitDeliveryCoordinator } from '../native/storeKitDelivery';
+import { copyStoreKitProductIds, decodeStoreKitProducts } from '../native/storeKitProducts';
 import type { FormStoreKitNative, StoreKitDeliveryRequest, StoreKitServerDecision } from '../native/storeKit.types';
 
 export type MembershipSessionOptions = {
@@ -15,6 +16,7 @@ export type MembershipSessionOptions = {
 
 export function createMembershipSession(ctx: FeatureSlotContext, options: MembershipSessionOptions = {}) {
   let disposed = false;
+  let productLookup = 0;
   const api = ctx.resources.api;
   const auth = api.captureAuthContext();
   const isCurrentSession = ctx.isCurrentSession;
@@ -26,7 +28,7 @@ export function createMembershipSession(ctx: FeatureSlotContext, options: Member
   const unavailable = () => new ApiError(501, 'purchases_unavailable', 'Purchases are unavailable.');
   const resources = ctx.resources.boundTo(current);
   const native = options.native;
-  const productIds = [...new Set(options.allowedProductIds ?? [])];
+  const productIds = options.allowedProductIds?.length ? copyStoreKitProductIds(options.allowedProductIds) : [];
   const allowed = new Set(productIds);
   const configured = options.configured === true && !!native && productIds.length > 0;
   const promos = options.promos === true;
@@ -87,7 +89,14 @@ export function createMembershipSession(ctx: FeatureSlotContext, options: Member
     captureSession: () => current() && isStoreKitAccountBinding(account) ? session : null,
     configuration: () => ({ purchases: current() && configured ? 'configured' : 'unavailable', promos: current() && promos }),
     native: {
-      async products() { return requireNative().products([...productIds]); },
+      async products() {
+        const capturedNative = requireNative(), ids = [...productIds];
+        const lookup = ++productLookup;
+        const result = await capturedNative.products([...ids]);
+        requireCurrent();
+        if (lookup !== productLookup) throw new ApiError(409, 'products_stale', 'The product lookup was superseded.');
+        return decodeStoreKitProducts(result, ids);
+      },
       async purchase(productId, appAccountToken) {
         requireCurrent();
         if (!configured || !native) return { status: 'unavailable', productId };

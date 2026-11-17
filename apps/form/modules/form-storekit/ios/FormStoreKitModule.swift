@@ -80,6 +80,8 @@ public final class FormStoreKitModule: Module, @unchecked Sendable {
 @MainActor
 private final class FormStoreKitSession {
   private var allowedIDs: Set<String> = []
+  private var productConfiguration: UInt64 = 0
+  private var productLookup: UInt64 = 0
   private var proofs: [String: VerificationResult<StoreKit.Transaction>] = [:]
   private var proofOrder: [String] = []
   private var updatesTask: Task<Void, Never>?
@@ -99,6 +101,8 @@ private final class FormStoreKitSession {
       throw failure("invalid_products", "Configure 1–32 unique product identifiers.")
     }
     allowedIDs = Set(ids)
+    productConfiguration &+= 1
+    productLookup &+= 1
   }
 
   func requireConfigured() throws {
@@ -115,12 +119,88 @@ private final class FormStoreKitSession {
 
   func products(_ ids: [String]) async throws -> [String: Any] {
     try checkIDs(ids)
+    guard Set(ids).count == ids.count else { throw failure("invalid_products", "Requested products must be unique.") }
+    productLookup &+= 1
+    let lookup = productLookup, configuration = productConfiguration
     let products = try await Product.products(for: Set(ids))
-    return ["products": products.map {
-      ["id": $0.id, "displayName": $0.displayName, "description": $0.description,
-       "displayPrice": $0.displayPrice, "price": NSDecimalNumber(decimal: $0.price).stringValue,
-       "currencyCode": $0.priceFormatStyle.currencyCode, "type": $0.type.rawValue]
-    }, "missingProductIds": ids.filter { id in !products.contains(where: { $0.id == id }) }]
+    try requireProductLookup(lookup, configuration: configuration)
+    var values: [[String: Any]] = []
+    for product in products {
+      let metadata = await subscriptionMetadata(product)
+      try requireProductLookup(lookup, configuration: configuration)
+      values.append(["id": product.id, "displayName": product.displayName, "description": product.description,
+        "displayPrice": product.displayPrice, "price": NSDecimalNumber(decimal: product.price).stringValue,
+        "currencyCode": product.priceFormatStyle.currencyCode, "type": product.type.rawValue,
+        "subscriptionMetadata": metadata])
+    }
+    return ["products": values, "missingProductIds": ids.filter { id in !products.contains(where: { $0.id == id }) }]
+  }
+
+  private func requireProductLookup(_ lookup: UInt64, configuration: UInt64) throws {
+    try requireConfigured()
+    guard lookup == productLookup, configuration == productConfiguration else {
+      throw failure("products_stale", "Product lookup was superseded or reconfigured.")
+    }
+  }
+
+  private func unavailableMetadata(_ reason: String) -> [String: Any] {
+    ["version": 1, "status": "unavailable", "reason": reason]
+  }
+
+  private func subscriptionMetadata(_ product: Product) async -> [String: Any] {
+    switch product.type {
+    case .consumable: return ["version": 1, "status": "not_applicable", "productKind": "consumable"]
+    case .nonConsumable: return ["version": 1, "status": "not_applicable", "productKind": "non_consumable"]
+    case .nonRenewable: return ["version": 1, "status": "not_applicable", "productKind": "non_renewing_subscription"]
+    case .autoRenewable: break
+    default: return unavailableMetadata("unsupported_product_type")
+    }
+    guard let subscription = product.subscription else { return unavailableMetadata("subscription_missing") }
+    guard let period = serializedPeriod(subscription.subscriptionPeriod) else { return unavailableMetadata("unsupported_period") }
+    guard !subscription.subscriptionGroupID.isEmpty else { return unavailableMetadata("invalid_metadata") }
+    var introductoryOffer: [String: Any] = ["status": "none"]
+    var eligibility = "unknown"
+    if let offer = subscription.introductoryOffer {
+      introductoryOffer = serializedOffer(offer)
+      if !Task.isCancelled {
+        let eligible = await subscription.isEligibleForIntroOffer
+        if !Task.isCancelled { eligibility = eligible ? "eligible" : "ineligible" }
+      }
+    }
+    return ["version": 1, "status": "available", "subscriptionGroupId": subscription.subscriptionGroupID,
+      "period": period, "introductoryOffer": introductoryOffer, "introductoryOfferEligibility": eligibility]
+  }
+
+  private func serializedPeriod(_ period: Product.SubscriptionPeriod) -> [String: Any]? {
+    guard period.value > 0, period.value <= 9_007_199_254_740_991 else { return nil }
+    let unit: String
+    switch period.unit {
+    case .day: unit = "day"
+    case .week: unit = "week"
+    case .month: unit = "month"
+    case .year: unit = "year"
+    @unknown default: return nil
+    }
+    return ["unit": unit, "value": period.value]
+  }
+
+  private func serializedOffer(_ offer: Product.SubscriptionOffer) -> [String: Any] {
+    guard offer.type == .introductory else { return ["status": "unavailable", "reason": "unsupported_offer_type"] }
+    let mode: String
+    switch offer.paymentMode {
+    case .freeTrial: mode = "free_trial"
+    case .payAsYouGo: mode = "pay_as_you_go"
+    case .payUpFront: mode = "pay_up_front"
+    default: return ["status": "unavailable", "reason": "unsupported_payment_mode"]
+    }
+    guard let period = serializedPeriod(offer.period) else { return ["status": "unavailable", "reason": "unsupported_period"] }
+    guard offer.periodCount > 0, offer.periodCount <= 9_007_199_254_740_991,
+      (mode == "pay_as_you_go" || offer.periodCount == 1), offer.price >= 0,
+      (mode != "free_trial" || offer.price == 0), !offer.displayPrice.isEmpty else {
+      return ["status": "unavailable", "reason": "invalid_metadata"]
+    }
+    return ["status": "available", "paymentMode": mode, "displayPrice": offer.displayPrice,
+      "price": NSDecimalNumber(decimal: offer.price).stringValue, "period": period, "periodCount": offer.periodCount]
   }
 
   func purchase(_ id: String, token: String) async throws -> [String: Any] {

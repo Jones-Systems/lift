@@ -5,10 +5,11 @@ const { pathToFileURL } = require('node:url');
 const { join } = require('node:path');
 
 const url = file => pathToFileURL(join(__dirname, '..', file)).href;
-const consumerURL = url('membershipConsumer.ts'), familyURL = url('familyConsumer.ts');
+const consumerURL = url('membershipConsumer.ts'), familyURL = url('familyConsumer.ts'), controllerURL = url('controller.ts');
 const hook = registerHooks({ resolve(specifier, context, nextResolve) {
   const owned = context.parentURL === consumerURL && ['./controller', './familyConsumer'].includes(specifier)
-    || context.parentURL === familyURL && specifier === './family';
+    || context.parentURL === familyURL && specifier === './family'
+    || context.parentURL === controllerURL && specifier === '../native/storeKitProducts';
   return nextResolve(owned ? `${specifier}.ts` : specifier, context);
 } });
 let createMembershipConsumer;
@@ -289,4 +290,34 @@ test('host forwards member leave but all family controls are fenced when absent,
     await guarded.consumer.leaveFamily();
     assert.equal(guarded.calls.length, before);
   }
+});
+
+test('host forwards isolated subscription snapshots and metadata cannot produce paid or family access', async () => {
+  const input = { ...PRODUCT, subscriptionMetadata: { version: 1, status: 'available', subscriptionGroupId: 'synthetic',
+    period: { unit: 'month', value: 6 }, introductoryOffer: { status: 'available', paymentMode: 'free_trial',
+      displayPrice: '無料', price: '0', period: { unit: 'week', value: 2 }, periodCount: 1 }, introductoryOfferEligibility: 'eligible' } };
+  const f = fixture(); f.server.configured = true;
+  f.options.membership.native.products = async () => { f.calls.push(['products']); return { products: [input], missingProductIds: [] }; };
+  await f.consumer.load();
+  input.subscriptionMetadata.period.value = 99;
+  const state = f.consumer.getState();
+  state.membership.products[0].subscriptionMetadata.introductoryOffer.period.value = 77;
+  assert.equal(f.consumer.getState().membership.products[0].subscriptionMetadata.period.value, 6);
+  assert.equal(f.consumer.getState().membership.products[0].subscriptionMetadata.introductoryOffer.period.value, 2);
+  assert.deepEqual(f.consumer.getState().membership.entitlements.active, []);
+  assert.equal(f.consumer.getState().family.family.snapshot, null);
+  assert.deepEqual(effects(f.calls), [['read'], ['products']]);
+  f.consumer.dispose();
+});
+
+test('host fences product lookup after same-account generation replacement without forwarding effects', async () => {
+  const f = fixture(); f.server.configured = true;
+  const pending = deferred(), entered = deferred();
+  f.options.membership.native.products = () => { f.calls.push(['products']); entered.resolve(); return pending.promise; };
+  const operation = f.consumer.load(); await entered.promise;
+  f.scope.generation = 'new-auth-same-account';
+  pending.resolve({ products: [PRODUCT], missingProductIds: [] }); await operation;
+  assert.deepEqual(f.consumer.getState().membership.products, []);
+  assert.deepEqual(effects(f.calls), [['read'], ['products']]);
+  f.consumer.dispose();
 });
