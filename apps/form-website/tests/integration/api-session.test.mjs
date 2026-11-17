@@ -3,8 +3,16 @@ import test from 'node:test';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createConfiguredBrowserSession } from '../../public/browser-session.mjs';
-import { createServer } from '../../../../services/api/src/server.ts';
+
+// The API source loaded below requires Node >=24, while the website package
+// (and its default dependency-free tests) supports Node 22. Fail fast and
+// clearly here instead of with an obscure syntax or loader error.
+const nodeMajor = Number(process.versions.node.split('.')[0]);
+if (!(nodeMajor >= 24)) {
+  throw new Error(`api-session integration tests require Node >=24 (running ${process.versions.node}); use Node 24 or skip test:api-session.`);
+}
+const { createConfiguredBrowserSession } = await import('../../public/browser-session.mjs');
+const { createServer } = await import('../../../../services/api/src/server.ts');
 
 // Explicit Node 24/API-dependency integration suite; the default website tests
 // remain dependency-free. No listener, global fetch, provider or real account.
@@ -58,7 +66,7 @@ function browser(backend) {
     },
   });
   return {
-    session, calls, cookieHeader,
+    session, calls, cookieHeader, request: dispatch,
     loseNextPreferenceResponse() { losePreferenceResponse = true; },
     async signup(email, name) {
       const response = await dispatch('/api/auth/sign-up/email', {
@@ -80,8 +88,15 @@ async function fixture(run) {
     try { if (backend?.db.open) backend.close(); }
     finally { rmSync(root, { recursive: true, force: true }); }
   };
-  const interrupted = () => { cleanup(); process.exit(130); };
-  const terminated = () => { cleanup(); process.exit(143); };
+  // A signal during an in-flight request can make backend.close() throw; report
+  // it, but still finish cleanup (rmSync runs in cleanup's finally) and exit
+  // with the conventional signal code.
+  const exitAfterCleanup = code => {
+    try { cleanup(); } catch (error) { console.error('api-session cleanup failed after signal:', error); }
+    process.exit(code);
+  };
+  const interrupted = () => exitAfterCleanup(130);
+  const terminated = () => exitAfterCleanup(143);
   process.once('SIGINT', interrupted);
   process.once('SIGTERM', terminated);
   try {
@@ -147,6 +162,21 @@ test('configured cookie session reads and writes account-owned API resources and
   const denied = await second.session.plan(plan.id);
   assert.equal(denied.status, 'error');
   assert.equal(denied.error.status, 404);
+
+  // Write isolation: the second account cannot change or archive the first
+  // account's plan. The API has no DELETE route; archive is its removal command.
+  const json = (body, headers = {}) => ({ headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  const patchDenied = await second.request(`/v1/plans/${plan.id}`, {
+    method: 'PATCH', ...json({ name: 'Synthetic hijacked plan', expectedRevision: plan.revision }),
+  });
+  assert.equal(patchDenied.status, 404);
+  const archiveDenied = await second.request(`/v1/plans/${plan.id}/archive`, {
+    method: 'POST', ...json({ expectedRevision: plan.revision }, { 'idempotency-key': 'synthetic_cross_account_archive' }),
+  });
+  assert.equal(archiveDenied.status, 404);
+  assert.deepEqual(ready(await first.session.plan(plan.id)), plan);
+  assert.deepEqual(ready(await first.session.plans()).items, [plan]);
+  assert.deepEqual((await second.session.plans()).data.items, []);
 
   const revokedCookie = first.cookieHeader();
   assert.equal((await first.session.signout()).status, 'anonymous');

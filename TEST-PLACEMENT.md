@@ -29,7 +29,7 @@ Current discovery has 314 files. The public runner's `lifecycle-runtime` group
 selects exactly 36 API modules, including purchases, reconciliation, status
 reader, codec and both Source27 suites exactly once. The three existing purchase
 suites move from `api-breadth` to existing hosted placement; the two new suites
-join hosted placement. API discovery has 105 ordinary modules and 175 total
+join hosted placement. API discovery has 105 ordinary modules and 176 total
 files. The Source27 fixture helper is required/digested/compiled source only,
 excluded from discovery, invocation and module counts. The codec's 18 synthetic
 cases establish bounded syntax, content identities and conservative ordering.
