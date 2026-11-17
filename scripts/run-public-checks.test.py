@@ -46,6 +46,22 @@ class PublicChecksTests(unittest.TestCase):
         self.assertTrue(any("dist/tests/community/board/persistence-races.test.js" in c["argv"] for c in contract["commands"]))
         self.assertEqual(contract, checks.selection(ROOT, ["form208", "form196"]))
 
+    def test_realtime_synthetic_composition_runs_through_source_hook_once(self):
+        composition = "tests/voice-coaching/realtime/synthetic-composition.test.cjs"
+        self.assertIn(composition, checks.API_TESTS["form208"])
+        voice = [c for c in checks.selection(ROOT, ["form208"])["commands"] if c["group"] == "form208"]
+        compiled, source, app = voice
+        self.assertFalse(any(".cjs.js" in arg for arg in compiled["argv"]))
+        self.assertNotIn("dist/" + composition, compiled["argv"])
+        self.assertEqual(source["argv"], ["node", "--experimental-transform-types", "--import",
+                         f"./{checks.SOURCE_HOOK}", "--test", "--test-isolation=none",
+                         "--test-concurrency=1", composition])
+        self.assertEqual(source["test_sources"], [f"{checks.API}/{name}" for name in
+                         (checks.SOURCE_HOOK, checks.SOURCE_RESOLVER, composition)])
+        default = checks.selection(ROOT, [])["commands"]
+        self.assertEqual(default.count(source), 1)
+        self.assertEqual(sum(composition in c["argv"] for c in default), 1)
+
     def test_plan_revision_compiles_first_and_requires_both_fresh_modules(self):
         contract = checks.selection(ROOT, ["plan-revision"])
         self.assertEqual(contract["groups"], ["api-compile", "plan-revision"])

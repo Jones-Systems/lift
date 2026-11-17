@@ -72,6 +72,7 @@
         "services/api/tests/usage-limits/live-composition.test.ts",
         "services/api/tests/usage-limits/standard-composition.test.ts",
         "services/api/tests/usage-limits/standard-observation.test.ts",
+        "services/api/tests/voice-coaching/realtime/synthetic-composition.test.cjs",
         "services/api/tests/voice-coaching/standard-wire.test.ts",
         "services/api/tests/voice-coaching/turn-controller.test.ts",
         "services/api/tests/wearables/app.test.mjs",
