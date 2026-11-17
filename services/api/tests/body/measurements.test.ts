@@ -67,11 +67,16 @@ test('legacy body lifecycle adapter exports only its account and purges historic
   const first = seedHistoricalMeasurement(db, contexts[0]!.accountId, { kind: 'weight', value: 80, unit: 'kg', measuredOn: '2026-10-10', note: 'Synthetic account one' }, 'measurement', { value: 80, unit: 'kg' });
   const second = seedHistoricalMeasurement(db, contexts[1]!.accountId, { kind: 'weight', value: 90, unit: 'kg', measuredOn: '2026-10-10', note: 'Synthetic account two' }, 'measurement', { value: 90, unit: 'kg' });
   assert.throws(() => service.create(contexts[0]!, { kind: 'weight', value: 80, unit: 'kg', measuredOn: '2026-10-10' }, 'new'), { code: 'body_manual_retention_required' });
+  // The shared seed helper writes a placeholder created_at; a genuine row stores an ISO instant, which export validates.
+  assert.throws(() => buildAccountExport(db, contexts[0]!, actor => assertActive(db, actor), [service.lifecycleAdapter]), { code: 'body_manual_export_invalid_data' });
+  const createdAt = '2026-10-10T07:30:00.000Z';
+  db.prepare('UPDATE body_manual_measurements SET created_at=?').run(createdAt);
   const exported = buildAccountExport(db, contexts[0]!, actor => assertActive(db, actor), [service.lifecycleAdapter]);
   assert.ok(exported.json.includes(first.id)); assert.equal(exported.json.includes(second.id), false); assert.equal(exported.json.includes('Synthetic account two'), false);
   const body = (JSON.parse(exported.json) as { records: { category: string; value: unknown }[]; manifest: { complete: boolean; categories: { category: string; status: string; count: number; reason?: string }[] } });
   assert.deepEqual(body.records.filter(record => record.category === 'body').map(record => record.value),
-    [{ measurements: [first] }, { schema: 'form.body-manual-retention-export/v1', retention: 'not_installed' }]);
+    [{ measurements: [first] }, { schema: 'form.body-manual-retention-export/v1', retention: 'not_installed',
+      measurementMetadata: [{ measurementId: first.id, createdAt }], operations: [{ measurementId: first.id, operation: 'create' }] }]);
   assert.deepEqual(body.manifest.categories.find(entry => entry.category === 'body'), { category: 'body', status: 'complete', count: 2 });
   assert.equal(body.manifest.complete, false);
   db.transaction(() => service.lifecycleAdapter.purge('synthetic-request', contexts[0]!.accountId)).immediate();

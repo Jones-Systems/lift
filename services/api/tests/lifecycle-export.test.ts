@@ -246,6 +246,7 @@ test('deletion and Body retention history leave privacyChoices unavailable and e
     retention.revoke(actor, stopped.decisionId, {}, `body-retention-key-${suffix}`);
     const measurement = seedHistoricalMeasurement(db, actor.accountId, { kind: 'weight', value: 70, unit: 'kg', measuredOn: '2026-10-09',
       note: `body-note-${suffix}` }, `body-key-${suffix}`, { value: 70, unit: 'kg' });
+    db.prepare('UPDATE body_manual_measurements SET created_at=? WHERE id=?').run(`2026-10-09T0${suffix === 'a' ? 1 : 2}:00:00.000Z`, measurement.id);
     db.transaction(() => retention.attributeWithinWrite(actor, manualRetentionAttempt(granted.decisionId), `body-key-${suffix}`, measurement.id)).immediate();
     bodySeed[suffix] = { measurement, granted: granted.decisionId, stopped: stopped.decisionId };
   }
@@ -268,7 +269,7 @@ test('deletion and Body retention history leave privacyChoices unavailable and e
   assert.deepEqual(measurementsRecord.value, { measurements: [bodySeed.a!.measurement] });
   const retained = retainedRecord.value as { schema: string; retention: string; decisions: { decisionId: string; state: string; revision: number }[];
     receipts: { decisionId: string; operation: string; outcome: string }[]; attributions: { measurementId: string; decisionId: string }[];
-    operations: { measurementId: string; operation: string }[] };
+    operations: { measurementId: string; operation: string }[]; measurementMetadata: { measurementId: string; createdAt: string }[] };
   assert.equal(retained.schema, 'form.body-manual-retention-export/v1'); assert.equal(retained.retention, 'installed');
   assert.deepEqual(retained.decisions.map(entry => [entry.decisionId, entry.state, entry.revision]).sort(),
     [[bodySeed.a!.granted, 'granted', 1], [bodySeed.a!.stopped, 'revoked', 2]].sort());
@@ -276,6 +277,7 @@ test('deletion and Body retention history leave privacyChoices unavailable and e
     [[bodySeed.a!.granted, 'grant', 'granted'], [bodySeed.a!.stopped, 'grant', 'granted'], [bodySeed.a!.stopped, 'revoke', 'revoked']]);
   assert.deepEqual(retained.attributions.map(entry => [entry.measurementId, entry.decisionId]), [[bodySeed.a!.measurement.id, bodySeed.a!.granted]]);
   assert.deepEqual(retained.operations, [{ measurementId: bodySeed.a!.measurement.id, operation: 'create' }]);
+  assert.deepEqual(retained.measurementMetadata, [{ measurementId: bodySeed.a!.measurement.id, createdAt: '2026-10-09T01:00:00.000Z' }]);
   assert.ok(result.json.includes(bodySeed.a!.measurement.id)); assert.ok(result.json.includes('body-note-a'));
   for (const value of [bodySeed.b!.measurement.id, bodySeed.b!.granted, bodySeed.b!.stopped, 'body-note-b'])
     assert.equal(result.json.includes(value), false, `leaked other-account Body value ${value}`);
@@ -402,6 +404,12 @@ test('adapter statuses and missing projections cannot produce complete claims', 
   assert.throws(() => buildAccountExport(db, context, () => {}, [adapter('synthetic.bad', 'complete', (_context, snapshot) => {
     snapshot.append('documents', { name: 'forged' }); return { category: 'synthetic.bad', status: 'complete' };
   })]), error => error instanceof DomainError && error.code === 'account_export_invalid_category');
+  // Adapter-supplied reasons are never echoed: the retired Body residual reason has no special manifest path.
+  const retiredReason = unpack(buildAccountExport(db, context, () => {}, [adapter('body', 'unavailable',
+    () => ({ category: 'body', status: 'unavailable', reason: 'manual_retention_metadata_omitted' }))]).json);
+  assert.deepEqual(retiredReason.manifest.categories.find(entry => entry.category === 'body'),
+    { category: 'body', status: 'unavailable', count: 0, reason: 'adapter_reported_unavailable' });
+  assert.equal(JSON.stringify(retiredReason.manifest).includes('manual_retention_metadata_omitted'), false);
 }));
 
 // The capture content below is invented test data, not a configured production consent inventory.

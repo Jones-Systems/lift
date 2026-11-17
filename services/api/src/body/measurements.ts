@@ -78,10 +78,12 @@ export function createManualMeasurements(db: Sqlite, lifecycle: LifecycleBinding
     category: 'body',
     inventory: actor => lifecycle.withActiveWrite(actor, () => ({ category: 'body', status: 'complete',
       count: allTables.reduce((total, table) => total + (db.prepare(`SELECT count(*) n FROM ${table} WHERE account_id=?`).get(actor.accountId) as { n: number }).n, 0) })),
-    // Read and validate every relation before the first append: a malformed row aborts the whole export without emitting bytes.
-    export: (actor, snapshot) => { const items = service.list(actor).items, retained = manualRetentionExport.read(actor);
-      snapshot.append('body', { measurements: items }); snapshot.append('body', retained);
-      return { category: 'body', status: 'complete', count: items.length }; },
+    // Read and validate every relation before the first append: a malformed or over-capacity account aborts the whole
+    // export without emitting bytes. The reported count is the number of Body records appended to the snapshot.
+    export: (actor, snapshot) => { const { measurements, retained } = manualRetentionExport.read(actor);
+      const records = [{ measurements }, retained];
+      for (const record of records) snapshot.append('body', record);
+      return { category: 'body', status: 'complete', count: records.length }; },
     suppress: accountId => erase(accountId),
     purge: (_requestId, accountId) => erase(accountId),
     verifySuppressed: accountId => { serialized();

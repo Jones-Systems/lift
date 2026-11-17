@@ -296,6 +296,9 @@ test('numbered Body server uses guarded inventory export and ledger-proved origi
   seedHistoricalMeasurement(server.db, two.actor.accountId, secondInput, 'two', { value: 90, unit: 'kg' });
   const second = await c.request(measurements, two.token, secondInput, 'two');
   assert.equal(first.status, 201); assert.equal(second.status, 201);
+  // The shared seed helper writes a placeholder; genuine rows store an ISO instant, which the export validates and carries.
+  const storedCreatedAt = '2026-10-10T09:15:00.000Z';
+  server.db.prepare('UPDATE body_manual_measurements SET created_at=?').run(storedCreatedAt);
   const lifecycle = server.lifecycle!; assert.ok(lifecycle);
   const adapter = lifecycle.adapters.find(value => value.category === 'body')!; assert.ok(adapter);
   assert.equal(lifecycle.adapters.filter(value => value.category === 'body').length, 1);
@@ -303,13 +306,21 @@ test('numbered Body server uses guarded inventory export and ledger-proved origi
   assert.throws(() => adapter.inventory({ ...one.actor, sessionId: two.actor.sessionId }), { code: 'account_session_invalid' });
   const exported = buildAccountExport(server.db, one.actor, actor => lifecycle.assertActive(actor), [adapter]);
   const exportDocument = JSON.parse(exported.json) as { records: { category: string; value: Record<string, unknown> }[];
-    manifest: { complete: boolean; categories: { category: string; status: string; reason?: string; count: number }[] } };
-  assert.deepEqual(exportDocument.manifest.categories.find(entry => entry.category === 'body'), { category: 'body', status: 'complete', count: 2 });
-  assert.equal(exportDocument.manifest.complete, false);
+    manifest: { complete: boolean; snapshotAtMs: number; categories: { category: string; status: string; reason?: string; count: number }[] } };
   const bodyRecords = exportDocument.records.filter(record => record.category === 'body');
-  assert.deepEqual(Object.keys(bodyRecords[0]!.value), ['measurements']);
-  // Numbered version 21 installs no retention relations: the export says so instead of omitting or inventing metadata.
-  assert.deepEqual(bodyRecords[1]!.value, { schema: 'form.body-manual-retention-export/v1', retention: 'not_installed' });
+  assert.equal(bodyRecords.length, 2);
+  assert.deepEqual(exportDocument.manifest.categories.find(entry => entry.category === 'body'),
+    { category: 'body', status: 'complete', count: bodyRecords.length });
+  assert.equal(exportDocument.manifest.complete, false); assert.equal(exported.complete, false);
+  assert.equal(exportDocument.manifest.snapshotAtMs, exported.snapshotAtMs);
+  assert.deepEqual(bodyRecords[0]!.value, { measurements: [first.body] }, 'first envelope is unchanged');
+  // Numbered version 21 installs no retention relations: the export still carries stored created_at and the
+  // timestamp-free create history from body_manual_receipts, never keys, intent hashes or auth material.
+  assert.deepEqual(bodyRecords[1]!.value, { schema: 'form.body-manual-retention-export/v1', retention: 'not_installed',
+    measurementMetadata: [{ measurementId: first.body.id, createdAt: storedCreatedAt }],
+    operations: [{ measurementId: first.body.id, operation: 'create' }] });
+  for (const { intent_hash: digest } of server.db.prepare('SELECT intent_hash FROM body_manual_receipts').all() as { intent_hash: string }[])
+    assert.equal(exported.json.includes(digest), false, 'leaked Body intent hash');
   assert.ok(exported.json.includes(first.body.id)); assert.equal(exported.json.includes(second.body.id), false);
   assert.equal(exported.json.includes('Synthetic account B must remain'), false); assert.equal(server.db.inTransaction, false);
   const before = bodyRows(server.db);
@@ -324,6 +335,7 @@ test('numbered Body server uses guarded inventory export and ledger-proved origi
     one.actor.sessionId, one.actor.epoch, 'account_delete', 'password', Date.now(), Date.now() + 600000);
   const disabled = lifecycle.confirm(one.actor, requestId, { grant, policyVersion: lifecyclePolicy, confirmation: 'delete_whole_account' });
   assert.equal(disabled.disabled, true); assert.equal(disabled.complete, false);
+  assert.equal(disabled.backupExpiryAt, null); assert.equal(disabled.billingCancellation, 'not_performed');
   const proof = authority.records.get(one.actor.accountId)!; assert.ok(proof); assert.equal(proof.epoch, 1);
   assert.equal(authority.records.has(two.actor.accountId), false);
   assert.deepEqual(server.db.prepare('SELECT state,epoch,suppression_seq FROM account_lifecycle WHERE account_id=?').get(one.actor.accountId),
