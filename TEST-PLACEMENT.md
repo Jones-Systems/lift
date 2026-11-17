@@ -18,7 +18,7 @@ prove that a new test was selected.
 | --- | ---: | --- |
 | Existing hosted | 76 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
 | `api-breadth` | 90 | Compile API TypeScript with `tsc`; run emitted TS tests and original MJS/CJS tests using the existing source hook. Never run the private projection build. |
-| `app-breadth` | 82 | Compile the transport compatibility output, then run explicit CJS files serially. Phone sign-in embeds the standalone transport suite exactly once. |
+| `app-breadth` | 81 | Compile the transport compatibility output, then run explicit CJS files serially. Phone sign-in embeds the standalone transport suite exactly once. |
 | `app-renderer` | 1 | Existing Jest renderer command selects `runtime-auth.test.tsx`; onboarding remains in the existing hosted group. |
 | `website` | 29 | Explicit recursive Node test paths include nested voice modules. Require the real portable session-controller source before execution. |
 | `adapter-unit` | 4 | Same four files and serial Node options as adapter `npm test`, with explicit TAP reporting. |
@@ -32,7 +32,7 @@ injects the native binding; it makes no provider call or filesystem output.
 This placement does not establish Swift serialization, deployment-floor or
 actual StoreKit metadata qualification. Source authoring leaves these tests unrun.
 
-Current discovery has 315 files. The public runner's `lifecycle-runtime` group
+Current discovery has 314 files. The public runner's `lifecycle-runtime` group
 selects exactly 36 API modules, including purchases, reconciliation, status
 reader, codec and both Source27 suites exactly once. The three existing purchase
 suites move from `api-breadth` to existing hosted placement; the two new suites
