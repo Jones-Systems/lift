@@ -20,6 +20,8 @@ export function createStandardCoachingRoutes<E extends Env>(bindings: Readonly<{
     bindings.lifecycle.assertActive(actor);
     if (!composition) throw new DomainError(503, 'standard_coaching_unavailable');
     if (c.req.header('content-type')?.split(';')[0]?.trim() !== 'application/json') throw new DomainError(415, 'json_required');
+    const idempotencyKey = c.req.header('idempotency-key');
+    if (idempotencyKey !== undefined && !/^[A-Za-z0-9_.:-]{8,128}$/.test(idempotencyKey)) throw new DomainError(400, 'idempotency_key_invalid');
     const abort = new AbortController(), originalSignal = c.req.raw.signal;
     const cancel = () => abort.abort();
     originalSignal.addEventListener('abort', cancel, { once: true });
@@ -54,7 +56,7 @@ export function createStandardCoachingRoutes<E extends Env>(bindings: Readonly<{
       let request: string;
       try { request = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
       catch { throw new DomainError(400, 'invalid_json'); }
-      const response = await wait(composition.run(scope, request));
+      const response = await wait(composition.run(scope, request, idempotencyKey === undefined ? undefined : { idempotencyKey }));
       scope.assertCurrent();
       return new Response(response, { status: 200, headers: {
         'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
