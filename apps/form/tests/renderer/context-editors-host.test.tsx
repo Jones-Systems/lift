@@ -1,117 +1,300 @@
-const { test } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs'), path = require('node:path'), ts = require('typescript');
-const root = path.resolve(__dirname, '../..');
-function sourceLoader() {
-  const cache = new Map();
-  function load(name) {
-    const file = path.resolve(root, name); assert.ok(file.startsWith(root + path.sep));
-    if (cache.has(file)) return cache.get(file).exports;
-    const module = { exports: {} }; cache.set(file, module);
-    const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), { fileName: file, compilerOptions: {
-      module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
-    } }).outputText;
-    new Function('require', 'module', 'exports', code)(specifier => {
-      if (specifier === 'react') return {};
-      if (specifier === './client') return { ...load('api/transport.ts'), formApi: null };
-      assert.ok(specifier.startsWith('.'), 'Unexpected dependency: ' + specifier);
-      return load(path.relative(root, path.resolve(path.dirname(file), specifier + '.ts')));
-    }, module, module.exports);
-    return module.exports;
-  }
-  return load;
+import React from 'react';
+import { afterEach, expect, jest, test } from '@jest/globals';
+import { AccessibilityInfo } from 'react-native';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react-native';
+import App from '../../App';
+import { FormRuntime } from '../../src/FormRuntime';
+import type { Account, SourcePlan } from '../../src/api/domain';
+import { FormResources } from '../../src/api/resources';
+import { FormTransport } from '../../src/api/transport';
+import { decodePlan } from '../../src/api/trainingCodec';
+import type { ContextConfirmationSlotContext, SourcePlanDetailSlotContext } from '../../src/features/contract';
+import type { SettingsPresentationContext } from '../../src/settings';
+import type { ContextEditorEntry, ContextEditorScreenProps } from '../../src/settings/context-editors';
+import type { createTrainingContextPresentation } from '../../src/integration/trainingContextPresentation';
+
+type RuntimeProps = React.ComponentProps<typeof FormRuntime>;
+type Presentation = ReturnType<typeof createTrainingContextPresentation>;
+const mockEditors: ContextEditorEntry[] = [];
+let mockHome: import('../../src/features/contract').HomeSlotContext | undefined;
+let mockResources: FormResources | undefined;
+let mockOverrides: Partial<RuntimeProps> = {};
+const mockBundles: Presentation[] = [];
+const mockContexts: ContextConfirmationSlotContext[] = [];
+const mockDetails: SourcePlanDetailSlotContext[] = [];
+const mockSettings: SettingsPresentationContext[] = [];
+const mockActions = new Map<string, (() => void) | undefined>();
+
+// Inject only the synthetic transport; every App/runtime/shell component still renders.
+jest.mock('../../src/FormRuntime', () => {
+  const actual = jest.requireActual<typeof import('../../src/FormRuntime')>('../../src/FormRuntime');
+  return { ...actual, FormRuntime: (props: RuntimeProps) =>
+    <actual.FormRuntime {...props} resources={mockResources} {...mockOverrides} /> };
+});
+jest.mock('../../src/features/training', () => {
+  const actual = jest.requireActual<typeof import('../../src/features/training')>('../../src/features/training');
+  return { ...actual, TrainingSlot(props: import('../../src/features/contract').HomeSlotContext) {
+    mockHome = props; return <actual.TrainingSlot {...props} />;
+  } };
+});
+jest.mock('../../src/settings/context-editors', () => {
+  const actual = jest.requireActual<typeof import('../../src/settings/context-editors')>('../../src/settings/context-editors');
+  return { ...actual, ContextEditorScreen(props: ContextEditorScreenProps) {
+    mockEditors.push(props.entry); return <actual.ContextEditorScreen {...props} />;
+  } };
+});
+jest.mock('../../src/fonts', () => ({ useFormFonts: () => true }));
+jest.mock('../../src/integration/trainingContextPresentation', () => {
+  const actual = jest.requireActual<typeof import('../../src/integration/trainingContextPresentation')>('../../src/integration/trainingContextPresentation');
+  return { ...actual, createTrainingContextPresentation() {
+    const original = actual.createTrainingContextPresentation();
+    const bundle: Presentation = {
+      renderContextConfirmation(ctx) { mockContexts.push(ctx); return original.renderContextConfirmation(ctx); },
+      renderSourcePlanDetail(ctx) { if (!mockDetails.includes(ctx)) mockDetails.push(ctx); return original.renderSourcePlanDetail(ctx); },
+    };
+    mockBundles.push(bundle);
+    return bundle;
+  } };
+});
+jest.mock('../../src/settings', () => {
+  const actual = jest.requireActual<typeof import('../../src/settings')>('../../src/settings');
+  return { ...actual, SettingsSlot(ctx: SettingsPresentationContext) {
+    mockSettings.push(ctx); return <actual.SettingsSlot {...ctx} />;
+  } };
+});
+// Retain callbacks before Pressability; all UI primitives call through unchanged.
+jest.mock('../../src/features/shared/ui', () => {
+  const actual = jest.requireActual<typeof import('../../src/features/shared/ui')>('../../src/features/shared/ui');
+  return { ...actual,
+    PrimaryAction(props: React.ComponentProps<typeof actual.PrimaryAction>) {
+      if (props.captureId) mockActions.set(props.captureId, props.onPress);
+      if (props.label === 'Save changes') mockActions.set('editor-save', props.onPress);
+      return <actual.PrimaryAction {...props} />;
+    },
+    PlainAction(props: React.ComponentProps<typeof actual.PlainAction>) {
+      if (props.captureId) mockActions.set(props.captureId, props.onPress);
+      return <actual.PlainAction {...props} />;
+    },
+    AccountRow(props: React.ComponentProps<typeof actual.AccountRow>) {
+      if (props.testID) mockActions.set(props.testID, props.onPress);
+      return <actual.AccountRow {...props} />;
+    },
+    Nav(props: React.ComponentProps<typeof actual.Nav>) {
+      mockActions.set('a-back', props.onBack); return <actual.Nav {...props} />;
+    },
+    Sheet(props: React.ComponentProps<typeof actual.Sheet>) {
+      if (props.closeTestID) mockActions.set(props.closeTestID, props.onClose);
+      return <actual.Sheet {...props} />;
+    },
+  };
+});
+
+function action(id: string): () => void {
+  const callback = mockActions.get(id);
+  if (!callback) throw Error('Missing original callback: ' + id);
+  return callback;
 }
-const load = sourceLoader();
-const { FormTransport } = load('api/transport.ts');
-const { FormResources } = load('api/resources.ts');
-const { captureContextEditorSession } = load('integration/contextEditorSession.ts');
-const { createContextEditorController } = load('settings/context-editors/model.ts');
-const json = (value, status = 200) => new Response(JSON.stringify(value), { status });
-async function fixture(target = 'goals') {
-  const f = { live: true, calls: [], adopted: [], closes: 0, mode: 'saved', account: {
-    accountId: 'synthetic', profile: { revision: 1, name: 'Original', goals: ['custom goal'] },
-    preferences: { revision: 1, equipment: ['custom equipment'] } } };
-  const origin = 'https://context.integration.invalid';
+function lastContext() {
+  const value = mockContexts.at(-1);
+  if (!value) throw Error('Context not mounted');
+  return value;
+}
+function lastSettings() {
+  const value = mockSettings.at(-1);
+  if (!value) throw Error('Settings not mounted');
+  return value;
+}
+function bundle() {
+  const value = mockBundles.at(-1);
+  if (!value) throw Error('App presentation not created');
+  return value;
+}
+function json(value: unknown, status = 200, headers = {}): Response {
+  const response = new Response(JSON.stringify(value), { status, headers });
+  response.json = async () => JSON.parse(await response.text());
+  return response;
+}
+const pendingCleanup: (() => void)[] = [];
+function deferredResponse() {
+  let resolve!: (value: Response) => void;
+  const promise = new Promise<Response>(yes => { resolve = yes; });
+  pendingCleanup.push(() => resolve(json({ error: { code: 'unavailable', message: 'Synthetic cleanup' } }, 503)));
+  return { promise, resolve };
+}
+function account(): Account {
+  return { accountId: 'original', appAccountToken: 'synthetic-app-token',
+    onboarding: { revision: 1, step: 'review', status: 'completed', answers: {}, preferences: {}, completedAt: null },
+    profile: { revision: 4, name: 'Original name', age: null, heightCm: null, weightKg: null,
+      trainingBackground: 'returning', injuryHistory: '', goals: ['strength'] },
+    preferences: { revision: 7, appMode: 'basic', mascot: 'none', animationStyle: 'short', loadUnit: 'kg', heightUnit: 'cm',
+      coachVoice: 'direct', communication: 'concise', trainingDaysPerWeek: 3, sessionMinutes: 30,
+      equipment: ['dumbbell'], remindersEnabled: false } };
+}
+function sourceReceipt() {
+  const plan = decodePlan({ id: 'saved-source', name: 'Saved source plan', revision: 1, archived: false,
+    createdAt: '2026-10-11T12:00:00.000Z', updatedAt: '2026-10-11T12:00:00.000Z',
+    schema: 'form.source-prescription-plan/v1', origin: { kind: 'form-adaptation', id: 'synthetic-plan', revision: 'r1' },
+    duration: { kind: 'estimated-range', minMinutes: 20, maxMinutes: 35 },
+    items: [{ id: 'source-item', native: { exercise_id: 'native-rep', movement_pattern: 'synthetic movement', role: 'practice',
+      sets: 3, rest_seconds: 45, rep_range: [6, 10], target_rir: 2, notes: ['Retained source note'] },
+      registeredDomain: { exerciseId: 'domain-rep', variantId: 'variant:rep',
+        identity: { repository: 'Synthetic/Source', revision: 'rev:source', path: 'retained/native.json', sha256: 'a'.repeat(64), nativeId: 'native-rep' },
+        registration: { id: 'synthetic-registration', revision: 'r1', digest: 'b'.repeat(64), bytes: 123 }, recordDigest: 'c'.repeat(64) },
+      load: { kind: 'unspecified', basis: 'unknown' } }] });
+  if (!('schema' in plan)) throw Error('Expected source fixture');
+  return { plan, provenance: { schema: 'form.first-plan-provenance/v1', contextKey: 'context:v1', selectedCandidateId: 'candidate',
+    profileRevision: 4, preferencesRevision: 7, sources: [{ id: 'source', revision: 'revision' }],
+    candidates: [{ id: 'candidate', status: 'eligible', gapCodes: [] }] } };
+}
+function fixture() {
+  const saved = sourceReceipt();
+  const f: { account: Account; plans: SourcePlan[];
+    patch?: () => Promise<Response>; read: null | (() => Promise<Response>); post: null | (() => Promise<Response>);
+    calls: { path: string; method: string; body: unknown; key: string | null; authorization: string | null }[];
+  } = { account: account(), plans: [], read: null, post: null, calls: [] };
+  const origin = 'https://form.renderer.invalid';
   const api = new FormTransport(origin, {
     async load() { return JSON.stringify({ version: 1, baseURL: origin, token: 'synthetic-original' }); },
     async save() {}, async clear() {},
   }, async (url, init) => {
-    const path = new URL(url).pathname;
-    if (path === '/v1/me') return json(f.account);
-    if (path === '/api/auth/sign-in/email') return new Response('{}', { headers: { 'set-auth-token': 'synthetic-new-session' } });
-    const body = JSON.parse(init.body);
-    f.calls.push({ path, body, headers: init.headers });
-    if (f.mode === 'unknown') throw Error('synthetic connection lost');
-    if (f.mode === 'stale') return json({ error: { code: 'stale_revision', message: 'New revision' } }, 409);
-    return json({ ...(path.endsWith('profile') ? f.account.profile : f.account.preferences), ...body, revision: 3 });
+    const path = new URL(String(url)).pathname, method = init?.method ?? 'GET', headers = new Headers(init?.headers);
+    const body: unknown = init?.body ? JSON.parse(String(init.body)) : null;
+    f.calls.push({ path, method, body, key: headers.get('Idempotency-Key'), authorization: headers.get('Authorization') });
+    switch (path) {
+      case '/api/auth/get-session': return json({ session: { id: 'synthetic-session', token: 'synthetic-original', userId: f.account.accountId,
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString() }, user: { id: f.account.accountId } });
+      case '/api/auth/sign-in/email': return json({}, 200, { 'set-auth-token': 'synthetic-replacement' });
+      case '/v1/capabilities': return json({});
+      case '/v1/me': return json(f.account);
+      case '/v1/me/settings': return json({ accountId: f.account.accountId, identity: { displayName: f.account.profile.name,
+        email: 'synthetic@example.invalid', signInMethods: ['emailPassword'], displayNameSource: 'formProfile', phoneNumber: null,
+        emailVerified: true }, capabilities: {}, policies: {} });
+      case '/v1/me/profile':
+        if (f.patch) return f.patch();
+        if (method !== 'PATCH') throw Error('Unexpected profile method');
+        f.account = { ...f.account, profile: { ...f.account.profile, revision: 5,
+          ...(body && typeof body === 'object' && 'name' in body && typeof body.name === 'string' ? { name: body.name } : {}),
+          ...(body && typeof body === 'object' && 'injuryHistory' in body && typeof body.injuryHistory === 'string'
+            ? { injuryHistory: body.injuryHistory } : {}) } };
+        return json(f.account.profile);
+      case '/v1/me/preferences':
+        if (method !== 'PATCH') throw Error('Unexpected preferences method');
+        f.account = { ...f.account, preferences: { ...f.account.preferences, revision: 8 } };
+        return json(f.account.preferences);
+      case '/v1/entitlements': return json({ accountId: f.account.accountId, grants: [], active: [] });
+      case '/v1/exercises': return json({ items: [] });
+      case '/v1/history': return json({ items: [], nextBefore: null });
+      case '/v1/stats': return json({ confirmedSets: 0, repetitions: 0, volumeKg: 0, completedSessions: 0, byExercise: [],
+        units: { load: 'kg', volume: 'kg-repetitions' }, includesActiveConfirmedSets: true });
+      case '/v1/plans': return f.read ? f.read() : json({ items: f.plans });
+      case '/v1/plans/first':
+        if (f.post) return f.post();
+        f.plans = [saved.plan];
+        return json({ ...saved, provenance: { ...saved.provenance,
+          profileRevision: f.account.profile.revision, preferencesRevision: f.account.preferences.revision } });
+      default: throw Error('Unexpected mounted request: ' + method + ' ' + path);
+    }
   });
-  await api.restore();
   const resources = new FormResources(api);
-  f.open = () => captureContextEditorSession(resources, f.account, target, {
-    isCurrentSession: () => true, isCurrentEditor: () => f.live, close() { f.closes++; },
-    profile(value) { f.adopted.push(value); }, preferences(value) { f.adopted.push(value); },
+  return Object.assign(f, { api, resources, saved,
+    creates: () => f.calls.filter(call => call.path === '/v1/plans/first'),
+    reads: () => f.calls.filter(call => call.path === '/v1/me'),
+    planReads: () => f.calls.filter(call => call.path === '/v1/plans'),
+    writes: () => f.calls.filter(call => call.method === 'PATCH'),
   });
-  f.session = f.open(); f.entry = f.session.entry; f.api = api;
-  return f;
 }
-test('original resource PATCH retains displayed revision and cloned arrays after server refresh', async () => {
-  const f = await fixture();
-  f.account.profile.goals.push('later mutation');
-  f.account = { ...f.account, profile: { ...f.account.profile, revision: 2 } };
-  assert.deepEqual(f.entry.profile.goals, ['custom goal']);
-  const changes = { goals: ['custom goal', 'new goal'] };
-  f.mode = 'unknown';
-  const result = await f.entry.saveProfileFromEntry(changes);
-  assert.equal(result.status, 'unknown');
-  changes.goals.push('not original intent');
-  f.mode = 'saved'; assert.equal((await result.retry()).status, 'saved');
-  assert.equal(f.calls.length, 2); assert.deepEqual(f.calls[0], f.calls[1]);
-  assert.deepEqual(f.calls[0].body, { goals: ['custom goal', 'new goal'], expectedRevision: 1 });
-  assert.equal((await result.retry()).status, 'failed');
+async function mountApp(f = fixture()) {
+  mockResources = f.resources;
+  jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false);
+  const view = await render(<App />);
+  await screen.findByTestId('a-entry-context-review');
+  return Object.assign(f, { view });
+}
+async function enter() {
+  await fireEvent.press(screen.getByTestId('a-entry-context-review'));
+  await screen.findByTestId('context-row-name');
+  return lastContext();
+}
+afterEach(async () => {
+  await cleanup();
+  await act(async () => { pendingCleanup.splice(0).forEach(finish => finish()); });
+  mockEditors.length = 0; mockHome = undefined; mockResources = undefined; mockOverrides = {};
+  mockBundles.length = 0; mockContexts.length = 0; mockDetails.length = 0; mockSettings.length = 0; mockActions.clear();
 });
-test('preferences initial save also uses displayed baseline', async () => {
-  const f = await fixture('equipment'); f.account.preferences.revision = 2;
-  assert.equal((await f.entry.savePreferencesFromEntry({ equipment: ['custom equipment'] })).status, 'saved');
-  assert.equal(f.calls[0].body.expectedRevision, 1);
-});
-test('stale cannot reapply old intent; explicit reentry captures fresh revision', async () => {
-  const f = await fixture(); f.mode = 'stale'; f.account.profile.revision = 2;
-  const leaf = createContextEditorController(f.entry, f.entry.attachment);
-  leaf.edit('goals', ['new goal']); await leaf.save();
-  assert.equal(leaf.snapshot().status, 'stale'); leaf.edit('goals', ['reapply']); await leaf.save();
-  assert.equal(f.calls.length, 1); leaf.close();
-  assert.equal((await f.entry.saveProfileFromEntry({ goals: ['reapply'] })).status, 'failed');
-  f.mode = 'saved'; const fresh = f.open();
-  await fresh.entry.saveProfileFromEntry({ goals: ['fresh'] });
-  assert.equal(f.calls[1].body.expectedRevision, 2);
-});
-test('retained save/retry/close refuse after retirement or same-account auth replacement', async () => {
-  for (const kind of ['dispose', 'route', 'auth']) {
-    const f = await fixture(); f.mode = 'unknown';
-    const result = await f.entry.saveProfileFromEntry({ goals: ['new'] }); assert.equal(result.status, 'unknown');
-    f.entry.closeFromEntry(); assert.equal(f.closes, 0);
-    if (kind === 'dispose') f.session.dispose();
-    if (kind === 'route') f.live = false;
-    if (kind === 'auth') await f.api.signIn('synthetic@example.invalid', 'synthetic-password');
-    assert.equal((await result.retry()).status, 'failed');
-    assert.equal((await f.entry.saveProfileFromEntry({ goals: ['later'] })).status, 'failed');
-    f.entry.closeFromEntry(); assert.equal(f.closes, 0); assert.equal(f.calls.length, 1);
+
+
+function editor() { const entry = mockEditors.at(-1); if (!entry) throw Error('Editor not mounted'); return entry; }
+async function editName() {
+  await enter(); await fireEvent.press(screen.getByTestId('context-row-name'));
+  await screen.findByTestId('screen-context-editor'); return editor();
+}
+test('App mounts all six standard editors with stable entries', async () => {
+  const f = await mountApp(); const ctx = await enter();
+  for (const target of ['name', 'age', 'experience', 'goals', 'schedule', 'equipment'] as const) {
+    if (target !== 'name') await act(async () => { await ctx.confirmation.capture(); });
+    await fireEvent.press(screen.getByTestId('context-row-' + target));
+    await screen.findByTestId('screen-context-editor'); const entry = editor();
+    expect(entry.target).toBe(target); expect(Object.isFrozen(entry.profile.goals)).toBe(true);
+    await f.view.rerender(<App />); expect(editor()).toBe(entry);
+    await act(async () => { entry.closeFromEntry(); });
+    await screen.findByTestId('screen-context-review'); expect(entry.isCurrentEditor()).toBe(false);
   }
 });
-
-test('removed editor retains unresolved original-session navigation fence', async () => {
-  const f = await fixture(); f.mode = 'unknown';
-  const result = await f.entry.saveProfileFromEntry({ goals: ['issued'] });
-  assert.equal(result.status, 'unknown'); f.session.dispose();
-  assert.equal(f.session.navigationBlocked(), true);
-  assert.equal((await result.retry()).status, 'failed'); assert.equal(f.calls.length, 1);
+test('shell refresh cannot rebase first save; Training return requires explicit fresh review', async () => {
+  const f = await mountApp(), entry = await editName();
+  f.account = { ...f.account, profile: { ...f.account.profile, revision: 9, name: 'Refreshed' } };
+  await act(async () => { await mockHome!.reload(); });
+  expect(editor()).toBe(entry); expect(entry.profile.revision).toBe(4);
+  await fireEvent.changeText(screen.getByLabelText('Name'), 'Edited');
+  await fireEvent.press(screen.getByRole('button', { name: 'Save' }));
+  expect(f.writes().at(-1)?.body).toEqual({ name: 'Edited', expectedRevision: 4 });
+  await fireEvent.press(screen.getByRole('button', { name: 'Back to Settings' }));
+  await screen.findByTestId('screen-context-review');
+  const ctx = lastContext(); expect(ctx.confirmation.snapshot().status).toBe('stale');
+  await act(async () => { await ctx.confirmation.capture(); });
+  expect(ctx.confirmation.snapshot().status).toBe('ready');
+  await fireEvent.press(screen.getByTestId('context-row-name')); await screen.findByTestId('screen-context-editor');
+  expect(editor()).not.toBe(entry); expect(editor().profile.revision).toBe(5);
+  await act(async () => { await entry.saveProfileFromEntry({ name: 'Retired' }); entry.closeFromEntry(); });
+  expect(f.writes()).toHaveLength(1);
 });
-
-test('Settings name row mounts the same standard editor through the shell', async () => {
-  await mountApp();
-  await act(async () => { mockHome!.openSettings(); });
-  await screen.findByTestId('a-row-name');
-  await fireEvent.press(screen.getByTestId('a-row-name'));
+test('earlier sibling layout callback cannot dispatch or close after renderer replacement', async () => {
+  const f = await mountApp(), old = await editName(); const results: unknown[] = [];
+  function Earlier() { React.useLayoutEffect(() => {
+    old.closeFromEntry(); void old.saveProfileFromEntry({ name: 'Retired' }).then(value => results.push(value.status));
+  }, []); return null; }
+  mockOverrides = { renderContextEditor: () => null, renderHome: () => <Earlier /> };
+  await f.view.rerender(<App />);
+  expect(results).toEqual(['failed']); expect(f.writes()).toHaveLength(0); expect(old.isCurrentEditor()).toBe(false);
+});
+test('same-account replacement refuses retained callbacks', async () => {
+  const f = await mountApp(), old = await editName();
+  await act(async () => { await f.api.signIn('synthetic@example.invalid', 'synthetic-password'); });
+  await act(async () => { expect((await old.saveProfileFromEntry({ name: 'Retired' })).status).toBe('failed'); old.closeFromEntry(); });
+  expect(f.writes()).toHaveLength(0);
+});
+test('pending and unknown fence navigation; original retry preserves the entire request', async () => {
+  const f = await mountApp(), entry = await editName(); let reject!: (error: Error) => void;
+  const pending = new Promise<Response>((_resolve, no) => { reject = no; });
+  pendingCleanup.push(() => reject(Error('synthetic cleanup'))); f.patch = () => pending;
+  await fireEvent.changeText(screen.getByLabelText('Name'), 'Captured intent');
+  await fireEvent.press(screen.getByRole('button', { name: 'Save' }));
+  await act(async () => { entry.closeFromEntry(); mockHome!.openSettings(); });
+  expect(screen.getByTestId('screen-context-editor')).toBeTruthy();
+  await act(async () => { reject(Error('synthetic lost response')); });
+  await screen.findByRole('button', { name: 'Try again' });
+  const retry = screen.getByRole('button', { name: 'Try again' }).props.onPress;
+  await act(async () => { entry.closeFromEntry(); mockHome!.openSettings(); });
+  expect(screen.getByTestId('screen-context-editor')).toBeTruthy();
+  f.account = { ...f.account, profile: { ...f.account.profile, revision: 20 } };
+  await act(async () => { await mockHome!.reload(); }); f.patch = undefined;
+  await fireEvent.press(screen.getByRole('button', { name: 'Try again' }));
+  expect(f.writes()).toHaveLength(2); expect(f.writes()[0]).toEqual(f.writes()[1]);
+  await act(async () => { entry.closeFromEntry(); retry(); }); expect(f.writes()).toHaveLength(2);
+});
+test('Settings name row mounts the standard editor through the actual shell', async () => {
+  await mountApp(); await act(async () => { mockHome!.openSettings(); });
+  await screen.findByTestId('a-row-name'); await fireEvent.press(screen.getByTestId('a-row-name'));
   await screen.findByTestId('screen-context-editor'); expect(editor().target).toBe('name');
   await fireEvent.press(screen.getByRole('button', { name: 'Back to Settings' }));
   expect(screen.getByTestId('a-row-name')).toBeTruthy();
