@@ -1,4 +1,6 @@
 export const stripeApiVersion = '2025-02-24.acacia';
+// Integer minor units; every configured Price must be USD.
+export const stripeCurrency = 'usd';
 export const stripeCatalog = Object.freeze({
   weekly: Object.freeze({ productId: 'form.plus.week', amount: 700, interval: 'week' }),
   monthly: Object.freeze({ productId: 'form.plus.month', amount: 2000, interval: 'month' }),
@@ -6,15 +8,17 @@ export const stripeCatalog = Object.freeze({
 });
 export type Plan = keyof typeof stripeCatalog;
 export type StripeConfiguration = Readonly<{
-  enabled: true; livemode: boolean; prices: Readonly<Record<Plan, string>>;
+  enabled: true; livemode: boolean; stripeAccount: string; prices: Readonly<Record<Plan, string>>;
   apiKeyEnv: string; webhookSecretEnvs: readonly string[];
   successUrl: string; cancelUrl: string; returnUrl: string; portalConfiguration: string;
 }>;
+const keys = 'apiKeyEnv,cancelUrl,enabled,livemode,portalConfiguration,prices,returnUrl,stripeAccount,successUrl,webhookSecretEnvs';
 export function stripeConfiguration(value?: StripeConfiguration): StripeConfiguration | null {
   if (value === undefined) return null;
   const env = /^[A-Z][A-Z0-9_]{0,127}$/;
-  if (Object.keys(value).sort().join(',') !== 'apiKeyEnv,cancelUrl,enabled,livemode,portalConfiguration,prices,returnUrl,successUrl,webhookSecretEnvs'
+  if (Object.keys(value).sort().join(',') !== keys
     || value.enabled !== true || typeof value.livemode !== 'boolean' || !env.test(value.apiKeyEnv)
+    || typeof value.stripeAccount !== 'string' || !/^acct_[A-Za-z0-9]{1,200}$/.test(value.stripeAccount)
     || !Array.isArray(value.webhookSecretEnvs) || value.webhookSecretEnvs.length < 1 || value.webhookSecretEnvs.length > 3
     || value.webhookSecretEnvs.some(k => !env.test(k)) || !/^bpc_[A-Za-z0-9]{1,200}$/.test(value.portalConfiguration)
     || Object.keys(value.prices).sort().join(',') !== 'monthly,weekly,yearly'
@@ -25,4 +29,8 @@ export function stripeConfiguration(value?: StripeConfiguration): StripeConfigur
     if (text.length > 2048 || url.protocol !== 'https:' || url.username || url.password || url.hash) throw new Error('stripe_url_invalid');
   }
   return Object.freeze({ ...value, prices: Object.freeze({ ...value.prices }), webhookSecretEnvs: Object.freeze([...value.webhookSecretEnvs]) });
+}
+/** Provider + environment + Stripe account. Every stored row is keyed by it, so test and live never mix. */
+export function stripeNamespace(config: StripeConfiguration): string {
+  return `stripe:${config.livemode ? 'live' : 'test'}:${config.stripeAccount}`;
 }
