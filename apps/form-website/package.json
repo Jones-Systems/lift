@@ -5,6 +5,7 @@
   "engines": {"node": ">=22"},
   "scripts": {
     "build": "node build.mjs",
-    "test": "node --test --test-concurrency=1 tests/*.test.mjs"
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "test:api-session": "node --experimental-transform-types --import ../../services/api/scripts/integration/source-hook.mjs --test --test-concurrency=1 tests/integration/api-session.test.mjs"
   }
 }

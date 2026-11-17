@@ -302,6 +302,7 @@
         "apps/form-website/tests/editorial-queue.test.mjs",
         "apps/form-website/tests/editorial.test.mjs",
         "apps/form-website/tests/hosting.test.mjs",
+        "apps/form-website/tests/integration/api-session.test.mjs",
         "apps/form-website/tests/member-coach.test.mjs",
         "apps/form-website/tests/member-ecosystem-connections.test.mjs",
         "apps/form-website/tests/member-ecosystem-journal.test.mjs",

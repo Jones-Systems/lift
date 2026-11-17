@@ -121,7 +121,8 @@ def selection(root):
     if not voice.is_file():
         raise FileNotFoundError("Website voice qualification requires apps/form/src/voice-coaching/session-controller.ts")
     website = groups["website"]["files"]
-    add("website", WEBSITE, ["node", "--experimental-transform-types", "--test", "--test-reporter=tap",
+    add("website", WEBSITE, ["node", "--experimental-transform-types", "--import",
+                             "../../services/api/scripts/integration/source-hook.mjs", "--test", "--test-reporter=tap",
                              "--test-concurrency=1", *[p.removeprefix(WEBSITE + "/") for p in website]], website, "tap")
     adapter = groups["adapter-unit"]["files"]
     package = json.loads((root / ADAPTER / "package.json").read_text())
