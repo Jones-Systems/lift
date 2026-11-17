@@ -22,7 +22,7 @@ HELPER = "scripts/run-public-checks.py"
 HARNESS_TEST = "scripts/run-public-checks.test.py"
 SOURCE_HOOK = "scripts/integration/source-hook.mjs"
 SOURCE_RESOLVER = "scripts/integration/source-resolution.mjs"
-GROUP_IDS = ("runner-contract", "api-compile", "app-static", "form104-139", "form196", "form203", "form208", "simulator-portable", "native-e2e-backend", "native-e2e-app", "lifecycle-runtime", "lifecycle-wire-v2", "plan-revision")
+GROUP_IDS = ("runner-contract", "api-compile", "app-static", "form104-139", "form196", "form203", "form208", "simulator-portable", "native-e2e-backend", "native-e2e-app", "lifecycle-runtime", "lifecycle-wire-v2", "plan-revision", "grounding-synthetic")
 BASELINE_HEALTH = (
     "tests/wearables/app.test.mjs", "tests/wearables/ingestion.test.mjs",
     "tests/wearables/providers.test.mjs", "tests/wearables/suggestions.test.mjs",
@@ -46,6 +46,8 @@ APP_TESTS = {
     "form208": ("src/voice-coaching/standard/tests/wire-codec.test.cjs",),
 }
 API_TESTS = {
+    "grounding-synthetic": ("tests/grounding/grounding.test.ts", "tests/grounding/stop-words.test.ts",
+                            "tests/grounding/abstention.test.ts"),
     "plan-revision": ("tests/planning/plan-revision-port.test.ts", "tests/backend.test.ts"),
     "lifecycle-wire-v2": ("tests/lifecycle-wire-v2.test.ts",),
     "lifecycle-runtime": (
@@ -103,7 +105,7 @@ def selection(root, requested):
     if chosen - set(GROUP_IDS):
         raise ValueError("Unknown public check group")
     # Interop, native E2E smoke tests and board workers load fresh emitted API JavaScript.
-    if chosen & {"form196", "form208", "native-e2e-backend", "native-e2e-app", "lifecycle-runtime", "lifecycle-wire-v2", "plan-revision"}:
+    if chosen & {"form196", "form208", "native-e2e-backend", "native-e2e-app", "lifecycle-runtime", "lifecycle-wire-v2", "plan-revision", "grounding-synthetic"}:
         chosen.add("api-compile")
     groups = [group for group in GROUP_IDS if group in chosen]
     health = sorted(str(path.relative_to(root / API)) for directory in
@@ -146,6 +148,8 @@ def selection(root, requested):
                     sources = (*sources, "tests/runtime-modules/restore-drill-fixture.ts",
                                "tests/lifecycle-reauthentication-fixture.ts",
                                "tests/purchases/status-source-fixture.ts")
+                if group == "grounding-synthetic":
+                    sources = (*sources, "tests/grounding/fixture.ts", "tests/domain-features/cardio/fixture.ts")
                 if group == "native-e2e-backend":
                     sources = (*sources, "tests/e2e/native-backend.ts", SOURCE_HOOK, SOURCE_RESOLVER)
                 add(group, API, ["node", "--test", "--test-concurrency=1", *emitted], sources)

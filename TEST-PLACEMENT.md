@@ -16,7 +16,7 @@ prove that a new test was selected.
 
 | Placement/group | Files | Execution and reason |
 | --- | ---: | --- |
-| Existing hosted | 76 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
+| Existing hosted | 79 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
 | `api-breadth` | 89 | Compile API TypeScript with `tsc`; run emitted TS tests and original MJS/CJS tests using the existing source hook. Never run the private projection build. |
 | `app-breadth` | 80 | Compile the transport compatibility output, then run explicit CJS files serially. Phone sign-in embeds the standalone transport suite exactly once. |
 | `app-renderer` | 1 | Existing Jest renderer command selects `runtime-auth.test.tsx`; onboarding remains in the existing hosted group. |
@@ -25,7 +25,7 @@ prove that a new test was selected.
 | `breadth-contract` | 1 | This runner's selection, result and lifecycle contract runs inside the breadth job. |
 | Blocked | 32 | Exact files, reasons, missing inputs and intended private/manual qualification routes remain in the manifest. |
 
-Current discovery has 312 files. The public runner's `lifecycle-runtime` group
+Current discovery has 316 files. The public runner's `lifecycle-runtime` group
 selects exactly 36 API modules, including purchases, reconciliation, status
 reader, codec and both Source27 suites exactly once. The three existing purchase
 suites move from `api-breadth` to existing hosted placement; the two new suites
@@ -64,6 +64,15 @@ serially from fresh emissions after full strict API compilation. Coverage is
 limited to the unmounted legacy PLAN16 transactional revision/receipt/undo core
 and test-only disposal role/identity assertions; it does not establish arbitrary
 async-hook safety, runtime activation or authenticated product acceptance.
+The `grounding-synthetic` group adds the synthetic grounding retriever suite and the new
+stop-word and abstention suites to hosted placement, after full strict API
+compilation. Its fixtures (`tests/grounding/fixture.ts` and the cardio consumer fixture)
+are required, digested compiled inputs, never test invocations. The single test that
+reads private retained sources moved verbatim from `grounding.test.ts` to
+`retained-record.test.ts`, which joins the blocked `private-grounding` group; its
+private inputs are unavailable here and it is unexecuted by public checks. The group
+qualifies only filler-word-tolerant lexical matching and corpus-only abstention over
+synthetic records; it adds no synonym, routing or clinical claim.
 These are source selection counts, not executed case counts or proof of passing
 tests. The 32 blocked files remain intact: 29 need private research/projection
 inputs, one needs the internal website route inventory, one needs
