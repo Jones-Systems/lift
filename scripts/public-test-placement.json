@@ -74,6 +74,7 @@
         "services/api/tests/usage-limits/standard-observation.test.ts",
         "services/api/tests/voice-coaching/standard-wire.test.ts",
         "services/api/tests/voice-coaching/turn-controller.test.ts",
+        "services/api/tests/wearables/ai-exclusion.test.mjs",
         "services/api/tests/wearables/app.test.mjs",
         "services/api/tests/wearables/canonical-consumer/canonical-consumer.test.mjs",
         "services/api/tests/wearables/ingestion.test.mjs",
