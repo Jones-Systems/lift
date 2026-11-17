@@ -44,10 +44,18 @@ function deferredSpeech(text = 'press unknown load') {
   return { port, starting, calls,
     lateFinal: () => { for (const observer of retained) observer(draft('review', 'old private speech')); } };
 }
-function control(label: string): () => void {
-  const onPress: unknown = screen.getByRole('button', { name: label }).props.onPress;
+// React Native Pressable hosts expose Pressability handlers (onClick, onResponder*), not onPress, and
+// those handlers read the latest config when called. Snapshot the config's onPress at capture time so a
+// retained handler is the exact callback rendered then, which the owner fences must reject later.
+type PressProps = { onPress?: unknown; onStartShouldSetResponder?: { testOnly_pressabilityConfig?: () => { onPress?: unknown } } };
+function pressHandler(element: { props: object }, label: string): () => void {
+  const props = element.props as PressProps;
+  const onPress = props.onPress ?? props.onStartShouldSetResponder?.testOnly_pressabilityConfig?.().onPress;
   if (typeof onPress !== 'function') throw new Error(`Missing actual control handler: ${label}`);
   return onPress as () => void;
+}
+function control(label: string): () => void {
+  return pressHandler(screen.getByRole('button', { name: label }), label);
 }
 function account(): Account {
   return { accountId: 'synthetic-activity', appAccountToken: 'synthetic-token',
@@ -272,12 +280,12 @@ test('real renderer reattachment keeps distinct B detail, confirmable B void rev
   expect(screen.getByText('Entry entry-one; revision 2; status recorded')).toBeTruthy();
 });
 test('actual root Back calls close; the retained detached and expired callbacks remain inert', async () => {
-  const f = await mount(); const oldBack = screen.getByTestId('a-back').props.onPress;
+  const f = await mount(); const oldBack = pressHandler(screen.getByTestId('a-back'), 'Back');
   await f.unmount(); await render(renderer(f.context)); await act(async () => {});
   await act(async () => { oldBack(); }); expect(f.close).not.toHaveBeenCalled();
   await act(async () => { await fireEvent.press(screen.getByLabelText('Back to Today')); });
   expect(f.close).toHaveBeenCalledTimes(1);
-  const expiredBack = screen.getByTestId('a-back').props.onPress; f.expire();
+  const expiredBack = pressHandler(screen.getByTestId('a-back'), 'Back'); f.expire();
   await act(async () => { expiredBack(); oldBack(); }); expect(f.close).toHaveBeenCalledTimes(1);
 });
 test('same-binding remount retains original unknown controller; same-account replacement cannot expose it', async () => {
