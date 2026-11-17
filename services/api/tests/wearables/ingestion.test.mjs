@@ -67,3 +67,46 @@ test('proposed 120 day purge is callable source policy only',()=>{
  const h=harness();h.service.ingest(ctxA,'a',batch({batch:[record({day:'2025-01-01',start:'2025-01-01T00:00:00Z',end:'2025-01-02T00:00:00Z'})]}));
  assert.equal(h.service.expireProposalRetention(ctxA,120),1);
 });
+const chain=(n,changes={})=>batch({pageId:`chain-${n}`,fromCursor:n===1?'anchor1':`chain-cursor-${n-1}`,nextCursor:`chain-cursor-${n}`,...changes});
+test('older, equal and tombstoned revisions are counted as duplicates and never change visible data',()=>{
+ const h=harness(),id='steps:day',value=()=>h.store.measure(ctxA,'hk',1,id),visible=()=>h.service.summary(ctxA,'2026-10-09','2026-10-10').items;
+ h.service.ingest(ctxA,'first',batch());
+ const send=(n,changes)=>h.service.ingest(ctxA,'key-'+n,chain(n,changes));
+ assert.deepEqual(send(1,{batch:[record({value:130,revision:{token:'r2',order:2}})]}),{accepted:1,duplicates:0,cursor:'chain-cursor-1',pageId:'chain-1'});
+ assert.equal(send(2,{batch:[record({value:99,revision:{token:'r0',order:0}})]}).duplicates,1);assert.equal(value().value,130);
+ assert.equal(send(3,{batch:[record({value:130,revision:{token:'r2',order:2}})]}).duplicates,1);assert.equal(value().value,130);
+ assert.equal(send(4,{batch:[],tombstones:[{id,revision:{token:'r1',order:1}}]}).duplicates,1);assert.equal(value().deleted,false);
+ assert.equal(send(5,{batch:[],tombstones:[{id,revision:{token:'r5',order:5}}]}).accepted,1);assert.equal(value().deleted,true);assert.deepEqual(visible(),[]);
+ assert.deepEqual(send(6,{batch:[record({value:150,revision:{token:'r6',order:6}})]}),{accepted:0,duplicates:1,cursor:'chain-cursor-6',pageId:'chain-6'});
+ assert.equal(value().deleted,true);assert.equal(value().value,0);assert.deepEqual(visible(),[]);
+ assert.equal(h.store.cursor(ctxA,'hk',1,'steps'),'chain-cursor-6');
+});
+test('a tombstone for an unseen record id blocks a later arrival of that id',()=>{
+ const h=harness();h.service.ingest(ctxA,'first',batch({batch:[],tombstones:[{id:'early',revision:{token:'t1',order:1}}]}));
+ assert.equal(h.store.measure(ctxA,'hk',1,'early').deleted,true);
+ const result=h.service.ingest(ctxA,'second',chain(1,{batch:[record({id:'early',revision:{token:'r2',order:2}})]}));
+ assert.deepEqual([result.accepted,result.duplicates],[0,1]);assert.deepEqual(h.service.summary(ctxA,'2026-10-09','2026-10-10').items,[]);
+});
+test('invalid, over-limit, unconsented and misrouted pages leave no receipt, cursor or row',()=>{
+ const h=harness(),before=h.bucket(ctxA).receipts.size;
+ const many=Array.from({length:501},(_,n)=>record({id:`many-${n}`}));
+ const cases=[[batch({batch:[record(),record()]}),/health_duplicate_page_id/],
+  [batch({batch:[record()],tombstones:[{id:'steps:day',revision:{token:'r2',order:2}}]}),/health_duplicate_page_id/],
+  [batch({batch:many}),/health_batch_limit/],
+  [batch({batch:[record({id:'energy',metric:'active_energy',unit:'kcal',aggregation:'sum'})]}),/health_type_not_consented/],
+  [batch({version:2}),/health_unsupported_version/],[batch({batch:[record({day:'2026-02-31'})]}),/health_invalid_day/],
+  [batch({batch:[record({start:'2026-10-10T00:00:00Z',end:'2026-10-09T00:00:00Z'})]}),/health_invalid_window/]];
+ for(const [page,pattern] of cases)assert.throws(()=>h.service.ingest(ctxA,'invalid',page),pattern);
+ assert.throws(()=>h.service.ingest(ctxA,'wrong-route',batch(),{provider:'oura'}),/health_route_mismatch/);
+ assert.equal(h.bucket(ctxA).receipts.size,before);assert.equal(h.store.cursor(ctxA,'hk',1,'steps'),null);
+ assert.equal(h.store.measures(ctxA,'2026-10-09','2026-10-10',100).length,0);
+});
+test('one account disconnecting or replaying cannot alter another account sharing connection and page ids',()=>{
+ const h=harness();h.service.ingest(ctxA,'shared-key',batch());h.service.ingest(ctxB,'shared-key',batch());
+ const other=structuredClone(h.bucket(ctxB));
+ h.service.disconnect(ctxA,'disconnect',{connectionId:'hk',generation:1});
+ assert.equal(h.store.measures(ctxA,'2026-10-09','2026-10-10',100).length,0);
+ assert.deepEqual(h.bucket(ctxB),other);assert.equal(h.store.connection(ctxB,'hk').connected,true);
+ assert.equal(h.service.ingest(ctxB,'shared-key',batch()).accepted,1);
+ assert.throws(()=>h.service.ingest(ctxA,'shared-key',batch()),/health_(connection_changed|receipt_purged)/);
+});

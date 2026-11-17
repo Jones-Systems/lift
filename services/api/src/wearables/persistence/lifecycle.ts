@@ -33,9 +33,22 @@ export function createWearableLifecycleAdapter(deps: WearablePersistenceDependen
       lifecycle.assertActive(ctx);
       if(!snapshot||typeof snapshot.append!=='function'||!Number.isFinite(snapshot.snapshotAtMs))fail('health_export_snapshot_required',503);
       const append=(value:unknown)=>{lifecycle.assertActive(ctx);snapshot.append('wearables',value);lifecycle.assertActive(ctx);};
-      const omissions=['credentials','cursors','raw_provider_intents','receipt_results','suggestion_plan_snapshots'];
+      // Every wearable account-data class this export does not emit, so a manifest never implies completeness.
+      // Codes and reasons are stable. qualifyExport covers measures only; connection/consent metadata and
+      // suggestions stay omitted until a trusted qualification exists for them. Auth state has its own adapter.
+      const omissionReasons={
+        credentials:'credentials_never_exported_auth_state_owned_separately',
+        cursors:'provider_sync_position_internal',
+        raw_provider_intents:'raw_provider_pages_restricted',
+        receipt_results:'idempotency_receipts_internal',
+        suggestion_plan_snapshots:'plan_snapshots_restricted',
+        connection_consent_metadata:'export_qualification_covers_measures_only',
+        suggestion_records:'export_qualification_covers_measures_only',
+        measure_tombstones:'deleted_records_not_exported',
+      };
+      const omissions=Object.keys(omissionReasons);
       if(!deps.qualifyExport){
-        append({kind:'manifest',status:'unavailable',reason:'trusted_export_qualification_required',omissions});
+        append({kind:'manifest',status:'unavailable',reason:'trusted_export_qualification_required',omissions,omissionReasons});
         return {category:'wearables',status:'unavailable',reason:'trusted_export_qualification_required',count:0};
       }
       const sizes=db.prepare('SELECT count(*) AS n,coalesce(sum(length(CAST(data AS BLOB))),0) AS bytes,max(length(CAST(data AS BLOB))) AS largest FROM wearable_measures WHERE account_id=?')
@@ -57,7 +70,7 @@ export function createWearableLifecycleAdapter(deps: WearablePersistenceDependen
         append:(category,value)=>{lifecycle.assertActive(ctx);snapshot.append(category,value);lifecycle.assertActive(ctx);}})):unavailable();
       lifecycle.assertActive(ctx);
       const status=unqualified?'unavailable':result.status;
-      append({kind:'manifest',status,exported,unqualified,omissions,externalStatus:result.status,aiEligible:false});
+      append({kind:'manifest',status,exported,unqualified,omissions,omissionReasons,externalStatus:result.status,aiEligible:false});
       return {category:'wearables',status,count:exported,reason:unqualified?'unqualified_records_omitted':result.reason??'qualified_local_export_only'};
     },
     suppress(accountId,epoch) {

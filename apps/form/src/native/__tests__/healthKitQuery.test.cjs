@@ -380,3 +380,196 @@ test('scoped purge is separate from cancel; an unknown purge retries only its or
   assert.equal(attempts[0][2], journalId); assert.equal(attempts[0][3], 2);
   await f.adapter.dispose();
 });
+
+const hexId = (index, prefix = '1') => 'hk1:' + index.toString(16).padStart(64, '0') + ':'
+  + prefix.repeat(8) + '-' + prefix.repeat(4) + '-4' + prefix.repeat(3) + '-8' + prefix.repeat(3) + '-' + prefix.repeat(12);
+const afterTime = (ctx, value) => Object.assign(clone(ctx), value);
+
+test('daily buckets must be one whole local day inside the window and source-separated', async () => {
+  const ctx = baseContext;
+  const mutations = [
+    value => { value.records[0].end = '2026-10-01T23:59:59.000Z'; },
+    value => { value.records[0].end = ctx.to; },
+    value => { value.records[0].end = '2026-10-04T00:00:00.000Z'; },
+    value => { value.records[0].start = '2026-09-30T00:00:00.000Z'; value.records[0].day = '2026-09-30'; },
+    value => { value.records[0].start = ctx.to; value.records[0].end = '2026-10-04T00:00:00.000Z'; value.records[0].day = '2026-10-03'; },
+    value => { value.records[0].start = '2026-10-02T00:00:00.000Z'; value.records[0].end = ctx.from; },
+    value => { value.records[0].originalId = incarnation; },
+    value => { value.records[0].quality = 'complete'; },
+    value => { value.records[0].quality = 'partial'; },
+    value => { value.records[0].algorithm = 'vendor-score'; },
+    value => { value.records[0].deviceModel = ''; },
+    value => { value.records[0].sourceBundleId = 'bad\u0000source'; },
+    value => { value.records[0].start = '2026-10-01T00:00:00'; },
+    value => { value.records[0].values.push(clone(value.records[0].values[0])); },
+  ];
+  for (const mutate of mutations) {
+    const result = output(ctx); mutate(result);
+    const f = fixture({ output: result }); await f.bind();
+    await assert.rejects(f.adapter.query(f.input()), { code: 'health_native_contract' });
+    await f.adapter.dispose();
+  }
+  const result = output(ctx);
+  const second = clone(result.records[0]);
+  Object.assign(second, { id: hexId(2, '3'), day: '2026-10-02', start: '2026-10-02T00:00:00.000Z', end: ctx.to,
+    sourceBundleId: 'test.synthetic.second', revision: { token: 'hk1:' + journalId + ':1', order: 1 } });
+  const sameDayOtherSource = clone(result.records[0]);
+  Object.assign(sameDayOtherSource, { id: hexId(3, '4'), sourceBundleId: 'test.synthetic.other', sourceName: 'Other source' });
+  result.records.push(second, sameDayOtherSource);
+  const f = fixture({ output: result }); await f.bind();
+  assert.deepEqual(await f.adapter.query(f.input()), result);
+  await f.adapter.dispose();
+});
+
+test('workout records need an original UUID and a duration, and may extend past the window end', async () => {
+  const workout = () => {
+    const result = output();
+    Object.assign(result.records[0], { kind: 'workout', type: 'workouts', originalId: incarnation,
+      start: '2026-10-02T23:30:00.000Z', end: '2026-10-03T00:30:00.000Z', day: '2026-10-02' });
+    result.records[0].values = [{ metric: 'workout_duration', value: 3600, unit: 's', aggregation: 'workout' }];
+    return result;
+  };
+  const accepted = workout();
+  let f = fixture({ context: { type: 'workouts' }, output: accepted }); await f.bind();
+  assert.deepEqual(await f.adapter.query(f.input()), accepted);
+  await f.adapter.dispose();
+  for (const mutate of [
+    value => { value.records[0].originalId = null; },
+    value => { value.records[0].originalId = 'not-a-uuid'; },
+    value => { value.records[0].kind = 'daily'; },
+    value => { value.records[0].values = [{ metric: 'workout_energy', value: 100, unit: 'kcal', aggregation: 'workout' }]; },
+    value => { value.records[0].values[0].aggregation = 'sum'; },
+    value => { value.records[0].start = '2026-10-03T00:00:00.000Z'; },
+    value => { value.records[0].end = '2026-10-02T23:00:00.000Z'; },
+  ]) {
+    const result = workout(); mutate(result);
+    f = fixture({ context: { type: 'workouts' }, output: result }); await f.bind();
+    await assert.rejects(f.adapter.query(f.input()), { code: 'health_native_contract' });
+    await f.adapter.dispose();
+  }
+});
+
+test('page capacity admits exactly 500 normalized entries and rejects any overflow before accepting the page', async () => {
+  const build = (tombstones, limit = 100) => {
+    const result = output(); result.records = [];
+    for (let index = 0; index < limit; index += 1) {
+      result.records.push({ id: hexId(index + 1, '5'), kind: 'workout', type: 'workouts', day: '2026-10-01', zone: 'UTC',
+        start: '2026-10-01T12:00:00.000Z', end: '2026-10-01T13:00:00.000Z', sourceBundleId: 'test.synthetic.source',
+        sourceName: 'Synthetic source', deviceModel: null, algorithm: null, originalId: incarnation,
+        revision: { token: 'hk1:' + journalId + ':1', order: 1 }, quality: 'unknown',
+        values: [{ metric: 'workout_duration', value: 3600, unit: 's', aggregation: 'workout' },
+          { metric: 'workout_energy', value: 100, unit: 'kcal', aggregation: 'workout' },
+          { metric: 'workout_distance', value: 1000, unit: 'm', aggregation: 'workout' }] });
+    }
+    result.tombstones = Array.from({ length: tombstones }, (_, index) => ({
+      id: hexId(index + 1000, '6') + ':workout_duration', revision: { token: 'hk1:' + journalId + ':1', order: 1 } }));
+    return result;
+  };
+  const accepted = build(200);
+  let f = fixture({ context: { type: 'workouts' }, output: accepted }); await f.bind();
+  assert.equal((await f.adapter.query(f.input())).tombstones.length, 200);
+  await f.adapter.dispose();
+  for (const result of [build(201), build(501, 1)]) {
+    f = fixture({ context: { type: 'workouts' }, output: result }); await f.bind();
+    await assert.rejects(f.adapter.query(f.input()), { code: 'health_native_contract' });
+    await f.adapter.dispose();
+  }
+  f = fixture({ context: { type: 'workouts' }, output: build(0, 2) }); await f.bind();
+  await assert.rejects(f.adapter.query({ ...f.input(), limit: 1 }), { code: 'health_native_contract' });
+  await f.adapter.dispose();
+});
+
+test('local-day windows follow the zone through DST, half-hour offsets and invalid boundaries', async () => {
+  const dayContext = (zone, from, to) => ({ ...baseContext, timeZone: zone, from, to });
+  const dayOutput = (ctx, day) => {
+    const result = output(ctx);
+    Object.assign(result.records[0], { day, start: ctx.from, end: ctx.to });
+    return result;
+  };
+  for (const [zone, from, to, day] of [
+    ['America/New_York', '2026-03-08T05:00:00.000Z', '2026-03-09T04:00:00.000Z', '2026-03-08'],
+    ['Asia/Kolkata', '2026-09-30T18:30:00.000Z', '2026-10-01T18:30:00.000Z', '2026-10-01'],
+  ]) {
+    const ctx = dayContext(zone, from, to), result = dayOutput(ctx, day);
+    const f = fixture({ context: ctx, output: result }); await f.bind();
+    assert.deepEqual(await f.adapter.query(f.input()), result);
+    await f.adapter.dispose();
+  }
+  // A fixed 24-hour end on the 25-hour fall-back day is mid-evening locally, not a whole day.
+  const fallBack = dayContext('America/New_York', '2026-11-01T04:00:00.000Z', '2026-11-02T05:00:00.000Z');
+  const short = dayOutput(fallBack, '2026-11-01'); short.records[0].end = '2026-11-02T04:00:00.000Z';
+  const f = fixture({ context: fallBack, output: short }); await f.bind();
+  await assert.rejects(f.adapter.query(f.input()), { code: 'health_native_contract' });
+  await f.adapter.dispose();
+  for (const ctx of [
+    dayContext('America/New_York', '2026-10-01T00:00:00.000Z', '2026-10-02T00:00:00.000Z'),
+    dayContext('UTC', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z'),
+    dayContext('UTC', '2026-10-02T00:00:00.000Z', '2026-10-01T00:00:00.000Z'),
+    dayContext('UTC', '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.500Z'),
+    dayContext('UTC', '2026-10-01T00:00:00.000Z', '2026-11-02T00:00:00.000Z'),
+    dayContext('Mars/Phobos', '2026-10-01T00:00:00.000Z', '2026-10-02T00:00:00.000Z'),
+  ]) {
+    const bad = fixture({ context: ctx });
+    await assert.rejects(bad.bind(), { code: 'health_invalid_window' });
+    assert.equal(bad.calls.some(call => call[0] === 'bind'), false);
+    await bad.adapter.dispose();
+  }
+  const month = dayContext('UTC', '2026-10-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z');
+  const full = fixture({ context: month }); await full.bind(); await full.adapter.dispose();
+});
+
+test('rebinding another account fences an in-flight page and its late result cannot enter the new binding', async () => {
+  const f = fixture(); await f.bind();
+  const late = deferred(), started = deferred();
+  f.native.query = () => { started.resolve(); return late.promise; };
+  const old = f.adapter.query(f.input());
+  const rejected = assert.rejects(old, { code: 'health_cancelled' });
+  await started.promise;
+  const other = { ...f.ctx, accountId: 'account-b', sessionGeneration: 'session-b' };
+  const receipt = (context, cp) => ({ version: 1, context: clone(context), contextId: 'c'.repeat(64), journalId,
+    journalSerial: 1, revisionOrder: 1, stream: cp.stream, cursor: cp.cursor });
+  f.native.bindQueryContext = async (context, cp) => receipt(context, cp);
+  f.native.reconcileQueryCheckpoint = async (_, cp) => receipt(other, cp);
+  const owner = { context: other, checkpoint: { read: async () => ({ stream: stream(other), cursor: null }) }, isCurrentSession: () => true };
+  await f.adapter.bindContext(owner, 'create_connection');
+  late.resolve(output()); await rejected;
+  const fresh = output(other); fresh.records[0].values[0].value = 456;
+  f.native.query = async () => clone(fresh);
+  assert.equal((await f.adapter.query({ type: other.type, from: other.from, to: other.to, anchor: null, limit: 100 })).records[0].values[0].value, 456);
+  await f.adapter.dispose();
+});
+
+test('session loss at any await boundary of a query holds delivery and caches nothing', async () => {
+  const stages = ['checkpoint-1', 'reconcile-1', 'native-query', 'checkpoint-2', 'reconcile-2'];
+  for (const stage of stages) {
+    const f = fixture(); await f.bind();
+    const read = f.owner.checkpoint.read, reconcile = f.native.reconcileQueryCheckpoint, query = f.native.query;
+    let reads = 0, reconciles = 0;
+    f.owner.checkpoint.read = async () => { const value = await read(); reads += 1; if (stage === 'checkpoint-' + reads) f.current(false); return value; };
+    f.native.reconcileQueryCheckpoint = async (...args) => { const value = await reconcile(...args); reconciles += 1; if (stage === 'reconcile-' + reconciles) f.current(false); return value; };
+    f.native.query = async input => { const value = await query(input); if (stage === 'native-query') f.current(false); return value; };
+    await assert.rejects(f.adapter.query(f.input()), { code: 'health_context_changed' });
+    f.current(true);
+    f.owner.checkpoint.read = read; f.native.reconcileQueryCheckpoint = reconcile; f.native.query = query;
+    const changed = output(); changed.records[0].values[0].value = 777; f.result(changed);
+    assert.equal((await f.adapter.query(f.input())).records[0].values[0].value, 777, stage);
+    await f.adapter.dispose();
+  }
+});
+
+test('an interrupted bind session resumes from the acknowledged cursor without recreating a journal', async () => {
+  const f = fixture(); await f.bind(); await f.adapter.query(f.input());
+  await f.adapter.cancelAll();
+  await assert.rejects(f.adapter.query(f.input()), { code: 'health_context_unbound' });
+  f.acknowledge(nextCursor);
+  const modes = [];
+  const bind = f.native.bindQueryContext;
+  f.native.bindQueryContext = async (context, cp, mode) => { modes.push(mode); return bind(context, cp, mode); };
+  const resumed = await f.bind('resume');
+  assert.equal(resumed.cursor, nextCursor);
+  assert.deepEqual(modes, ['resume']);
+  const next = output(); next.anchor = 'hk1:' + journalId + ':55555555-5555-4555-8555-555555555555';
+  f.result(next);
+  assert.equal((await f.adapter.query(f.input())).anchor, next.anchor);
+  await f.adapter.dispose();
+});
