@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createStandardWireCodec, StandardWireError, type StandardWireResult } from '../../src/voice-coaching/standard/wire-codec.js';
 import { createStandardWireHandler } from '../../src/voice-coaching/standard/wire-turn.js';
+import { standardWireUsageOutcome, standardWireUsageReasons } from '../../src/voice-coaching/standard/wire-usage.js';
 
 const limits = { maxAudioBytes: 64, maxEnvelopeBytes: 2048, maxTextCharacters: 32 };
 const codec = createStandardWireCodec(limits);
@@ -82,4 +83,34 @@ test('handler takes authority only from the independently supplied scope, never 
   await assert.rejects(handler.run(scope, request.replace('"version":1', '"reservation":{},"version":1')), StandardWireError);
   assert.equal(runs, 1);
   abort.abort(); await assert.rejects(handler.run(scope, request)); assert.equal(runs, 1);
+});
+
+test('every reserved usage reason round-trips unchanged at the production text bound and names its outcome', () => {
+  assert.deepEqual(Object.keys(standardWireUsageReasons).sort(), ['usage_key_conflict', 'usage_limit_reached', 'usage_not_entitled',
+    'usage_replay_no_dispatch', 'usage_reservation_unavailable', 'usage_unconfigured']);
+  assert.equal(Object.isFrozen(standardWireUsageReasons), true);
+  for (const entry of Object.values(standardWireUsageReasons)) assert.equal(Object.isFrozen(entry), true);
+  for (const [reason, entry] of Object.entries(standardWireUsageReasons)) {
+    const result: StandardWireResult = { outcome: { kind: 'not_dispatched', reason }, accounting: entry.accounting };
+    const wire = codec.encodeResult(result);
+    assert.deepEqual(codec.decodeResult(wire), result);
+    assert.equal(standardWireUsageOutcome(codec.decodeResult(wire)), entry.outcome);
+  }
+});
+
+test('a usage outcome needs the exact reserved kind, reason and accounting', () => {
+  const accountings = ['not_reserved', 'replay', 'released', 'settled', 'not_consumed', 'unknown', 'unresolved'] as const;
+  for (const [reason, entry] of Object.entries(standardWireUsageReasons)) {
+    for (const accounting of accountings) {
+      if (accounting === entry.accounting) continue;
+      assert.equal(standardWireUsageOutcome({ outcome: { kind: 'not_dispatched', reason }, accounting }), undefined, `${reason}/${accounting}`);
+    }
+    for (const kind of ['rejected', 'unknown'] as const) {
+      assert.equal(standardWireUsageOutcome({ outcome: { kind, reason }, accounting: entry.accounting }), undefined, `${reason}/${kind}`);
+    }
+  }
+  assert.equal(standardWireUsageOutcome({ outcome: { kind: 'succeeded' }, accounting: 'settled' }), undefined);
+  for (const reason of ['toString', '__proto__', 'constructor', '', 7, null, undefined, {}]) {
+    assert.equal(standardWireUsageOutcome({ outcome: { kind: 'not_dispatched', reason }, accounting: 'not_reserved' }), undefined);
+  }
 });

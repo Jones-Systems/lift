@@ -1,5 +1,6 @@
 import type { CoachingRequestScope, ProviderOutcome } from './contracts.js';
 import type { AccountContext } from '../lifecycle/types.js';
+import { standardUsageRefusal } from './usage-refusal.js';
 import type {
   StandardAudioInput, StandardOutcome, StandardProvider, StandardProviderMetadata, StandardSpeech, StandardTextInput,
 } from './standard/index.js';
@@ -119,8 +120,9 @@ export function createStandardTurnController(options: Readonly<{
         return { outcome: { kind: 'not_dispatched', reason: 'standard_turn_disabled' }, accounting: 'not_reserved' };
       }
       let reservation;
-      try { reservation = usage.reserve(scope.actor, intent); } catch {
-        return { outcome: { kind: 'not_dispatched', reason: 'usage_reservation_unavailable' }, accounting: 'unresolved' };
+      try { reservation = usage.reserve(scope.actor, intent); } catch (error) {
+        const refusal = standardUsageRefusal(error);
+        return { outcome: { kind: 'not_dispatched', reason: refusal.reason }, accounting: refusal.accounting };
       }
       if (reservation.kind === 'replay') {
         return { outcome: { kind: 'not_dispatched', reason: 'usage_replay_no_dispatch' }, accounting: 'replay' };

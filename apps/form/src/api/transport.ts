@@ -134,12 +134,15 @@ export class FormTransport {
   }
 
   /** Carries encoded wire bytes unchanged; identity, cancellation and bounds cover the entire body read. */
-  async exchangeStandardWire(request: string, signal: AbortSignal, limits: RawExchangeLimits): Promise<string> {
-    return this.boundedAuthenticatedText('/v1/coaching/standard/turn', request, signal, limits);
+  async exchangeStandardWire(request: string, signal: AbortSignal, limits: RawExchangeLimits,
+    options?: Readonly<{ idempotencyKey: string }>): Promise<string> {
+    if (options !== undefined && !(typeof options.idempotencyKey === 'string' && /^[A-Za-z0-9_.:-]{8,128}$/.test(options.idempotencyKey)))
+      throw new ApiError(400, 'invalid_idempotency_key', 'A valid turn key is required.');
+    return this.boundedAuthenticatedText('/v1/coaching/standard/turn', request, signal, limits, options?.idempotencyKey);
   }
 
   private async boundedAuthenticatedText(path: string, body: string | undefined, signal: AbortSignal,
-    limits: RawExchangeLimits): Promise<string> {
+    limits: RawExchangeLimits, idempotencyKey?: string): Promise<string> {
     if (!Number.isSafeInteger(limits.maxEnvelopeBytes) || limits.maxEnvelopeBytes <= 0 || limits.maxEnvelopeBytes > 100_000_000 ||
       !Number.isSafeInteger(limits.deadlineMs) || limits.deadlineMs <= 0 || limits.deadlineMs > 2_147_483_647)
       throw new ApiError(400, 'invalid_transport_limits', 'Explicit transport limits are required.');
@@ -175,7 +178,8 @@ export class FormTransport {
       current(); dispatched = true;
       const response = await wait(this.fetcher(this.baseURL.replace(/\/$/, '') + path, {
         method: body === undefined ? 'GET' : 'POST', headers: { Accept: 'application/json',
-          Authorization: `Bearer ${token}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+          Authorization: `Bearer ${token}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+          ...(idempotencyKey === undefined ? {} : { 'Idempotency-Key': idempotencyKey }) },
         ...(body === undefined ? {} : { body }), signal: controller.signal, redirect: 'error', credentials: 'omit',
       }).then(response => {
         if (controller.signal.aborted) void response.body?.cancel().catch(() => {});
