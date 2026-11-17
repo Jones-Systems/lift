@@ -175,3 +175,111 @@ test('refresh captures immutable window and connection before its first await',a
   assert.equal((await refresh).status,'complete');assert.equal(h.uploads[0].page.connectionId,'hk');assert.equal(h.uploads[0].page.generation,1);
   assert.equal(h.uploads[0].page.stream,JSON.stringify(['healthkit-v1','steps',input().from,input().to]));
 });
+
+const cas=h=>h.storage.history.filter(item=>item.operation==='cas').length;
+test('restricted, unavailable or malformed availability stops before permission, query, key or journal write',async()=>{
+  for(const status of ['restricted','unavailable_device','granted']){
+    const h=fixture();h.options.native.availability=async()=>{h.events.push('availability');return status;};
+    assert.deepEqual(await h.create().refresh(input()),{status:'unavailable',pages:0});
+    assert.deepEqual(h.events,['availability']);assert.equal(h.keys(),0);assert.equal(h.queries(),0);
+    assert.equal(cas(h),0);assert.equal(h.uploads.length,0);assert.equal(h.storage.snapshot().record,null);
+  }
+});
+test('a failed permission request asks only for the selected type, leaves no state and allows a later refresh',async()=>{
+  const h=fixture(),requested=[];let deny=true;
+  h.options.native.requestRead=async types=>{requested.push(types);if(deny)throw Error('synthetic_authorization_failure');return 'prompted';};
+  const importer=h.create();
+  await assert.rejects(importer.refresh(input()),/synthetic_authorization_failure/);
+  assert.equal(h.queries(),0);assert.equal(h.keys(),0);assert.equal(cas(h),0);assert.equal(h.uploads.length,0);
+  assert.equal(h.storage.snapshot().record,null);assert.equal(h.storage.snapshot().fenced,false);
+  deny=false;assert.equal((await importer.refresh(input())).status,'complete');
+  assert.deepEqual(requested,[['steps'],['steps']]);
+});
+test('consent withdrawn while availability is pending cancels before permission or query and fences regrant',async()=>{
+  const h=fixture();
+  h.options.native.availability=async()=>{h.events.push('availability');h.setConsent(false);return 'available';};
+  assert.equal((await h.create().refresh(input())).status,'cancelled');
+  assert.deepEqual(h.events,['availability']);assert.equal(h.queries(),0);assert.equal(h.keys(),0);assert.equal(h.uploads.length,0);
+  assert.equal(h.storage.snapshot().fenced,true);
+  h.setConsent(true);await assert.rejects(h.create().refresh(input()),/reconciliation_required/);
+});
+test('an ACK must echo the page and cursor with nonnegative integer counts or the prepared page stays retained',async()=>{
+  for(const forge of [ack=>({...ack,pageId:'other-page'}),ack=>({...ack,accepted:-1}),ack=>({...ack,accepted:1.5}),
+    ack=>({...ack,duplicates:Number.NaN}),ack=>({...ack,duplicates:'1'}),()=>null,()=>undefined]){
+    const h=fixture(),send=h.options.api.importPage;
+    h.options.api.importPage=async(page,key)=>forge(await send(page,key));
+    const importer=h.create();assert.equal((await importer.refresh(input())).status,'unknown');
+    const stored=h.storage.snapshot().record;assert.equal(stored.phase,'prepared');assert.equal(stored.key,'key-1');
+    assert.equal(h.reconciliations.length,0);assert.equal(h.queries(),1);assert.equal(h.uploads.length,1);
+    await assert.rejects(importer.refresh(input()),/reconciliation_required/);assert.equal(h.queries(),1);
+  }
+});
+test('a duplicate-only ACK is a valid completion and the next refresh uses a fresh opaque key',async()=>{
+  const h=fixture(),send=h.options.api.importPage;
+  h.options.api.importPage=async(page,key)=>{const ack=await send(page,key);return {...ack,accepted:0,duplicates:page.batch.length};};
+  const importer=h.create();
+  assert.deepEqual(await importer.refresh(input()),{status:'complete',pages:1});
+  assert.deepEqual(await importer.refresh({...input(),cursor:'anchor-1'}),{status:'complete',pages:1});
+  assert.deepEqual(h.uploads.map(upload=>upload.key),['key-1','key-2']);assert.equal(h.uploads[1].page.fromCursor,'anchor-1');
+  assert.equal(h.storage.snapshot().record,null);assert.equal(h.reconciliations.length,2);
+});
+test('a restored journal record that is malformed, foreign or fenced fails closed before any upload or query',async()=>{
+  const lost=async()=>{
+    const h=fixture(),send=h.options.api.importPage;
+    h.options.api.importPage=async(page,key)=>{await send(page,key);throw Error('lost');};
+    assert.equal((await h.create().refresh(input())).status,'unknown');return h;
+  };
+  const forgeries=[
+    ['health_journal_invalid',snapshot=>{snapshot.record.page.connectionId='other';}],
+    ['health_journal_invalid',snapshot=>{snapshot.record.page.generation=2;}],
+    ['health_journal_invalid',snapshot=>{snapshot.record.page.stream='other-stream';}],
+    ['health_journal_invalid',snapshot=>{snapshot.record.page.version=2;}],
+    ['health_journal_invalid',snapshot=>{snapshot.record.page.pageId='other-page';}],
+    ['health_journal_invalid',snapshot=>{snapshot.record.pageId='other-page';}],
+    ['health_journal_invalid',snapshot=>{snapshot.record.key='';snapshot.record.pageId='';}],
+    ['health_journal_invalid',snapshot=>{snapshot.record.phase='unrecognized';}],
+    ['health_journal_invalid',snapshot=>{snapshot.record={...snapshot.record,phase:'acknowledged',ack:{accepted:1,duplicates:0,cursor:'anchor-1',pageId:'other-page'}};delete snapshot.record.page;}],
+    ['health_journal_invalid',snapshot=>{snapshot.revision='';}],
+    ['health_import_reconciliation_required',snapshot=>{snapshot.fenced=true;}],
+    ['health_import_reconciliation_required',snapshot=>{snapshot.record.phase='scrubbed';}],
+  ];
+  for(const [code,forge] of forgeries){
+    const h=await lost(),load=h.options.journal.load;
+    h.options.journal.load=async()=>{const snapshot=await load();forge(snapshot);return snapshot;};
+    await assert.rejects(h.create().retryUnknown(input()),new RegExp(code),code);
+    assert.equal(h.uploads.length,1);assert.equal(h.queries(),1);assert.equal(h.reconciliations.length,0);
+  }
+});
+test('native pages that violate the bucket contract fail before a key, journal write or upload',async()=>{
+  const many=(records,tombstones)=>({records:Array.from({length:records},(_,index)=>({...nativeRecord(),id:`bucket-${index}`,type:'workouts',kind:'workout',
+    values:['workout_duration','workout_energy','workout_distance'].map((metric,position)=>({metric,value:1,unit:['s','kcal','m'][position],aggregation:'workout'}))})),
+    tombstones:Array.from({length:tombstones},(_,index)=>({id:`gone-${index}:steps`,revision:{token:'v',order:1}})),anchor:'anchor-1',more:false,logicalBucketsComplete:true});
+  const bad=[
+    {...many(1,0),logicalBucketsComplete:false},many(101,0),many(0,501),many(100,201),
+    {...many(1,0),records:[{...nativeRecord(),values:[{metric:'steps',value:1,unit:'kg',aggregation:'sum'}]}]},
+    {...many(1,0),records:[{...nativeRecord(),values:[{metric:'steps',value:-1,unit:'count',aggregation:'sum'}]}]},
+    {...many(1,0),more:true,anchor:null},
+  ];
+  for(const page of bad){
+    const h=fixture();h.options.native.query=async()=>{h.events.push('query');return structuredClone(page);};
+    await assert.rejects(h.create().refresh(input()),/health_native_contract|health_native_cursor_cycle/);
+    assert.equal(h.keys(),0);assert.equal(cas(h),0);assert.equal(h.uploads.length,0);assert.equal(h.storage.snapshot().record,null);
+  }
+});
+test('a contract violation on a later page keeps earlier acknowledged pages committed and clean',async()=>{
+  const h=fixture();let n=0;
+  h.options.native.query=async()=>{n++;return {records:[nativeRecord()],tombstones:[],anchor:`anchor-${n}`,more:n===1,logicalBucketsComplete:n===1};};
+  await assert.rejects(h.create().refresh(input()),/health_native_contract/);
+  assert.equal(n,2);assert.equal(h.uploads.length,1);assert.equal(h.reconciliations.length,1);
+  assert.equal(h.storage.snapshot().record,null);assert.equal(h.keys(),1);
+});
+test('a forged acknowledged cursor is held by authoritative checkpoint reconciliation, never cleared locally',async()=>{
+  const h=fixture(),send=h.options.api.importPage;
+  h.options.api.importPage=async(page,key)=>{await send(page,key);throw Error('lost');};
+  assert.equal((await h.create().refresh(input())).status,'unknown');
+  const load=h.options.journal.load;
+  h.options.journal.load=async()=>{const snapshot=await load();snapshot.record={...snapshot.record,phase:'acknowledged',ack:{accepted:1,duplicates:0,cursor:'forged-cursor',pageId:'key-1'}};delete snapshot.record.page;return snapshot;};
+  assert.equal((await h.create().retryUnknown(input())).status,'unknown');
+  assert.equal(h.reconciliations.length,1);assert.equal(h.reconciliations[0].ack.cursor,'forged-cursor');
+  assert.equal(h.uploads.length,1);assert.equal(h.queries(),1);assert.equal(h.storage.snapshot().record.phase,'prepared');
+});

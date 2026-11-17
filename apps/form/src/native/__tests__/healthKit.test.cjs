@@ -241,3 +241,36 @@ test('pending or failed native cancellation holds new work until confirmed recov
   assert.equal(attempts, 2);
   await s.adapter.dispose();
 });
+
+test('a native request failure surfaces unchanged, releases the busy slot and never queries', async () => {
+  // HealthKit hides read denial; a denied or failed request is only ever an error, never a grant or deny verdict.
+  for (const failure of [new Error('synthetic authorization failure'), Object.assign(new Error('native code'), { code: 'health_authorization_denied' })]) {
+    for (const synchronous of [false, true]) {
+      let attempts = 0;
+      const s = seam({ requestRead: types => {
+        attempts += 1; s.calls.push(['read', types]);
+        if (attempts > 1) return Promise.resolve('unnecessary');
+        if (synchronous) throw failure;
+        return Promise.reject(failure);
+      } });
+      await assert.rejects(s.adapter.requestRead(['steps']), error => error === failure);
+      assert.equal(await s.adapter.requestRead(['sleep']), 'unnecessary');
+      assert.deepEqual(s.calls, [['read', ['steps']], ['read', ['sleep']]]);
+      await s.adapter.dispose();
+    }
+  }
+});
+
+test('revoked or restricted availability after an earlier prompt blocks the next request before native read', async () => {
+  let status = 'available';
+  const s = seam({ availability: async () => status });
+  assert.equal(await s.adapter.requestRead(['steps']), 'prompted');
+  for (status of ['restricted', 'unavailable_device']) {
+    await assert.rejects(s.adapter.requestRead(['steps']), { code: 'health_native_unavailable' });
+    assert.equal((await s.getHealthKitCapabilities({ module: s.native })).requestRead, false);
+  }
+  assert.deepEqual(s.calls, [['read', ['steps']]]);
+  status = 'available';
+  assert.equal(await s.adapter.requestRead(['steps']), 'prompted');
+  await s.adapter.dispose();
+});
