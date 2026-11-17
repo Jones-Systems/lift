@@ -61,6 +61,8 @@ function fixture(t: TestContext, options: { cap?: number; counting?: StandardPar
   db.prepare('INSERT INTO form_accounts VALUES(?)').run(actor.accountId);
   db.exec(usageMigrationSql);
   const state = { active: true, epoch: 1, actor: actor as AccountContext };
+  const clock = { ms: START + 60_000 };
+  const grantState = exampleGrantState(['cap.standard']);
   const lifecycle: LifecycleBindings = {
     assertActive(context) { if (!state.active || context.epoch !== state.epoch) throw new DomainError(403, 'test_actor_revoked'); },
     withActiveWrite(context, effect) { lifecycle.assertActive(context); const result = effect(); lifecycle.assertActive(context); return result; },
@@ -68,9 +70,9 @@ function fixture(t: TestContext, options: { cap?: number; counting?: StandardPar
   };
   const configuration = options.configured === false ? undefined : createUsageLimitsConfiguration({
     policy: exampleUsagePolicyConfig({ limits: { live_voice_ms: 9_000_000, coach_messages: options.cap ?? 1000, workout_generations: 100 } }),
-    grants: exampleGrants(exampleGrantState(['cap.standard']), ['standard_voice_turn']),
+    grants: exampleGrants(grantState, ['standard_voice_turn']),
   });
-  const ledger: UsageLedger = createUsageLedger({ db, lifecycle, now: () => START + 60_000, ...(configuration ?? {}) });
+  const ledger: UsageLedger = createUsageLedger({ db, lifecycle, now: () => clock.ms, ...(configuration ?? {}) });
 
   const calls: string[] = [], scopes: CoachingRequestScope[] = [], intents: UsageIntent[] = [], turns: { authorized: boolean }[] = [];
   const turnRequests: StandardCoachingTurnRequest[] = [];
@@ -128,7 +130,7 @@ function fixture(t: TestContext, options: { cap?: number; counting?: StandardPar
   const snapshot = () => usageOwnedTables.map(table => ({ table, rows: db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all() }));
   const rows = () => db.prepare('SELECT operation,state,idempotency_key,account_epoch,evidence_id FROM usage_reservations ORDER BY rowid').all() as Row[];
   const metrics = () => ledger.usage.status(actor).metrics ?? assert.fail('no metrics');
-  return { db, state, ledger, calls, scopes, intents, turns, turnRequests, script, gates, hooks, app, send, snapshot, rows, metrics, configuration: configurationForRoutes };
+  return { db, state, clock, grantState, ledger, calls, scopes, intents, turns, turnRequests, script, gates, hooks, app, send, snapshot, rows, metrics, configuration: configurationForRoutes };
 }
 type Fixture = ReturnType<typeof fixture>;
 const decode = async (response: Response) => codec.decodeResult(await response.text());
@@ -169,13 +171,13 @@ test('a retry with the same key and body replays without any provider call or le
   assert.equal(f.scopes.length, 2);
 });
 
-test('the same key with different audio cannot dispatch and leaves the ledger untouched', async t => {
+test('the same key with different audio is a key conflict that cannot dispatch and leaves the ledger untouched', async t => {
   const f = fixture(t, { cap: 5 });
   await f.send('key-mismatch-1');
   const before = f.snapshot();
   const response = await f.send('key-mismatch-1', otherRequest);
   assert.equal(response.status, 200);
-  assert.deepEqual(await decode(response), { outcome: { kind: 'not_dispatched', reason: 'usage_reservation_unavailable' }, accounting: 'unresolved' });
+  assert.deepEqual(await decode(response), { outcome: { kind: 'not_dispatched', reason: 'usage_key_conflict' }, accounting: 'not_reserved' });
   assert.equal(f.calls.length, 3); assert.deepEqual(f.snapshot(), before);
   assert.notEqual(f.intents[0]?.intentHash, f.intents[1]?.intentHash);
 });
@@ -203,17 +205,23 @@ test('a missing or malformed Idempotency-Key is refused before any reservation o
   assert.equal((await f.send('a'.repeat(128))).status, 200);
 });
 
-test('a reached cap is indistinguishable from unconfigured on the wire and pins the 429 at the ledger', async t => {
+test('a reached cap is a distinct usage_limit_reached outcome, pins the 429 at the ledger, and does not burn the key', async t => {
   const f = fixture(t, { cap: 1 });
   assert.equal((await decode(await f.send('key-cap-0001'))).accounting, 'settled');
   const before = f.snapshot(), calls = f.calls.length;
   const response = await f.send('key-cap-0002');
   assert.equal(response.status, 200);
-  assert.deepEqual(await decode(response), { outcome: { kind: 'not_dispatched', reason: 'usage_reservation_unavailable' }, accounting: 'unresolved' });
+  assert.deepEqual(await decode(response), { outcome: { kind: 'not_dispatched', reason: 'usage_limit_reached' }, accounting: 'not_reserved' });
   assert.equal(f.calls.length, calls); assert.deepEqual(f.snapshot(), before);
   const refused = f.intents[1] ?? assert.fail('the refused reserve was observed');
   refusal(() => f.ledger.usage.reserve(actor, refused), 'usage_limit_exceeded', 429);
   assert.deepEqual(f.snapshot(), before);
+  // The refusal threw before any insert, so the same key succeeds once the next calendar period opens.
+  f.clock.ms = START + 40 * 86_400_000;
+  const next = await decode(await f.send('key-cap-0002'));
+  assert.equal(next.outcome.kind, 'succeeded'); assert.equal(next.accounting, 'settled');
+  assert.equal(f.calls.length, calls + 3);
+  assert.deepEqual(f.rows().map(row => [row.idempotency_key, row.state]), [['key-cap-0001', 'settled'], ['key-cap-0002', 'settled']]);
 });
 
 test('a definitely rejected first stage releases the reservation with the no-stage evidence', async t => {
@@ -325,7 +333,7 @@ test('session, epoch and lifecycle fences hold through the real ledger', async t
   sessions.state.actor = { ...actor, sessionId: 'session-b' };
   const other = await sessions.send('key-fence-0001');
   assert.equal(other.status, 200);
-  assert.deepEqual(await decode(other), { outcome: { kind: 'not_dispatched', reason: 'usage_reservation_unavailable' }, accounting: 'unresolved' });
+  assert.deepEqual(await decode(other), { outcome: { kind: 'not_dispatched', reason: 'usage_key_conflict' }, accounting: 'not_reserved' });
   assert.equal(sessions.calls.length, calls); assert.deepEqual(sessions.snapshot(), before);
 
   const expected = { settle_one: ['settled', 1, 0], settle_zero: ['settled', 0, 0], retain_unknown: ['unknown', 0, 1] } as const;
@@ -350,13 +358,42 @@ test('session, epoch and lifecycle fences hold through the real ledger', async t
   assert.deepEqual(inactive.rows(), []); assert.deepEqual(inactive.calls, []); assert.equal(inactive.scopes.length, 0);
 });
 
-test('a ledger without a policy never dispatches or writes', async t => {
+test('a ledger without a policy is usage_unconfigured and never dispatches or writes', async t => {
   const f = fixture(t, { configured: false });
   const response = await f.send('key-unconfigured');
   assert.equal(response.status, 200);
-  assert.deepEqual(await decode(response), { outcome: { kind: 'not_dispatched', reason: 'usage_reservation_unavailable' }, accounting: 'unresolved' });
+  assert.deepEqual(await decode(response), { outcome: { kind: 'not_dispatched', reason: 'usage_unconfigured' }, accounting: 'not_reserved' });
   assert.deepEqual(f.calls, []); assert.ok(f.snapshot().every(table => table.rows.length === 0));
   assert.equal(f.ledger.usage.status(actor).configured, false);
+});
+
+test('a missing capability is usage_not_entitled with zero rows and no provider call', async t => {
+  const f = fixture(t, { cap: 5 });
+  f.grantState.capabilities = [];
+  const response = await f.send('key-no-entitle');
+  assert.equal(response.status, 200);
+  assert.deepEqual(await decode(response), { outcome: { kind: 'not_dispatched', reason: 'usage_not_entitled' }, accounting: 'not_reserved' });
+  assert.deepEqual(f.calls, []); assert.ok(f.snapshot().every(table => table.rows.length === 0));
+  f.grantState.capabilities = ['cap.standard'];
+  assert.equal((await decode(await f.send('key-no-entitle'))).accounting, 'settled');
+});
+
+test('the client turn key shape std-turn:<id> is accepted and a duplicate delivery is a ledger replay', async t => {
+  const uuid = 'std-turn:' + '01234567-89ab-4def-8123-456789abcdef';
+  const keys = [uuid, 'std-turn:a', 'std-turn:' + 'a'.repeat(112)];
+  assert.deepEqual(keys.map(key => key.length), [45, 10, 121]);
+  for (const key of keys) {
+    const f = fixture(t, { cap: 5 });
+    const response = await f.send(key);
+    assert.equal(response.status, 200, key);
+    assert.equal((await decode(response)).accounting, 'settled', key);
+  }
+  const f = fixture(t, { cap: 5 });
+  assert.equal((await decode(await f.send(uuid))).accounting, 'settled');
+  const before = f.snapshot();
+  assert.deepEqual(await decode(await f.send(uuid)), { outcome: { kind: 'not_dispatched', reason: 'usage_replay_no_dispatch' }, accounting: 'replay' });
+  assert.equal(f.calls.length, 3); assert.deepEqual(f.snapshot(), before);
+  assert.deepEqual(f.rows().map(row => [row.idempotency_key, row.state]), [[uuid, 'settled']]);
 });
 
 test('standard turns charge only messages and ordinary logging flags are never touched', async t => {

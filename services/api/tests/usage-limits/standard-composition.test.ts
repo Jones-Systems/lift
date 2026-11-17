@@ -179,7 +179,7 @@ test('a fresh controller and key cannot dispatch when its reservation exceeds th
   assert.equal((await first.controller.run(f.scope, input())).accounting, 'settled');
   const before = f.snapshot(), next = turn(f, 'new-turn', responses());
   assert.deepEqual(await next.controller.run(f.scope, input()), {
-    outcome: { kind: 'not_dispatched', reason: 'usage_reservation_unavailable' }, accounting: 'unresolved',
+    outcome: { kind: 'not_dispatched', reason: 'usage_limit_reached' }, accounting: 'not_reserved',
   });
   assert.deepEqual(next.calls, []); assert.deepEqual(next.reservations, []);
   assert.equal(next.observation(), undefined); assert.equal(next.observationCount(), 0);

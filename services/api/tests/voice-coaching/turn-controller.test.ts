@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { AccountContext } from '../../src/lifecycle/types.js';
+import { DomainError } from '../../src/errors.js';
+import { createStandardWireCodec } from '../../src/voice-coaching/standard/wire-codec.js';
 import type {
   ReservationState, TrustedUsageControls, UsageIntent, UsageLimitsPort,
   UsageReservationHandle, UsageSettlement, UsageSnapshot,
@@ -176,6 +178,65 @@ test('reservation failure produces no provider call or invented release handle',
   const result = await controller.run(f.scope, audio());
   assert.deepEqual(result, { outcome: { kind: 'not_dispatched', reason: 'usage_reservation_unavailable' }, accounting: 'unresolved' });
   assert.deepEqual(f.events, ['reserve-failed']);
+});
+
+const refusalRows = [
+  { status: 429, code: 'usage_limit_exceeded', reason: 'usage_limit_reached' },
+  { status: 403, code: 'usage_capability_denied', reason: 'usage_not_entitled' },
+  { status: 503, code: 'usage_unconfigured', reason: 'usage_unconfigured' },
+  { status: 503, code: 'usage_operation_unconfigured', reason: 'usage_unconfigured' },
+  { status: 503, code: 'usage_rights_unconfigured', reason: 'usage_unconfigured' },
+  { status: 503, code: 'usage_provider_unconfigured', reason: 'usage_unconfigured' },
+  { status: 409, code: 'usage_idempotency_mismatch', reason: 'usage_key_conflict' },
+  { status: 403, code: 'usage_actor_mismatch', reason: 'usage_key_conflict' },
+] as const;
+
+test('classified ledger refusals name their reason, are not reserved, and never dispatch or account', async () => {
+  for (const row of refusalRows) {
+    const f = fixture();
+    const controller = createStandardTurnController({ ...f, usage: { ...f.usage,
+      reserve() { f.events.push('reserve-refused'); throw new DomainError(row.status, row.code); },
+    } });
+    assert.deepEqual(await controller.run(f.scope, audio()), {
+      outcome: { kind: 'not_dispatched', reason: row.reason }, accounting: 'not_reserved',
+    }, row.code);
+    assert.deepEqual(f.events, ['reserve-refused'], row.code);
+    assert.equal(f.evidence.length, 0, row.code);
+  }
+});
+
+test('unclassified reservation failures keep the legacy unresolved result', async () => {
+  const failures: unknown[] = [
+    new Error('private ledger details'),
+    new DomainError(503, 'usage_period_policy_changed'),
+    new DomainError(400, 'usage_limit_exceeded'),
+    { status: 429, code: 'usage_limit_exceeded' },
+    null,
+  ];
+  for (const failure of failures) {
+    const f = fixture();
+    const controller = createStandardTurnController({ ...f, usage: { ...f.usage,
+      reserve() { f.events.push('reserve-failed'); throw failure; },
+    } });
+    assert.deepEqual(await controller.run(f.scope, audio()), {
+      outcome: { kind: 'not_dispatched', reason: 'usage_reservation_unavailable' }, accounting: 'unresolved',
+    });
+    assert.deepEqual(f.events, ['reserve-failed']);
+  }
+});
+
+test('a refusal message or details never reach the encoded wire result', async () => {
+  const marker = 'PRIVATE-MARKER-4f1c';
+  for (const row of refusalRows) {
+    const f = fixture();
+    const controller = createStandardTurnController({ ...f, usage: { ...f.usage,
+      reserve() { throw new DomainError(row.status, row.code, `${marker} message`, { marker }); },
+    } });
+    const result = await controller.run(f.scope, audio());
+    const wire = createStandardWireCodec({ maxAudioBytes: 64, maxEnvelopeBytes: 2048, maxTextCharacters: 32 }).encodeResult(result);
+    assert.equal(wire.includes(marker), false, row.code);
+    assert.equal(JSON.stringify(result).includes(marker), false, row.code);
+  }
 });
 
 test('cancellation after reserve but before a permit releases only the original reservation', async () => {
