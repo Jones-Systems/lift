@@ -79,8 +79,8 @@ in `lifecycle-runtime`. The codec's 18 synthetic cases cover bounded canonical
 parsing, identities and conservative ordering; the projection and source suites
 cover 57 and 52 synthetic cases respectively. `status-source-fixture.ts` is a
 required, digested and compiled input, excluded from discovery, test invocation
-and module counts. API discovery registers 105 ordinary modules and discovers
-175 total files, including both new suites exactly once in purchases.
+and module counts. The retained API module manifest declares 105 ordinary modules; API test discovery selects
+181 total files, including both new suites exactly once in purchases.
 
 The default `plan-revision` group requires both named source inputs and runs their
 fresh emitted JavaScript serially after the full strict API compile. Its planning

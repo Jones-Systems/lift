@@ -5,6 +5,8 @@ import type { GroundingResult, GroundingRetriever } from '../../grounding/index.
 import { createNutritionConversation, type NutritionInformativeSynthesisPort } from './conversation.js';
 import { createNutritionGroundingPort } from './grounding-adapter.js';
 import { nutritionJobTopics, type NutritionJob } from './index.js';
+import { captureNutritionQueryPolicy, createNutritionQuerySidecar, nutritionQueryMatchesEvidence,
+  type NutritionQueryPolicySelection, type NutritionQuerySidecar } from './job-query-policy.js';
 
 export interface NutritionAnswerExpectation {
   readonly turnId: number;
@@ -33,16 +35,19 @@ export function nutritionAnswerContext(
   };
 }
 
-function evidenceMatchesRequest(evidence: GroundingResult, expected: Pick<NutritionAnswerExpectation, 'job' | 'question'>): boolean {
-  return Object.hasOwn(nutritionJobTopics, expected.job)
-    && evidence.query === expected.question && evidence.filters.topic === nutritionJobTopics[expected.job];
+function evidenceMatchesRequest(evidence: GroundingResult, expected: Pick<NutritionAnswerExpectation, 'job' | 'question'>,
+  selection?: NutritionQueryPolicySelection): boolean {
+  return nutritionQueryMatchesEvidence(selection, expected.job, expected.question, evidence);
 }
 
-export function createNutritionInformativeSynthesisPort(): NutritionInformativeSynthesisPort<GroundedAnswer> {
+export function createNutritionInformativeSynthesisPort(
+  selection?: NutritionQueryPolicySelection,
+): NutritionInformativeSynthesisPort<GroundedAnswer> {
+  const policy = captureNutritionQueryPolicy(selection);
   return {
     async explain(input) {
       const evidence = input.sources.retrievalContext;
-      if (evidence === null || !evidenceMatchesRequest(evidence, input.sources.request)) {
+      if (evidence === null || !evidenceMatchesRequest(evidence, input.sources.request, policy)) {
         throw new TypeError('nutrition-answer-evidence-request-mismatch');
       }
       const snapshot = structuredClone(evidence);
@@ -68,14 +73,28 @@ export interface NutritionAnswerEvaluation {
 
 // Both expectations come from trusted current consumer state, never from the candidate answer.
 export function evaluateNutritionAnswer(answer: unknown, expectedEvidence: GroundingResult,
-  current: NutritionAnswerExpectation): NutritionAnswerEvaluation {
+  current: NutritionAnswerExpectation, selection?: NutritionQueryPolicySelection,
+  sidecar?: NutritionQuerySidecar): NutritionAnswerEvaluation {
+  const policy = captureNutritionQueryPolicy(selection);
+  const evidenceMatches = evidenceMatchesRequest(expectedEvidence, current, policy);
   const context = nutritionAnswerContext(current.turnId, current.previousTurnId, current.userContext);
   const fidelity = evaluateGroundedAnswer(answer, expectedEvidence, context);
-  const requestMatchesExpectedEvidence = evidenceMatchesRequest(expectedEvidence, current);
+  const requestMatchesExpectedEvidence = evidenceMatches && (sidecar === undefined
+    || isDeepStrictEqual(sidecar, createNutritionQuerySidecar(policy, current, expectedEvidence)));
   return { passed: requestMatchesExpectedEvidence && fidelity.passed, requestMatchesExpectedEvidence, fidelity };
 }
 
-export function createGroundedNutritionConversation(retriever: GroundingRetriever) {
-  return createNutritionConversation({ grounding: createNutritionGroundingPort(retriever),
-    synthesis: createNutritionInformativeSynthesisPort() });
+// Capture once for a trusted consumer that evaluates multiple turns with the same injection.
+export function createNutritionAnswerEvaluator(selection?: NutritionQueryPolicySelection) {
+  const policy = captureNutritionQueryPolicy(selection);
+  return (answer: unknown, expectedEvidence: GroundingResult, current: NutritionAnswerExpectation,
+    sidecar?: NutritionQuerySidecar): NutritionAnswerEvaluation =>
+    evaluateNutritionAnswer(answer, expectedEvidence, current, policy, sidecar);
+}
+
+export function createGroundedNutritionConversation(retriever: GroundingRetriever,
+  selection?: NutritionQueryPolicySelection) {
+  const policy = captureNutritionQueryPolicy(selection);
+  return createNutritionConversation({ grounding: createNutritionGroundingPort(retriever, policy),
+    synthesis: createNutritionInformativeSynthesisPort(policy) });
 }
