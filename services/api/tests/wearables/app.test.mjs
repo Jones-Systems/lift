@@ -99,3 +99,9 @@ test('importer pages reach the real service as idempotent duplicates, ignored ol
  assert.equal(stored().deleted,true);assert.deepEqual(visible(),[]);
  assert.equal(h.store.measures(ctxB,'2026-10-09','2026-10-10',100).length,0);
 });
+test('a tombstone-only page reports complete because deletions were read and uploaded',async()=>{
+ const tombstones=[{id:'native-day:steps',revision:{token:'gone',order:2}}];
+ const h=setup(async()=>({records:[],tombstones:structuredClone(tombstones),anchor:'a1',more:false,logicalBucketsComplete:true}));
+ assert.deepEqual(await createHealthImport(h.options).refresh(input),{status:'complete',pages:1});
+ assert.equal(h.calls.length,1);assert.deepEqual(h.calls[0].page.batch,[]);assert.deepEqual(h.calls[0].page.tombstones,tombstones);
+});

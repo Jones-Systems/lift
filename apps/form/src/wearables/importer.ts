@@ -92,11 +92,21 @@ export function createHealthImport(options:{native:FormHealthNative;api:BoundHea
     return ack&&ack.pageId===pageId&&ack.cursor===cursor&&Number.isSafeInteger(ack.accepted)&&ack.accepted>=0&&
       Number.isSafeInteger(ack.duplicates)&&ack.duplicates>=0;
   }
+  // Fail safe: anything other than an explicit false (including a throwing classifier) may have been dispatched.
+  function definitive(error:unknown){try{return options.isUnknown(error)===false;}catch{return false;}}
   async function send(generation:number){
     check(generation);
     if(pending?.phase==='prepared'){
       const command=structuredClone(pending);
-      const ack=await options.api.importPage(structuredClone(command.page),command.key);check(generation);
+      let ack:ImportAck;
+      try{ack=await options.api.importPage(structuredClone(command.page),command.key);}
+      catch(error){
+        check(generation);
+        // Only a definitive rejection settles the immutable page; the server committed nothing for this key.
+        if(definitive(error))await commit(null,generation);
+        throw error;
+      }
+      check(generation);
       if(!validAck(ack,command.pageId,command.page.nextCursor))throw new Error('health_import_ack_unknown');
       await commit({...metadata(command)!,phase:'acknowledged',ack:structuredClone(ack)},generation);
     }
@@ -137,7 +147,7 @@ export function createHealthImport(options:{native:FormHealthNative;api:BoundHea
           pending={phase:'prepared',binding:structuredClone(binding),key,pageId:key,page:{version:1,connectionId:input.connectionId,generation:input.generation,
             stream:binding.stream,fromCursor:anchor,nextCursor:result.anchor,pageId:key,batch,
             tombstones:result.tombstones.map(t=>({id:t.id,revision:{...t.revision}}))}};
-          await commit(pending,generation);await send(generation);pages++;count+=batch.length;anchor=result.anchor;
+          await commit(pending,generation);await send(generation);pages++;count+=batch.length+result.tombstones.length;anchor=result.anchor;
           if(!result.more)return {status:count?'complete':'unknown_no_accessible_data',pages};
         }
         throw new Error('health_native_page_budget');

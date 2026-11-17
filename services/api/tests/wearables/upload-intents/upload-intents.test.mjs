@@ -283,3 +283,46 @@ test('a forged acknowledged cursor is held by authoritative checkpoint reconcili
   assert.equal(h.reconciliations.length,1);assert.equal(h.reconciliations[0].ack.cursor,'forged-cursor');
   assert.equal(h.uploads.length,1);assert.equal(h.queries(),1);assert.equal(h.storage.snapshot().record.phase,'prepared');
 });
+const httpClassifier=error=>!(Number.isInteger(error?.status)&&error.status>=400&&error.status<500);
+test('a definitive upload rejection clears the prepared page, rejects with the server error and allows a fresh key',async()=>{
+  for(const rejection of [{status:409,code:'health_connection_changed'},{status:422,code:'health_invalid_input'}]){
+    const h=fixture(),send=h.options.api.importPage;let reject=true;h.options.isUnknown=httpClassifier;
+    h.options.api.importPage=async(page,key)=>{if(reject){h.uploads.push(structuredClone({page,key}));throw rejection;}return send(page,key);};
+    const importer=h.create();
+    await assert.rejects(importer.refresh(input()),error=>error===rejection);
+    assert.equal(h.storage.snapshot().record,null);assert.equal(h.storage.snapshot().fenced,false);
+    assert.deepEqual(h.unresolved,[]);assert.equal(h.events.includes('reconcile'),false);
+    await assert.rejects(importer.retryUnknown(),/health_import_no_pending/);assert.equal(h.uploads.length,1);
+    reject=false;assert.deepEqual(await importer.refresh(input()),{status:'complete',pages:1});
+    assert.deepEqual(h.uploads.map(u=>u.key),['key-1','key-2']);assert.equal(h.storage.snapshot().record,null);
+  }
+});
+test('a definitive rejection on retry of an unknown upload also settles the retained page',async()=>{
+  const h=fixture();let outcome='lost';h.options.isUnknown=httpClassifier;
+  h.options.api.importPage=async(page,key)=>{h.uploads.push(structuredClone({page,key}));if(outcome==='lost')throw new TypeError('fetch failed');throw {status:409};};
+  const importer=h.create();assert.equal((await importer.refresh(input())).status,'unknown');
+  assert.equal(h.storage.snapshot().record.phase,'prepared');
+  outcome='conflict';await assert.rejects(importer.retryUnknown(),error=>error?.status===409);
+  assert.deepEqual(h.uploads[0],h.uploads[1]);assert.equal(h.storage.snapshot().record,null);assert.equal(h.queries(),1);
+});
+test('possibly dispatched upload errors and a throwing classifier stay unknown and retain the exact prepared page',async()=>{
+  const timeout=Object.assign(new Error('timed out'),{name:'TimeoutError'});
+  const cases=[[new TypeError('fetch failed'),httpClassifier],[timeout,httpClassifier],[{status:503},httpClassifier],[{status:502},httpClassifier],
+    [{status:409},()=>{throw new Error('classifier_failed');}],[{status:409},()=>undefined],[{status:409},()=>'false']];
+  for(const [failure,isUnknown] of cases){
+    const h=fixture(),send=h.options.api.importPage;let fail=true;h.options.isUnknown=isUnknown;
+    h.options.api.importPage=async(page,key)=>{if(fail){h.uploads.push(structuredClone({page,key}));throw failure;}return send(page,key);};
+    const importer=h.create();assert.deepEqual(await importer.refresh(input()),{status:'unknown',pages:0});
+    const stored=h.storage.snapshot().record;assert.equal(stored.phase,'prepared');assert.equal(stored.key,'key-1');assert.deepEqual(stored.page,h.uploads[0].page);
+    await assert.rejects(importer.refresh(input()),/reconciliation_required/);
+    fail=false;assert.equal((await importer.retryUnknown()).status,'complete');
+    assert.equal(h.uploads[1].key,'key-1');assert.deepEqual(h.uploads[1].page,h.uploads[0].page);assert.equal(h.keys(),1);assert.equal(h.queries(),1);
+  }
+});
+test('a definitive rejection whose clear is unknown stays unknown rather than discarding the page',async()=>{
+  const h=fixture(),cas=h.options.journal.compareAndSwap;h.options.isUnknown=httpClassifier;
+  h.options.api.importPage=async(page,key)=>{h.uploads.push(structuredClone({page,key}));throw {status:409};};
+  h.options.journal.compareAndSwap=async(...args)=>args[1]===null?{status:'unknown'}:cas(...args);
+  assert.deepEqual(await h.create().refresh(input()),{status:'unknown',pages:0});
+  assert.equal(h.storage.snapshot().record.phase,'prepared');assert.equal(h.uploads.length,1);
+});

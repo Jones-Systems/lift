@@ -163,7 +163,8 @@ test('export rejects an unusable snapshot before qualification and names the omi
     assert.throws(()=>h.adapter.export(a,bad),/health_export_snapshot_required/);
   }
   const h=exporting(t),sink=collect();h.adapter.export(a,sink.snapshot);
-  assert.deepEqual(sink.output.find(item=>item.value.kind==='manifest').value.omissions,['credentials','cursors','raw_provider_intents','receipt_results','suggestion_plan_snapshots']);
+  assert.deepEqual(sink.output.find(item=>item.value.kind==='manifest').value.omissions,['credentials','cursors','raw_provider_intents','receipt_results','suggestion_plan_snapshots',
+    'connection_consent_metadata','suggestion_records','measure_tombstones']);
   assert.deepEqual([...new Set(sink.output.map(item=>item.value.kind))].sort(),['manifest','measure']);
 });
 test('export refuses oversized or malformed stored measures without appending or qualifying anything',t=>{
@@ -275,4 +276,37 @@ test('the store refuses to resurrect a deleted record and keeps no health payloa
   assert.deepEqual({deleted:stored.deleted,value:stored.value,start:stored.start,end:stored.end,zone:stored.zone,quality:stored.quality,source:stored.source,ai:stored.aiEligible},
     {deleted:true,value:0,start:null,end:null,zone:null,quality:'unknown',source:{bundleId:'deleted',name:'deleted',device:null,algorithm:null,originalId:null},ai:false});
   assert.equal(JSON.stringify(h.db.prepare('SELECT data FROM wearable_measures WHERE account_id=?').all('a')).includes('secret'),false);
+});
+
+const exportedOmissions=['credentials','cursors','raw_provider_intents','receipt_results','suggestion_plan_snapshots','connection_consent_metadata','suggestion_records','measure_tombstones'];
+test('export manifests name every unexported wearable relation with a stable reason and never emit connection, consent or suggestion state',t=>{
+  const suggestion={id:'suggestion-marker',planId:'plan-marker',baseRevision:1,appliedRevision:null,state:'pending',beforeItems:[],afterItems:[],reviewDigest:'review-marker',
+    expiresAt:'2026-12-01T00:00:00Z',reason:'reason-marker',limits:[],policyVersion:'policy-marker',evidenceRefs:[{connectionId:'hk',generation:1,id:'day',digest:'digest-marker'}]};
+  for(const qualify of [undefined,()=>true]){
+    const h=fixture(t,qualify?{qualifyExport:qualify}:{});
+    h.write(a,()=>h.store.putConnection(a,{...connection,id:'oura',provider:'oura',consentVersion:'consent-marker',types:['steps','resting_hr']}));
+    h.service.ingest(a,'command',page({batch:[record(),recordNamed('gone')]}));
+    h.service.ingest(a,'tombstone',page({pageId:'tombstone',fromCursor:'private-cursor',nextCursor:'private-cursor-2',batch:[],tombstones:[{id:'gone',revision:{token:'r2',order:2}}]}));
+    h.write(a,()=>h.store.putSuggestion(a,suggestion));
+    const sink=collect(),result=h.adapter.export(a,sink.snapshot),manifests=sink.output.filter(item=>item.value.kind==='manifest');
+    assert.equal(manifests.length,1);const manifest=manifests[0].value;
+    assert.deepEqual(manifest.omissions,exportedOmissions);assert.deepEqual(Object.keys(manifest.omissionReasons),exportedOmissions);
+    for(const reason of Object.values(manifest.omissionReasons))assert.match(reason,/^[a-z][a-z_]*$/);
+    assert.equal(manifest.omissionReasons.connection_consent_metadata,'export_qualification_covers_measures_only');
+    assert.equal(manifest.omissionReasons.suggestion_records,'export_qualification_covers_measures_only');
+    assert.equal(manifest.omissionReasons.measure_tombstones,'deleted_records_not_exported');
+    assert.deepEqual([...new Set(sink.output.map(item=>item.value.kind))].sort(),qualify?['manifest','measure']:['manifest']);
+    assert.equal(result.status,qualify?'complete':'unavailable');
+    if(qualify)assert.deepEqual(exportedIds(sink.output),['day']);
+    const text=JSON.stringify(sink.output);
+    for(const hidden of ['consent-marker','consentVersion','retentionConsent','lastImportAt','"types"','"connected"','suggestion-marker','plan-marker','review-marker','reason-marker',
+      'policy-marker','digest-marker','evidenceRefs','private-cursor','"gone"'])assert.equal(text.includes(hidden),false,hidden);
+    const keys=[];const walk=value=>{if(value&&typeof value==='object')for(const [key,child] of Object.entries(value)){if(!Array.isArray(value))keys.push(key);if(key!=='omissionReasons')walk(child);}};
+    walk(sink.output.map(item=>item.value));
+    assert.deepEqual(keys.filter(key=>/secret|cipher|access_?token|refresh|password|credential|auth|pkce|callback/i.test(key)),[]);
+    for(const item of sink.output.filter(item=>item.value.kind==='measure')){
+      assert.equal(item.value.data.aiEligible,false);assert.equal(item.value.data.provenance,'unqualified_import');
+    }
+    assert.equal(manifest.aiEligible??false,false);
+  }
 });
