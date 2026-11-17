@@ -17,3 +17,10 @@ export type {
   StandardUsageObservationBinding, StandardUsageObservationContexts, StandardUsageObservedStage,
   StandardUsageObservationReceipt, StandardUsageObservationCollector,
 } from './standard-observation.js';
+export {
+  usageOperationKinds, calendarMonthPeriodResolver, usagePeriodPolicyId, createUsagePolicy,
+  createUsageRightsResolver, createUsageLimitsConfiguration,
+} from './policy.js';
+export type {
+  UsageOperationKind, UsagePeriodRule, UsagePolicyConfig, UsageGrantsConfig, UsageLimitsConfiguration,
+} from './policy.js';
