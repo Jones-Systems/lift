@@ -182,6 +182,7 @@
         "services/api/tests/training-feedback/session-source.test.mjs",
         "services/api/tests/usage-limits/ledger.test.ts",
         "services/api/tests/usage-limits/live-allocation.test.ts",
+        "services/api/tests/usage-limits/policy.test.ts",
         "services/api/tests/usage-limits/provider-evidence.test.ts",
         "services/api/tests/usage-limits/scratch.test.ts",
         "services/api/tests/voice-coaching/app-session-controller.test.cjs",
