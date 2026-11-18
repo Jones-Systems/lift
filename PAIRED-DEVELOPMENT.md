@@ -32,6 +32,12 @@ projection behavior. See PUBLIC-TESTING.md and BUILD.md for exact coverage.
 Changes to files with deliberate public sanitization require explicit parity
 handling; a mismatch must fail rather than be assumed equivalent.
 
+Private details of the owner's real environment, such as private host names,
+network addresses and network exceptions, stay only in private Form and never
+appear in Lift, its PR bodies, commits or CI logs. That difference is expected.
+Form's verifier accepts it only at exact, owner-approved locations; remove such
+values from any public export instead of copying them here.
+
 For the initial transition, Form #104 adds direct wearable connections and
 #139 adds provider activation on top. The product changes from #196, #203 and
 #208 already exist in the initial Lift snapshot; their Lift counterparts carry
@@ -52,7 +58,7 @@ change; there is no background mirror or automatic cross-repository push.
 | Lift base advances or PR is retargeted | Refresh both named Lift PR workflows for the current head and base; then run Form verification again. |
 | Both Lift workflows finish | Rerun Form verification even if its older result was green. Use a full rerun for a previously successful job; use `--failed` only for a failed run. |
 | Pair marker changes | Check reciprocal markers and rerun qualification. |
-| Deliberately sanitized product file differs | Stop that pair. Obtain a separately approved exact equivalence approach; never copy private settings to Lift to force a pass. |
+| Deliberately sanitized product file differs | If Form's verifier lists it as approved private-only divergence, the pair can pass. Otherwise stop that pair and obtain a separately approved exact equivalence approach; never copy private settings to Lift to force a pass. |
 
 Both public workflows also trigger on PR edits, including base retargeting and
 body edits. Finalize pairing/body changes before waiting for CI. A base branch
