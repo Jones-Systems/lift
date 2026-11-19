@@ -17,7 +17,7 @@ prove that a new test was selected.
 | Placement/group | Files | Execution and reason |
 | --- | ---: | --- |
 | Existing hosted | 76 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
-| `api-breadth` | 89 | Compile API TypeScript with `tsc`; run emitted TS tests and original MJS/CJS tests using the existing source hook. Never run the private projection build. |
+| `api-breadth` | 91 | Compile API TypeScript with `tsc`; run emitted TS tests and original MJS/CJS tests using the existing source hook. Never run the private projection build. |
 | `app-breadth` | 80 | Compile the transport compatibility output, then run explicit CJS files serially. Phone sign-in embeds the standalone transport suite exactly once. |
 | `app-renderer` | 1 | Existing Jest renderer command selects `runtime-auth.test.tsx`; onboarding remains in the existing hosted group. |
 | `website` | 29 | Explicit recursive Node test paths include nested voice modules. Require the real portable session-controller source before execution. |
@@ -25,11 +25,11 @@ prove that a new test was selected.
 | `breadth-contract` | 1 | This runner's selection, result and lifecycle contract runs inside the breadth job. |
 | Blocked | 32 | Exact files, reasons, missing inputs and intended private/manual qualification routes remain in the manifest. |
 
-Current discovery has 312 files. The public runner's `lifecycle-runtime` group
+Current discovery has 314 files. The public runner's `lifecycle-runtime` group
 selects exactly 36 API modules, including purchases, reconciliation, status
 reader, codec and both Source27 suites exactly once. The three existing purchase
 suites move from `api-breadth` to existing hosted placement; the two new suites
-join hosted placement. API discovery has 105 ordinary modules and 175 total
+join hosted placement. API discovery has 106 ordinary modules and 176 total
 files. The Source27 fixture helper is required/digested/compiled source only,
 excluded from discovery, invocation and module counts. The codec's 18 synthetic
 cases establish bounded syntax, content identities and conservative ordering.
@@ -55,7 +55,7 @@ execution, and moves the existing v1 app lifecycle suite from `app-breadth` to
 hosted execution exactly once. Its API compilation precedes actual
 backend-encoder/client-parser interop. These unmounted syntax and compatibility
 tests do not qualify future producers, evidence authority, transport or consumer
-exposure. There are 203 additional public product test files, plus the breadth
+exposure. There are 205 additional public product test files, plus the breadth
 contract.
 The default `plan-revision` group moves the existing backend suite from
 `api-breadth` to hosted placement exactly once and adds the planning revision
@@ -131,3 +131,7 @@ the full breadth command above on Node 24. Workflow/source changes additionally
 retain the existing `ci-placement`, native identity and public runner contracts
 under their existing owners. Source completion, local passing evidence and an
 exact-SHA hosted qualification are separate results.
+
+The Stripe web subscription suite is registered once in `api-breadth` and ordinary
+API purchase discovery. It uses generated local signing secrets and injected
+HTTP responses; it does not qualify Stripe accounts, real charges or activation.

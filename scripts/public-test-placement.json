@@ -168,6 +168,7 @@
         "services/api/tests/progress-comparison/comparison.test.mjs",
         "services/api/tests/progress-comparison/persistence.test.mjs",
         "services/api/tests/purchases/notification-inbox.test.ts",
+        "services/api/tests/purchases/stripe-web.test.ts",
         "services/api/tests/runtime-path.test.ts",
         "services/api/tests/settings.test.ts",
         "services/api/tests/source-prescription-domain.test.ts",

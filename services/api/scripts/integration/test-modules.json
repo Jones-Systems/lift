@@ -106,7 +106,8 @@
       "tests/purchases/status.test.ts",
       "tests/purchases/status-codec.test.ts",
       "tests/purchases/status-projection.test.ts",
-      "tests/purchases/status-source.test.ts"
+      "tests/purchases/status-source.test.ts",
+      "tests/purchases/stripe-web.test.ts"
     ],
     "runtime-modules": [
       "tests/runtime-modules/authority-currentness.test.ts",
