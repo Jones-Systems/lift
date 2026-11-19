@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Worker } from 'node:worker_threads';
+import { Hono } from 'hono';
+import { DomainError } from '../../src/errors.js';
+import type { AccountContext } from '../../src/lifecycle/types.js';
 import { createUsageLedger, usageMigrationVersion, usageOwnedTables } from '../../src/usage-limits/index.js';
-import type { UsageIntent, UsagePolicy, UsageReservationHandle } from '../../src/usage-limits/index.js';
+import type { UsageIntent, UsageLimitsPort, UsagePolicy, UsageReservationHandle } from '../../src/usage-limits/index.js';
+import { createUsageStatusRoutes } from '../../src/usage-limits/status-routes.js';
 import { actor, otherActor, END, fixture, intent, START, testPolicy } from './fixture.js';
 
 const code = (expected: string) => (error: unknown) => (error as { code?: string }).code === expected;
@@ -197,7 +201,8 @@ test('missing policy, grants, provider configuration or required policy fields p
   for (const service of [createUsageLedger(withoutPolicy), createUsageLedger(withoutRights)]) {
     assert.throws(() => { const result = service.usage.reserve(actor, intent('disabled')); service.usage.markDispatching(result.handle, 'transcribe'); calls++; },
       code('usage_unconfigured'));
-    assert.equal(service.usage.status(actor).configured, false);
+    const { configured, policyId, period, metrics } = service.usage.status(actor);
+    assert.deepEqual({ configured, policyId, period, metrics }, { configured: false, policyId: null, period: null, metrics: null });
   }
   f.state.rights = { ...f.state.rights, configuredOperations: [] };
   assert.throws(() => { const r = f.ledger.usage.reserve(actor, intent('provider-missing')); f.ledger.usage.markDispatching(r.handle, 'transcribe'); calls++; },
@@ -206,6 +211,75 @@ test('missing policy, grants, provider configuration or required policy fields p
     assert.throws(() => createUsageLedger({ ...options, policy: { ...testPolicy(), ...change } as unknown as UsagePolicy }), code('usage_policy_invalid'));
   assert.equal(calls, 0);
   assert.equal((f.db.prepare('SELECT count(*) AS n FROM usage_reservations').get() as { n: number }).n, 0);
+});
+
+function statusApp(usage: Pick<UsageLimitsPort, 'status'>) {
+  type Env = { Variables: { actor: AccountContext | undefined } };
+  const app = new Hono<Env>();
+  const accounts = new Map([['Bearer synthetic-a', actor], ['Bearer synthetic-b', otherActor]]);
+  app.use('/v1/usage', async (c, next) => {
+    c.set('actor', accounts.get(c.req.header('authorization') ?? ''));
+    await next();
+  });
+  app.onError((error, c) => {
+    if (!(error instanceof DomainError)) throw error;
+    return c.json({ error: { code: error.code } }, error.status);
+  });
+  app.route('/v1/usage', createUsageStatusRoutes<Env>({ context: c => c.get('actor'), usage }));
+  return (session?: string, query = '') => app.request(`/v1/usage${query}`, {
+    headers: session ? { Authorization: `Bearer ${session}` } : {},
+  });
+}
+
+test('the usage HTTP route exposes only the authenticated account aggregates without writes', async t => {
+  const f = fixture(t, testPolicy(5));
+  const settled = f.ledger.usage.reserve(actor, intent('status-settled'));
+  f.ledger.usage.markDispatching(settled.handle, 'transcribe');
+  f.ledger.trusted.settle(settled.handle, { charges: [{ metric: 'coach_messages', amount: 1 }] });
+  const uncertain = f.ledger.usage.reserve(actor, intent('status-unknown'));
+  f.ledger.usage.markDispatching(uncertain.handle, 'transcribe');
+  f.ledger.trusted.markUnknown(uncertain.handle);
+  f.ledger.usage.reserve(actor, intent('status-reserved'));
+
+  const request = statusApp(f.ledger.usage);
+  const writes = f.db.prepare('SELECT total_changes() AS count');
+  const before = writes.get();
+  const noSession = await request();
+  assert.equal(noSession.status, 401);
+  assert.equal(noSession.headers.get('Cache-Control'), 'no-store');
+  const foreignQuery = await request('synthetic-b', '?accountId=account-a');
+  assert.equal(foreignQuery.status, 422);
+
+  const first = await request('synthetic-a');
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get('Cache-Control'), 'no-store');
+  assert.equal(first.headers.get('X-Content-Type-Options'), 'nosniff');
+  const firstBody = await first.json();
+  assert.deepEqual(firstBody, f.ledger.usage.status(actor));
+  assert.deepEqual(firstBody.metrics.coach_messages, { limit: 5, settled: 1, reserved: 1, unknown: 1, remaining: 2 });
+  assert.doesNotMatch(JSON.stringify(firstBody), /status-(settled|unknown|reserved)|subject-a|account-a|session-a/);
+
+  const second = await request('synthetic-b');
+  assert.equal(second.status, 200);
+  assert.deepEqual((await second.json()).metrics.coach_messages, { limit: 5, settled: 0, reserved: 0, unknown: 0, remaining: 5 });
+  f.state.epoch++;
+  const revoked = await request('synthetic-a');
+  assert.equal(revoked.status, 403);
+  assert.deepEqual(await revoked.json(), { error: { code: 'test_actor_revoked' } });
+  assert.deepEqual(writes.get(), before);
+});
+
+test('the usage HTTP route returns an unconfigured snapshot with no metrics when grants are absent', async t => {
+  const f = fixture(t);
+  const { resolveRights: _resolveRights, ...options } = f.options();
+  const request = statusApp(createUsageLedger(options).usage);
+  const response = await request('synthetic-a');
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    schemaVersion: 1, configured: false, policyId: null, serverTimeMs: f.state.now, period: null, metrics: null,
+    ordinaryWorkoutExecution: 'unrestricted_by_usage_limits',
+    ordinaryWorkoutLogging: 'unrestricted_by_usage_limits',
+  });
 });
 
 test('standard voice has no duration charge; ordinary workout execution and logging have no ledger admission gate', t => {

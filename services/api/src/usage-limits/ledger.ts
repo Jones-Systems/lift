@@ -21,6 +21,8 @@ const accountTables = ['usage_reservations', 'usage_counters', 'usage_periods', 
 export function createUsageLedger(options: UsageLedgerOptions): UsageLedger {
   const { db, lifecycle } = options;
   const policy = options.policy ? policyCopy(options.policy) : undefined;
+  const resolveRights = options.resolveRights;
+  const configured = !!policy && typeof resolveRights === 'function';
   const handles = new WeakMap<UsageReservationHandle, Readonly<{ id: string; actor: AccountContext }>>();
   const dispatchOwners = new WeakSet<UsageReservationHandle>();
   const transaction = <T>(effect: () => T): T => db.transaction(effect).immediate();
@@ -35,10 +37,10 @@ export function createUsageLedger(options: UsageLedgerOptions): UsageLedger {
     return result;
   }));
   const authorize = (actor: AccountContext, operation: string) => {
-    if (!policy || !options.resolveRights) fail('usage_unconfigured', 503);
+    if (!configured) fail('usage_unconfigured', 503);
     const rule = Object.hasOwn(policy.operations, operation) ? policy.operations[operation] : undefined;
     if (!rule) fail('usage_operation_unconfigured', 503);
-    const rights = options.resolveRights(actor);
+    const rights = resolveRights(actor);
     identifier(rights.policyId);
     if (!Array.isArray(rights.capabilities) || !Array.isArray(rights.configuredOperations)) fail('usage_rights_unconfigured', 503);
     if (!rights.configuredOperations.includes(operation)) fail('usage_provider_unconfigured', 503);
@@ -64,7 +66,7 @@ export function createUsageLedger(options: UsageLedgerOptions): UsageLedger {
       fail('usage_period_changed', 503);
   };
   const snapshot = (accountId: string, period: UsagePeriod | null, atMs = now()): UsageSnapshot => ({
-    schemaVersion: 1, configured: !!policy && !!options.resolveRights, policyId: policy?.id ?? null,
+    schemaVersion: 1, configured, policyId: configured ? policy.id : null,
     serverTimeMs: atMs, period,
     metrics: policy && period ? Object.fromEntries(usageMetrics.map(metric => {
       const value = counter(accountId, period.id, metric), limit = policy.limits[metric];
@@ -202,7 +204,7 @@ export function createUsageLedger(options: UsageLedgerOptions): UsageLedger {
       status(inputActor) {
         const actor = actorCopy(inputActor);
         return active(actor, () => {
-          const atMs = now(), period = policy ? periodCopy(policy, atMs) : null;
+          const atMs = now(), period = configured ? periodCopy(policy, atMs) : null;
           if (period) validatePeriodBinding(actor.accountId, period);
           return snapshot(actor.accountId, period, atMs);
         });
