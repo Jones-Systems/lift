@@ -574,11 +574,39 @@ test('the exact authenticated notification and its retained bytes must remain av
   assert.equal(read(), 'dependency_evidence');
   changeBytes.run(accepted.capture.signedPayload, accepted.receiptId);
   assert.equal(read(), 'synthetic_current');
-  inbox.control.now = 15_000;
+  const payloadUntil = f.db.prepare('SELECT payload_until FROM notification_inbox_receipts WHERE receipt_id=?')
+    .pluck().get(accepted.receiptId) as number;
+  inbox.control.now = payloadUntil - 1;
+  assert.equal(read(), 'synthetic_current');
+  inbox.control.now = payloadUntil;
+  assert.equal(inbox.inbox.inspectProof(inbox.caps.proof, accepted.receiptId).status, 'payload_unavailable');
+  assert.equal(read(), 'dependency_evidence');
   assert.equal(inbox.inbox.disposePayload(inbox.caps.dispose, { operationId: randomUUID(), receiptId: accepted.receiptId,
     expectedVersion: accepted.result.version }).status, 'ok');
   assert.equal(aggregateFor(f.db, PRD_A, A_UUID)?.version, aggregate.version);
   assert.equal(read(), 'dependency_evidence');
+});
+
+test('notification evidence is held when the canonical receipt expires before its later variant', async t => {
+  const f = await world(t);
+  seedOwner(f.db, PRD_A, '1000', ACCOUNT_A);
+  const inbox = f.inbox();
+  const canonical = await inbox.accept(variants[0], PRD_A, A_UUID);
+  f.clock.now++;
+  const variant = await inbox.accept(variants[0], PRD_A, A_UUID);
+  const aggregate = aggregateFor(f.db, PRD_A, A_UUID)!;
+  const { revision } = seedProjection(f.db, PRD_A, { original: '1000', account: ACCOUNT_A,
+    provenance: 'notification_evidence', accepted: variant });
+  seedDependency(f.db, PRD_A, { original: '1000', revision, aggregateId: aggregate.aggregate_id, version: aggregate.version });
+  const context = f.context(ACCOUNT_A, PRD_A);
+  const end = f.db.prepare('SELECT payload_until FROM notification_inbox_receipts WHERE receipt_id=?').pluck();
+  f.clock.now = (end.get(canonical.receiptId) as number) - 1;
+  assert.equal(f.reader.projection(context, '1000').status, 'synthetic_current');
+  f.clock.now++;
+  assert.equal(end.get(variant.receiptId), f.clock.now + 1);
+  assert.equal(inbox.inbox.inspectProof(inbox.caps.proof, canonical.receiptId).status, 'payload_unavailable');
+  assert.equal(inbox.inbox.inspectProof(inbox.caps.proof, variant.receiptId).status, 'ok');
+  assert.equal(isHeld(f.reader.projection(context, '1000')), 'dependency_evidence');
 });
 
 test('latest status, canonical content and distinct restoration cannot bypass an unresolved dispatch', async t => {
@@ -595,6 +623,9 @@ test('latest status, canonical content and distinct restoration cannot bypass an
   assert.equal(read(), 'synthetic_current');
   assert.throws(() => f.db.prepare('UPDATE qualified_apple_status_projection SET revision=4,current_observation_id=?,projection_json=?')
     .run(first.observation.id, projectionReference(f.db, SBX_A, first.observation)), /qualified_apple_status_projection_bound_update/);
+  assert.throws(() => f.db.prepare(`UPDATE qualified_apple_status_projection
+    SET revision=4,projection_state='held',current_observation_id=?,projection_json=?`)
+    .run(first.observation.id, projectionReference(f.db, SBX_A, first.observation)), /qualified_apple_status_projection_advancing/);
   assert.throws(() => f.db.prepare("UPDATE qualified_apple_status_projection SET revision=4,projection_json='[]'").run(),
     /qualified_apple_status_projection_bound_update/);
   const latest = seedStatusObservation(f.db, SBX_A, { original: '1000', account: ACCOUNT_A });

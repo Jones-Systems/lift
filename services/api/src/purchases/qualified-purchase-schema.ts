@@ -271,9 +271,11 @@ export const authenticatedNotificationVariant = `FROM main.notification_inbox_ag
 const supporting: readonly SchemaDescriptor[] = [
   // A appends its operation after the callback. Only the minimal qualified acceptance identity survives A's independent erasure.
   trigger(`${notificationCommits}_record`, 'notification_inbox_operations', `CREATE TRIGGER ${notificationCommits}_record
-    AFTER INSERT ON notification_inbox_operations WHEN EXISTS(SELECT 1 FROM ${notifications} WHERE operation_id=NEW.operation_id) BEGIN
+    AFTER INSERT ON notification_inbox_operations BEGIN
       INSERT INTO ${notificationCommits}(namespace_key,notification_uuid,operation_id)
-      SELECT namespace_key,notification_uuid,operation_id FROM ${notifications} WHERE operation_id=NEW.operation_id; END`),
+      SELECT n.namespace_key,n.notification_uuid,n.operation_id FROM ${notifications} n
+      WHERE n.operation_id=NEW.operation_id AND NOT EXISTS(SELECT 1 FROM ${notificationCommits} c
+        WHERE c.namespace_key=n.namespace_key AND c.notification_uuid=n.notification_uuid AND c.operation_id=n.operation_id); END`),
   trigger(`${notificationCommits}_bound`, notificationCommits, `CREATE TRIGGER ${notificationCommits}_bound BEFORE INSERT ON ${notificationCommits}
     WHEN NOT EXISTS(SELECT 1 FROM ${notifications} n
       JOIN notification_inbox_operations op ON op.operation_id=n.operation_id AND op.receipt_id=n.receipt_id
@@ -353,8 +355,12 @@ const supporting: readonly SchemaDescriptor[] = [
   retained(statusProjection),
   trigger(`${statusProjection}_advancing`, statusProjection, `CREATE TRIGGER ${statusProjection}_advancing BEFORE UPDATE ON ${statusProjection}
     WHEN NEW.revision<>OLD.revision+1 OR NEW.last_seen_at_ms<OLD.last_seen_at_ms
-      OR (OLD.current_observation_id IS NOT NULL AND (NEW.current_observation_id IS NULL
-        OR (OLD.projection_state<>'current' AND NEW.projection_state='current' AND NEW.current_observation_id=OLD.current_observation_id)))
+      OR (OLD.current_observation_id IS NOT NULL AND NOT EXISTS(
+        SELECT 1 FROM ${statusObservations} prior
+        JOIN ${statusObservations} candidate ON candidate.namespace_key=prior.namespace_key AND candidate.observation_id=NEW.current_observation_id
+        WHERE prior.namespace_key=OLD.namespace_key AND prior.observation_id=OLD.current_observation_id
+          AND (candidate.sequence>prior.sequence OR (candidate.sequence=prior.sequence
+            AND (OLD.projection_state='current' OR NEW.projection_state<>'current')))))
     ${refusal(`${statusProjection}_advancing`)}`),
   dispatchCollision('INSERT'), dispatchCollision('UPDATE'),
   statusEvidenceBound(`${statusProjection}_bound_insert`, statusProjection, 'INSERT'),

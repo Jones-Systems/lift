@@ -616,13 +616,17 @@ test('notification application and projection dependency rows bind exact accepte
   const application = f.db.prepare('SELECT * FROM qualified_apple_notifications').all();
   const acceptance = f.db.prepare('SELECT * FROM qualified_apple_notification_commits').all();
   assert.deepEqual(acceptance, [{ namespace_key: nsKey(SBX_A), notification_uuid: A_UUID, operation_id: request.operationId }]);
-  a.control.now = 32_000;
+  a.control.now += 31_000;
   assert.equal(a.inbox.expireIdentityAndAudit(a.caps.dispose, { operationId: randomUUID(), receiptId: accepted.receiptId,
     expectedVersion: successful.status === 'ok' ? successful.version : 0 }).status, 'ok');
   assert.equal(f.db.prepare('SELECT 1 FROM notification_inbox_operations WHERE receipt_id=?').get(accepted.receiptId), undefined);
   assert.equal(f.db.prepare('SELECT 1 FROM notification_inbox_receipts WHERE receipt_id=?').get(accepted.receiptId), undefined);
   assert.deepEqual(f.reader.projection(context, '1000'), { status: 'held', reason: 'dependency_missing', revision: 1,
     namespace: SBX_A, selectionGeneration: 'selection-one' });
+  const freshCapture = { ...a.request(A_PAYLOADS[0], SBX_A, A_UUID), operationId: request.operationId };
+  assert.equal(a.inbox.capture(a.caps.capture, freshCapture).status, 'ok');
+  assert.equal(f.db.prepare('SELECT receipt_id FROM notification_inbox_operations WHERE operation_id=?')
+    .pluck().get(request.operationId), freshCapture.receiptId);
   assert.deepEqual(f.db.prepare('SELECT * FROM qualified_apple_notifications').all(), application);
   assert.deepEqual(f.db.prepare('SELECT * FROM qualified_apple_notification_commits').all(), acceptance);
   assertQualifiedPurchaseSchema(f.db);

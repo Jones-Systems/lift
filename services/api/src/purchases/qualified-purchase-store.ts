@@ -47,7 +47,7 @@ function statusEvidence(observation: ObservationRow, row: ProjectionRow, view: P
 }
 
 function notificationHold(db: Sqlite, view: PurchaseAccessView, dependency: DependencyRow,
-    reference: QualifiedNotificationEvidence, proofDigest: string | undefined): QualifiedProjectionHoldReason | undefined {
+    reference: QualifiedNotificationEvidence, proofDigest: string | undefined, now: number): QualifiedProjectionHoldReason | undefined {
   const aggregate = db.prepare(`SELECT namespace_key,notification_uuid,namespace_json,version,conflicted,invalidation_required
     FROM main.notification_inbox_aggregates WHERE aggregate_id=?`).get(dependency.aggregate_id) as AggregateRow | undefined;
   if (!aggregate) return 'dependency_missing';
@@ -64,8 +64,9 @@ function notificationHold(db: Sqlite, view: PurchaseAccessView, dependency: Depe
     if (evidenceCanonical(JSON.parse(aggregate.namespace_json)) !== evidenceCanonical(view.namespace)) return 'dependency_evidence';
     const variant = db.prepare(`SELECT b.bytes ${authenticatedNotificationVariant}
       WHERE a.aggregate_id=? AND r.receipt_id=? AND cr.receipt_id=? AND r.digest=?
+        AND r.payload_until>? AND cr.payload_until>?
         AND r.byte_length<=? AND json_extract(op.input_json,'$.outer.transactionDigest')=? LIMIT 1`)
-      .get(aggregateId, receiptId, canonicalReceiptId, payloadDigest, view.store.policy.maxEvidenceBytes, proofDigest) as { bytes: Buffer } | undefined;
+      .get(aggregateId, receiptId, canonicalReceiptId, payloadDigest, now, now, view.store.policy.maxEvidenceBytes, proofDigest) as { bytes: Buffer } | undefined;
     return variant && notificationPayloadDigest(variant.bytes) === payloadDigest ? undefined : 'dependency_evidence';
   } catch { return 'dependency_evidence'; }
 }
@@ -74,7 +75,7 @@ function notificationHold(db: Sqlite, view: PurchaseAccessView, dependency: Depe
  * Synchronous qualified readers. Every read is one immediate transaction, bound to a privately issued context that is
  * re-established before and after the SELECTs and again before returning. These readers update no grant, acknowledge
  * no inbox work, call no producer and accept no thenable. Only these readers are fenced; a later consumer must route
- * every access path through the selected authority.
+ * every access path through the selected authority. The reader uses the same millisecond clock as its synthetic inbox.
  */
 export function createQualifiedPurchaseReader(db: Sqlite, input: Readonly<{ use: 'isolated-synthetic'; clock: () => number }>): QualifiedPurchaseReader {
   if (!input || input.use !== 'isolated-synthetic' || typeof input.clock !== 'function' || !db || !db.open) return refuse('invalid_request');
@@ -207,7 +208,7 @@ export function createQualifiedPurchaseReader(db: Sqlite, input: Readonly<{ use:
         for (const dependency of dependencies) {
           const reference = references.get(dependency.aggregate_id);
           if (!reference) return hold('provenance_inconsistent');
-          const reason = notificationHold(db, view, dependency, reference, proofDigest);
+          const reason = notificationHold(db, view, dependency, reference, proofDigest, now);
           if (reason) return hold(reason);
         }
         return Object.freeze({ status: 'synthetic_current' as const, ...base, revision: row.revision });

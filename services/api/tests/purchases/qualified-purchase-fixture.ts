@@ -235,12 +235,16 @@ export type InboxHarness = Readonly<{
   claim: (receiptId: string) => InboxClaim; request: (payload: string, namespace: InboxNamespace, notificationUUID: string) => InboxCapture;
   committer: () => ReturnType<NotificationInbox['createSyntheticPurchaseCommitter']>;
 }>;
-export function composeInbox(db: Sqlite, scopes: readonly InboxNamespace[]): InboxHarness {
+export function composeInbox(db: Sqlite, scopes: readonly InboxNamespace[], clock: { now: number }): InboxHarness {
   const authority = createSyntheticInboxAuthority(db, { use: 'isolated-synthetic', ingress: 'fixture' });
   const caps = Object.fromEntries(operations.map(op => [op, authority.issue(op, { ingress: 'fixture', namespaces: scopes, receiptId: null })])) as Record<InboxOperation, InboxCapability>;
   const outers = new Map<string, InboxOuter>();
   const nested = new Map<string, InboxNamespace>();
-  const control = { settled: true, now: 1000 };
+  const control = {
+    settled: true,
+    get now(): number { return clock.now; },
+    set now(value: number) { clock.now = value; },
+  };
   const inbox = new NotificationInbox(db, {
     use: 'isolated-synthetic', ingress: 'fixture', now: () => control.now, afterCommit: () => {},
     settlement: attempt => {
@@ -315,5 +319,5 @@ export async function qualified(t: TestContext, options: { namespaces?: readonly
     return issuer.forOwner(actor);
   };
   return { root: s.root, track: s.track, path, input, storage, db, clock, selections, accounts, control, issuer, reader, context,
-    inbox: (scopes: readonly InboxNamespace[] = [SBX_A, PRD_A, SBX_B, PRD_B]) => composeInbox(db, scopes) };
+    inbox: (scopes: readonly InboxNamespace[] = [SBX_A, PRD_A, SBX_B, PRD_B]) => composeInbox(db, scopes, clock) };
 }
