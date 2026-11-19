@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createGroundingRetriever } from '../../../src/grounding/index.js';
+import { composeGroundedAnswer } from '../../../src/grounding/answer.js';
 import { syntheticFixture, syntheticRecord } from '../../grounding/fixture.js';
 import { createNutritionGroundingPort } from '../../../src/domain-features/nutrition/grounding-adapter.js';
+import { createNutritionCitationConversation } from '../../../src/domain-features/nutrition/citation-followthrough.js';
 import { retrieveNutritionSources } from '../../../src/domain-features/nutrition/index.js';
 import { createGroundedNutritionConversation, createNutritionInformativeSynthesisPort,
   evaluateNutritionAnswer, nutritionAnswerContext, type NutritionAnswerExpectation } from '../../../src/domain-features/nutrition/synthesis-adapter.js';
@@ -127,4 +129,29 @@ test('composition rejects mismatched cached evidence and evaluation binds its or
   assert.equal(wrongTopic.requestMatchesExpectedEvidence, false);
   assert.equal(wrongTopic.passed, false);
   assert.throws(() => nutritionAnswerContext(2, null, []), /invalid-nutrition-answer-lineage/);
+});
+
+test('a matching query and topic header do not qualify an observation from another topic', async () => {
+  const request = { query: initial().question, topic: 'NUT-I3' };
+  const evidence = retriever().retrieve(request);
+  assert.equal(evidence.status, 'observations');
+  const entry = evidence.observations[0]!;
+  const wrongTopic = { ...entry, record: { ...entry.record, id: 'SYN-S2', topic_ids: ['NUT-I6'] } };
+  const inconsistent = { ...evidence, totalMatches: 2, observations: [entry, wrongTopic] };
+  const miswiredRetriever = { retrieve: () => inconsistent };
+  const conversation = createNutritionCitationConversation(miswiredRetriever);
+  const state = await conversation.submit(initial());
+
+  assert.equal(state.conversation.turns[0]?.status, 'synthesis-unavailable');
+  assert.equal(state.conversation.currentExplanation, null);
+  const selected = conversation.selectCitation({ parentTurnId: 1, statementId: entry.record.id });
+  assert.equal(selected.selections.at(-1)?.status, 'answer-unavailable');
+  assert.equal(selected.currentSelection, null);
+
+  const answer = composeGroundedAnswer(miswiredRetriever, {
+    retrieval: request, context: nutritionAnswerContext(1, null, initial().userContext),
+  });
+  const evaluated = evaluateNutritionAnswer(answer, inconsistent, expectation());
+  assert.equal(evaluated.requestMatchesExpectedEvidence, false);
+  assert.equal(evaluated.passed, false);
 });

@@ -91,6 +91,7 @@ export function nutritionQueryMatchesEvidence(selection: NutritionQueryPolicySel
   const policy = captureNutritionQueryPolicy(selection);
   const effective = resolveNutritionQuery(policy, job, question);
   return evidence.query === effective.query && evidence.filters.topic === effective.topic
+    && evidence.observations.every(({ record }) => record.topic_ids.includes(effective.topic))
     && (policy.mode === 'form.nutrition-raw-question/v1'
       || (evidence.schema === 'form.observation-grounding/v1' && isDeepStrictEqual(evidence.source, policy.corpus)));
 }
