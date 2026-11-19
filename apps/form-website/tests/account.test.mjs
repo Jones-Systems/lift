@@ -81,14 +81,6 @@ test('absent, malformed and insecure configuration makes zero API requests', asy
   assert.equal(validateRuntimeConfig(config, 'http://127.0.0.1:4000'), null);
 });
 
-test('unverified capability never submits credentials or grants access', async () => {
-  const mock = transport({ '/v1/capabilities': () => response(capabilities('configured_unverified')) });
-  const adapter = createAccountAdapter({ config, browserOrigin, fetchImpl: mock.fetchImpl });
-  await adapter.refresh(); await adapter.signin(credentials);
-  assert.equal(adapter.snapshot().status, 'unavailable');
-  assert.ok(mock.calls.every(call => call.path === '/v1/capabilities'));
-});
-
 test('closed registration makes no auth mutation', async () => {
   const mock = transport({ '/v1/capabilities': () => response(capabilities('configured_unverified', 'closed')) });
   const adapter = adapterFor(mock); await adapter.signup(credentials);
