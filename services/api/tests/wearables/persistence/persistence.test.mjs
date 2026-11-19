@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { fixture,a,b,connection,page,record,complete } from './fixture.mjs';
 import { stable,digest } from '../../../src/wearables/validation.ts';
 import { wearableTables } from '../../../src/wearables/persistence/index.ts';
+import { createHealthRouter } from '../../../src/wearables/router.ts';
 
 test('canonical database requires active session, epoch and root writer witness',t=>{
   const h=fixture(t);
@@ -134,6 +135,9 @@ const rowCount=(h,accountId)=>wearableTables.reduce((total,table)=>total+h.db.pr
 const recordNamed=(id,changes={})=>({...record(),id,...changes});
 const collect=()=>{const output=[];return {output,snapshot:{snapshotAtMs:1,append:(category,value)=>output.push({category,value})}};};
 const exportedIds=output=>output.filter(item=>item.value.kind==='measure').map(item=>item.value.data.id);
+const healthKitDisconnect=(h,key,connectionId,generation=1)=>createHealthRouter(h.service)(a,{
+  method:'POST',path:'/v1/health/connections/healthkit/disconnect',query:new URLSearchParams(),key,body:{connectionId,generation},
+});
 test('export contains only live owned measures from every connection, never tombstoned, disconnected or foreign rows',t=>{
   const qualified=[],h=fixture(t,{qualifyExport:(ctx,value)=>{qualified.push({account:ctx.accountId,id:value.id});return true;}});
   h.write(a,()=>{h.store.putConnection(a,{...connection,id:'oura',provider:'oura'});h.store.putConnection(a,{...connection,id:'gone'});});
@@ -198,8 +202,38 @@ test('export keeps a measure-only result honest when external coverage is unknow
   assert.deepEqual({status:h.adapter.export(a,sink.snapshot).status,exported:sink.output[0].value.exported,unqualified:sink.output[0].value.unqualified,external:sink.output[0].value.externalStatus},
     {status:'unavailable',exported:0,unqualified:1,external:'complete'});
 });
-test('disconnecting one connection removes its intents and cursors only, and never another account or connection',t=>{
-  const h=fixture(t);
+test('HealthKit disconnect rejects a same-account Oura connection before any purge and still disconnects HealthKit',t=>{
+  const fences=[],h=fixture(t,{externalConnectionPurge:(ctx,scope)=>{fences.push({ctx,scope});return {status:'complete'};}});
+  h.write(a,()=>h.store.putConnection(a,{...connection,id:'oura',provider:'oura'}));
+  const pending=page({connectionId:'oura',pageId:'oura-page'});
+  h.providerIntent({ctx:a,provider:'oura',connectionId:'oura',generation:1,stream:'steps',cursor:null}).save({key:'oura-page',
+    binding:stable(['a','session-a',0,'oura','oura',1,'steps',null]),page:pending});
+  h.service.ingest(a,'oura-page',pending,{provider:'oura'});
+  h.service.ingest(a,'hk-page',page());h.service.ingest(b,'hk-page',page());
+  h.write(a,()=>h.store.putSuggestion(a,{id:'oura-suggestion',planId:'plan',baseRevision:1,appliedRevision:null,state:'pending',
+    beforeItems:[],afterItems:[],reviewDigest:'d',expiresAt:'2026-12-01T00:00:00Z',reason:'synthetic',limits:[],policyVersion:'synthetic',
+    evidenceRefs:[{connectionId:'oura',generation:1,id:'day',digest:h.store.measure(a,'oura',1,'day').digest}]}));
+  const before=accountRows(h,'a'),foreign=accountRows(h,'b');
+  assert.deepEqual(healthKitDisconnect(h,'drop','oura'),{status:403,body:{code:'health_route_mismatch'}});
+  assert.deepEqual(accountRows(h,'a'),before);
+  assert.deepEqual(accountRows(h,'b'),foreign);
+  assert.deepEqual(fences,[]);
+
+  assert.deepEqual(healthKitDisconnect(h,'drop','hk'),{status:200,body:{disconnected:true,purged:true,remoteRevocation:'not_applicable'}});
+  assert.equal(h.store.connection(a,'hk').generation,2);
+  assert.equal(h.store.connection(a,'hk').connected,false);
+  assert.equal(h.store.measure(a,'hk',1,'day'),null);
+  assert.equal(h.store.measure(a,'oura',1,'day').value,123);
+  assert.equal(h.store.suggestion(a,'oura-suggestion').state,'pending');
+  const disconnected=accountRows(h,'a');
+  assert.deepEqual(healthKitDisconnect(h,'drop','hk'),{status:409,body:{code:'health_receipt_purged'}});
+  assert.deepEqual(healthKitDisconnect(h,'new-key','hk'),{status:409,body:{code:'health_connection_changed'}});
+  assert.deepEqual(accountRows(h,'a'),disconnected);
+  assert.deepEqual(accountRows(h,'b'),foreign);
+  assert.deepEqual(fences,[{ctx:a,scope:{connectionId:'hk',generation:2}}]);
+});
+test('direct disconnect scopes its purge and its receipt cannot authorize a HealthKit replay',t=>{
+  const fences=[],h=fixture(t,{externalConnectionPurge:(ctx,scope)=>{fences.push({ctx,scope});return {status:'complete'};}});
   h.write(a,()=>{h.store.putConnection(a,{...connection,id:'oura',provider:'oura'});h.store.putConnection(a,{...connection,id:'oura-two',provider:'oura'});});
   const port=id=>h.providerIntent({ctx:a,provider:'oura',connectionId:id,generation:1,stream:'steps',cursor:null});
   for(const id of ['oura','oura-two']){
@@ -216,7 +250,11 @@ test('disconnecting one connection removes its intents and cursors only, and nev
   assert.equal(h.store.receipt(a,stable(['wearables-command','intent-oura'])).purged,true);
   assert.equal(h.store.receipt(a,stable(['wearables-command','intent-oura-two'])).purged,undefined);
   assert.equal(h.store.measure(a,'hk',1,'day').value,123);assert.equal(h.store.connection(a,'oura').connected,false);
+  const disconnected=accountRows(h,'a');
+  assert.deepEqual(healthKitDisconnect(h,'drop-oura','oura'),{status:403,body:{code:'health_route_mismatch'}});
+  assert.deepEqual(accountRows(h,'a'),disconnected);
   assert.deepEqual(accountRows(h,'b'),foreign);
+  assert.deepEqual(fences,[{ctx:a,scope:{connectionId:'oura',generation:2}}]);
 });
 test('a rejected or failed disconnect changes nothing and the same key can complete once purge is available',t=>{
   const h=fixture(t);h.service.ingest(a,'command',page());
@@ -290,18 +328,16 @@ test('export manifests name every unexported wearable relation with a stable rea
     h.write(a,()=>h.store.putSuggestion(a,suggestion));
     const sink=collect(),result=h.adapter.export(a,sink.snapshot),manifests=sink.output.filter(item=>item.value.kind==='manifest');
     assert.equal(manifests.length,1);const manifest=manifests[0].value;
-    assert.deepEqual(manifest.omissions,exportedOmissions);assert.deepEqual(Object.keys(manifest.omissionReasons),exportedOmissions);
-    for(const reason of Object.values(manifest.omissionReasons))assert.match(reason,/^[a-z][a-z_]*$/);
-    assert.equal(manifest.omissionReasons.connection_consent_metadata,'export_qualification_covers_measures_only');
-    assert.equal(manifest.omissionReasons.suggestion_records,'export_qualification_covers_measures_only');
-    assert.equal(manifest.omissionReasons.measure_tombstones,'deleted_records_not_exported');
+    assert.deepEqual(manifest.omissions,exportedOmissions);
+    assert.deepEqual(manifest.omissionReasons.map(({code})=>code),exportedOmissions);
+    for(const {reason} of manifest.omissionReasons)assert.match(reason,/^[a-z][a-z_]*$/);
     assert.deepEqual([...new Set(sink.output.map(item=>item.value.kind))].sort(),qualify?['manifest','measure']:['manifest']);
     assert.equal(result.status,qualify?'complete':'unavailable');
     if(qualify)assert.deepEqual(exportedIds(sink.output),['day']);
     const text=JSON.stringify(sink.output);
     for(const hidden of ['consent-marker','consentVersion','retentionConsent','lastImportAt','"types"','"connected"','suggestion-marker','plan-marker','review-marker','reason-marker',
       'policy-marker','digest-marker','evidenceRefs','private-cursor','"gone"'])assert.equal(text.includes(hidden),false,hidden);
-    const keys=[];const walk=value=>{if(value&&typeof value==='object')for(const [key,child] of Object.entries(value)){if(!Array.isArray(value))keys.push(key);if(key!=='omissionReasons')walk(child);}};
+    const keys=[];const walk=value=>{if(value&&typeof value==='object')for(const [key,child] of Object.entries(value)){if(!Array.isArray(value))keys.push(key);walk(child);}};
     walk(sink.output.map(item=>item.value));
     assert.deepEqual(keys.filter(key=>/secret|cipher|access_?token|refresh|password|credential|auth|pkce|callback/i.test(key)),[]);
     for(const item of sink.output.filter(item=>item.value.kind==='measure')){

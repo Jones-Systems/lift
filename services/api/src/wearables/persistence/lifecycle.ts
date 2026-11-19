@@ -34,19 +34,19 @@ export function createWearableLifecycleAdapter(deps: WearablePersistenceDependen
       if(!snapshot||typeof snapshot.append!=='function'||!Number.isFinite(snapshot.snapshotAtMs))fail('health_export_snapshot_required',503);
       const append=(value:unknown)=>{lifecycle.assertActive(ctx);snapshot.append('wearables',value);lifecycle.assertActive(ctx);};
       // Every wearable account-data class this export does not emit, so a manifest never implies completeness.
-      // Codes and reasons are stable. qualifyExport covers measures only; connection/consent metadata and
-      // suggestions stay omitted until a trusted qualification exists for them. Auth state has its own adapter.
-      const omissionReasons={
-        credentials:'credentials_never_exported_auth_state_owned_separately',
-        cursors:'provider_sync_position_internal',
-        raw_provider_intents:'raw_provider_pages_restricted',
-        receipt_results:'idempotency_receipts_internal',
-        suggestion_plan_snapshots:'plan_snapshots_restricted',
-        connection_consent_metadata:'export_qualification_covers_measures_only',
-        suggestion_records:'export_qualification_covers_measures_only',
-        measure_tombstones:'deleted_records_not_exported',
-      };
-      const omissions=Object.keys(omissionReasons);
+      // Keep stable codes in values so the account export can scrub sensitive keys throughout the document.
+      // qualifyExport covers measures only. Connection/consent metadata and suggestions require their own qualification.
+      const omissionReasons=[
+        {code:'credentials',reason:'credentials_never_exported_auth_state_owned_separately'},
+        {code:'cursors',reason:'provider_sync_position_internal'},
+        {code:'raw_provider_intents',reason:'raw_provider_pages_restricted'},
+        {code:'receipt_results',reason:'idempotency_receipts_internal'},
+        {code:'suggestion_plan_snapshots',reason:'plan_snapshots_restricted'},
+        {code:'connection_consent_metadata',reason:'export_qualification_covers_measures_only'},
+        {code:'suggestion_records',reason:'export_qualification_covers_measures_only'},
+        {code:'measure_tombstones',reason:'deleted_records_not_exported'},
+      ];
+      const omissions=omissionReasons.map(({code})=>code);
       if(!deps.qualifyExport){
         append({kind:'manifest',status:'unavailable',reason:'trusted_export_qualification_required',omissions,omissionReasons});
         return {category:'wearables',status:'unavailable',reason:'trusted_export_qualification_required',count:0};

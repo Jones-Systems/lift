@@ -14,7 +14,7 @@ export function createHealthRouter(service:WearablesService) {
       else if(method==='GET'&&path==='/v1/health/connections') result={items:service.connections(ctx)};
       else if(method==='POST'&&path==='/v1/health/connections/healthkit') result=service.connectHealthKit(ctx,key(),body);
       else if(method==='POST'&&path==='/v1/health/imports') result=service.ingest(ctx,key(),body,{provider:'healthkit'});
-      else if(method==='POST'&&path==='/v1/health/connections/healthkit/disconnect') result=service.disconnect(ctx,key(),body);
+      else if(method==='POST'&&path==='/v1/health/connections/healthkit/disconnect') result=service.disconnect(ctx,key(),body,'healthkit');
       else if(method==='GET'&&path==='/v1/health/suggestions') result={items:service.suggestions(ctx)};
       else {
         const match=/^\/v1\/health\/suggestions\/([^/]+)\/(accept|reject|undo)$/.exec(path);

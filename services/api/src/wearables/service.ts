@@ -1,4 +1,4 @@
-import type { AccountContext, Connection, ImportChannel, ImportResult, Measure, ReceiptScope, RootPorts, StoredMeasure } from './types.js';
+import type { AccountContext, Connection, ImportChannel, ImportResult, Measure, Provider, ReceiptScope, RootPorts, StoredMeasure } from './types.js';
 import { day, digest, fail, integer, metric, object, page, stable, text } from './validation.js';
 import { suggestionCommand } from './suggestions.js';
 
@@ -112,9 +112,11 @@ export function createWearablesService(root: RootPorts) {
       }),aiEligible:false as const};
     },
     coachInputs(ctx:AccountContext):never[] { active(ctx); return []; },
-    disconnect(ctx:AccountContext,key:string,input:unknown) {
+    disconnect(ctx:AccountContext,key:string,input:unknown,expectedProvider?:Provider) {
       active(ctx);const v=object(input,['connectionId','generation']);const id=text(v.connectionId),gen=integer(v.generation);
       return root.withActiveWrite(ctx,()=>{active(ctx);
+        // Check provider on replay too. A successful disconnect already advanced the generation.
+        if(expectedProvider!==undefined && connection(ctx,id).provider!==expectedProvider) fail('health_route_mismatch',403);
         return receipt(ctx,key,{op:'disconnect',id,gen},()=>{
           const c=connection(ctx,id,gen);
           root.store.putConnection(ctx,{...c,generation:c.generation+1,connected:false,retentionConsent:false});
