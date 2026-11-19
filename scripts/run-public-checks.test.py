@@ -97,8 +97,12 @@ class PublicChecksTests(unittest.TestCase):
                             "tests/purchases/status.test.ts",
                             "tests/purchases/status-projection.test.ts",
                             "tests/purchases/status-source.test.ts")
-        self.assertEqual(len(checks.API_TESTS["lifecycle-runtime"]), 36)
-        self.assertEqual(len(set(checks.API_TESTS["lifecycle-runtime"])), 36)
+        # Recursive API discovery includes these without a baseline registration; they are selected exactly once here.
+        qualified_sources = ("tests/purchases/qualified-purchase-preflight.test.ts",
+                             "tests/purchases/qualified-purchase-read.test.ts",
+                             "tests/purchases/qualified-purchase-storage.test.ts")
+        self.assertEqual(len(checks.API_TESTS["lifecycle-runtime"]), 39)
+        self.assertEqual(len(set(checks.API_TESTS["lifecycle-runtime"])), 39)
         discovery = json.loads((ROOT / "services/api/scripts/integration/test-modules.json").read_text())
         for source in evidence_sources:
             with self.subTest(source=source):
@@ -107,8 +111,15 @@ class PublicChecksTests(unittest.TestCase):
                 self.assertEqual(command["test_sources"].count("services/api/" + source), 1)
                 owners = [group for group, files in discovery["groups"].items() for path in files if path == source]
                 self.assertEqual(owners, ["purchases"] if source.startswith("tests/purchases/") else ["core"])
+        for source in qualified_sources:
+            with self.subTest(source=source):
+                emitted = "dist/" + source.removesuffix(".ts") + ".js"
+                self.assertEqual(command["argv"].count(emitted), 1)
+                self.assertEqual(command["test_sources"].count("services/api/" + source), 1)
+                self.assertFalse(any(source in files for files in discovery["groups"].values()))
         helpers = ("tests/lifecycle-reauthentication-fixture.ts",
-                   "tests/purchases/status-source-fixture.ts")
+                   "tests/purchases/status-source-fixture.ts",
+                   "tests/purchases/qualified-purchase-fixture.ts")
         for helper in helpers:
             self.assertEqual(command["test_sources"].count("services/api/" + helper), 1)
             self.assertNotIn("dist/" + helper.removesuffix(".ts") + ".js", command["argv"])
@@ -144,11 +155,11 @@ class PublicChecksTests(unittest.TestCase):
             self.assertEqual(checks.execute(self.root, output, contract), 0)
         receipt = json.loads((output / "receipt.json").read_text())
         self.assertEqual(receipt["input_sha256"][codec], checks.digest(ROOT / codec))
-        for source in evidence_sources:
+        for source in (*evidence_sources, *qualified_sources):
             emitted = "dist/" + source.removesuffix(".ts") + ".js"
             self.assertEqual(sum(c["argv"].count(emitted) for c in default["commands"]), 1)
         self.assertEqual(receipt["input_sha256"][fixture], checks.digest(ROOT / fixture))
-        for source in (*evidence_sources, *helpers):
+        for source in (*evidence_sources, *qualified_sources, *helpers):
             with self.subTest(missing=source):
                 path = self.root / "services/api" / source
                 path.unlink()

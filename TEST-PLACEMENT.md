@@ -16,8 +16,8 @@ prove that a new test was selected.
 
 | Placement/group | Files | Execution and reason |
 | --- | ---: | --- |
-| Existing hosted | 76 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
-| `api-breadth` | 89 | Compile API TypeScript with `tsc`; run emitted TS tests and original MJS/CJS tests using the existing source hook. Never run the private projection build. |
+| Existing hosted | 79 | Current public runner selection, native identity and CI placement contracts; retain their existing triggers. |
+| `api-breadth` | 90 | Compile API TypeScript with `tsc`; run emitted TS tests and original MJS/CJS tests using the existing source hook. Never run the private projection build. |
 | `app-breadth` | 80 | Compile the transport compatibility output, then run explicit CJS files serially. Phone sign-in embeds the standalone transport suite exactly once. |
 | `app-renderer` | 1 | Existing Jest renderer command selects `runtime-auth.test.tsx`; onboarding remains in the existing hosted group. |
 | `website` | 29 | Explicit recursive Node test paths include nested voice modules. Require the real portable session-controller source before execution. |
@@ -25,12 +25,13 @@ prove that a new test was selected.
 | `breadth-contract` | 1 | This runner's selection, result and lifecycle contract runs inside the breadth job. |
 | Blocked | 32 | Exact files, reasons, missing inputs and intended private/manual qualification routes remain in the manifest. |
 
-Current discovery has 312 files. The public runner's `lifecycle-runtime` group
-selects exactly 36 API modules, including purchases, reconciliation, status
-reader, codec and both Source27 suites exactly once. The three existing purchase
-suites move from `api-breadth` to existing hosted placement; the two new suites
-join hosted placement. API discovery has 105 ordinary modules and 175 total
-files. The Source27 fixture helper is required/digested/compiled source only,
+Current discovery has 316 files. The public runner's `lifecycle-runtime` group
+selects exactly 39 API modules, including purchases, reconciliation, status
+reader, codec, both Source27 suites and all three qualified purchase suites
+exactly once. The three existing purchase suites move from `api-breadth` to
+existing hosted placement; the qualified suites join hosted placement. API
+discovery has 105 ordinary modules and 179 total files; the three qualified
+purchase suites are found by recursive discovery without a baseline entry. The Source27 fixture helper is required/digested/compiled source only,
 excluded from discovery, invocation and module counts. The codec's 18 synthetic
 cases establish bounded syntax, content identities and conservative ordering.
 Projection57 and source52 exercise a fresh repaired unmounted source-only
@@ -42,6 +43,19 @@ or transparent migration is qualified. Default16/v1/default-off remain unchanged
 These synthetic checks do not qualify live Apple proof/transport, activation,
 authenticated/native outcomes, operational restore, retention or adoption;
 full backend/PLAN17 remains partial.
+The three qualified purchase suites (`qualified-purchase-preflight`, `qualified-purchase-storage` and
+`qualified-purchase-read`) join existing hosted placement exactly once and run
+from fresh emitted JavaScript in `lifecycle-runtime`. Their
+shared `qualified-purchase-fixture.ts` helper is a required, digested and
+compiled source input, excluded from discovery, invocation and module counts.
+They exercise an additive, unselected successor purchase storage schema beside
+the Source27 history: a strict exactly-empty predecessor preflight with fresh,
+empty-upgrade and reopen envelopes, namespace-bound synchronous readers and a
+projection conflict gate over the existing notification inbox. All inputs are
+synthetic. They register no migration and select no runtime, server, command
+line or factory path; they do not qualify live Apple proof or transport,
+entitlement grants, producers, charges, notification application or consumer
+cutover.
 The two Source26 suites join core API discovery
 and existing hosted placement exactly once. Their shared fixture helper is a
 required compiled source input, excluded from test discovery, invocation and

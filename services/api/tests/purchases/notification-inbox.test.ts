@@ -521,7 +521,29 @@ test('schema import is unregistered, fresh-only and exact; inbox operations crea
   assert.ok(tables.every(name=>name==='sqlite_sequence'||name.startsWith('notification_inbox_')));
   const root=resolve(dirname(fileURLToPath(import.meta.url)),'../../../src');
   const imports:string[]=[];
-  const walk=(directory:string)=>{for(const entry of readdirSync(directory,{withFileTypes:true})){const path=join(directory,entry.name);if(entry.isDirectory())walk(path);else if(entry.name.endsWith('.ts')&&!entry.name.startsWith('notification-inbox')){if(readFileSync(path,'utf8').includes('notification-inbox'))imports.push(path);}}};
+  const inboxModules = new Set(['notification-inbox.ts', 'notification-inbox-schema.ts', 'notification-inbox-capabilities.ts', 'notification-inbox.types.ts']
+    .map(name => join(root, 'purchases', name)));
+  // The successor can use only these exact declarations. Scan the rest of each composing module as well.
+  const schemaImport = "import { notificationInboxSql, assertNotificationInboxSchema, validateInboxPolicy } from './notification-inbox-schema.js';";
+  const policyImport = "import type { InboxPolicy } from './notification-inbox.types.js';";
+  const composing = new Map([
+    [join(root, 'purchases', 'qualified-purchase.types.ts'), ["import type { InboxNamespace, InboxPolicy } from './notification-inbox.types.js';"]],
+    [join(root, 'purchases', 'qualified-purchase-schema.ts'), [schemaImport, policyImport]],
+    [join(root, 'purchases', 'qualified-purchase-preflight.ts'), [schemaImport]],
+    [join(root, 'purchases', 'qualified-purchase-context.ts'), ["import { namespaceKey } from './notification-inbox-capabilities.js';"]],
+    [join(root, 'purchases', 'qualified-purchase-store.ts'), ["import { notificationPayloadDigest } from './notification-inbox.js';"]],
+  ]);
+  const walk = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.name.endsWith('.ts') && !inboxModules.has(path)) {
+        let source = `\n${readFileSync(path, 'utf8')}\n`;
+        for (const declaration of composing.get(path) ?? []) source = source.replace(`\n${declaration}\n`, '\n');
+        if (source.includes('notification-inbox')) imports.push(path);
+      }
+    }
+  };
   walk(root);assert.deepEqual(imports,[]);
   f.db.exec('CREATE INDEX notification_inbox_unexpected ON notification_inbox_state(version)');assert.throws(()=>assertNotificationInboxSchema(f.db));
 });

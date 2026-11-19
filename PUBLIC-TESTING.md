@@ -27,7 +27,7 @@ contract also needs Node 24, without installed npm dependencies.
 | Group ID | Selected checks | Public claim |
 | --- | --- | --- |
 | `runner-contract` | `python3 -B scripts/run-public-checks.test.py` | Group selection, baseline enforcement, actual API/app source-import resolution, subprocess status, evidence and scratch cleanup, SIGINT/SIGTERM cancellation |
-| `lifecycle-runtime` | API lifecycle, runtime modules, canonical account composition, request-factory, provider-revocation, action-reauthentication purchase/reconciliation/status, codec and Source27 tests (36 modules) | Synthetic generation-bound scoped evidence, purge authority, rollback/residuals, relocated restore admission, closed runtime boundaries and bounded canonical codec/ordering; source-only dedicated email/phone action proof, intent-free Source26 upgrades and quiescent synthetic restores; fresh unmounted Source27 cohort with verified synthetic status-to-ledger consumption, conservative projection, atomic History/notification/delivery invalidation and original-producer fencing; injected synthetic Apple material only; no live provider, real purge or restore qualification |
+| `lifecycle-runtime` | API lifecycle, runtime modules, canonical account composition, request-factory, provider-revocation, action-reauthentication purchase/reconciliation/status, codec, Source27 and qualified purchase storage tests (39 modules) | Synthetic generation-bound scoped evidence, purge authority, rollback/residuals, relocated restore admission, closed runtime boundaries and bounded canonical codec/ordering; source-only dedicated email/phone action proof, intent-free Source26 upgrades and quiescent synthetic restores; fresh unmounted Source27 cohort with verified synthetic status-to-ledger consumption, conservative projection, atomic History/notification/delivery invalidation and original-producer fencing; injected synthetic Apple material only; unselected additive qualified purchase storage with a strict empty-predecessor preflight, namespace-bound synchronous readers and a projection conflict gate over the existing notification inbox, synthetic only; no live provider, real purge or restore qualification |
 | `lifecycle-wire-v2` | New API wire-v2 suite; APP contracts-v2 interop and existing v1 lifecycle suites | Unmounted v2 syntax, bounds, subject/evidence consistency, actual backend encoder to independent client parser and v1 compatibility; no producer, transport or evidence-authority qualification |
 | `plan-revision` | API `tests/planning/plan-revision-port.test.ts` and `tests/backend.test.ts` after compilation | Legacy unmounted PLAN16 transactional revision, receipt/replay/undo and test-only backend disposal role/identity assertions; no arbitrary asynchronous-hook safety or mounted product acceptance |
 | `api-compile` | `node node_modules/typescript/bin/tsc -p tsconfig.json` in `services/api` | TypeScript compilation and fresh emitted API/test modules |
@@ -78,8 +78,12 @@ in `lifecycle-runtime`. The codec's 18 synthetic cases cover bounded canonical
 parsing, identities and conservative ordering; the projection and source suites
 cover 57 and 52 synthetic cases respectively. `status-source-fixture.ts` is a
 required, digested and compiled input, excluded from discovery, test invocation
-and module counts. API discovery registers 105 ordinary modules and discovers
-175 total files, including both new suites exactly once in purchases.
+and module counts. The three qualified purchase suites also run exactly once from
+fresh compiled JavaScript in `lifecycle-runtime`; `qualified-purchase-fixture.ts`
+is likewise a required, digested and compiled input, excluded from discovery,
+test invocation and module counts. API discovery registers 105 ordinary modules
+and discovers 179 total files; the qualified purchase suites are found by
+recursive discovery without a baseline entry.
 
 The default `plan-revision` group requires both named source inputs and runs their
 fresh emitted JavaScript serially after the full strict API compile. Its planning
