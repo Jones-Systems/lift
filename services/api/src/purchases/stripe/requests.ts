@@ -23,10 +23,9 @@ export function buildPortalRequest(config: StripeConfiguration, accountId: strin
   return Object.freeze({ method: 'POST', path: '/v1/billing_portal/sessions', apiVersion: stripeApiVersion, apiKeyEnv: c.apiKeyEnv,
     idempotencyKey: key(accountId, 'portal', requestKey), form: Object.freeze({ customer: customerId, return_url: c.returnUrl, configuration: c.portalConfiguration }) });
 }
-/** Immediate cancellation; the stable key makes an explicit retry after an unknown send safe. Building never sends. */
+/** Immediate cancellation. The sender verifies provider state before dispatch. */
 export function buildCancellationRequest(config: StripeConfiguration, accountId: string, subscriptionId: string): StripeRequest {
   const c = stripeConfiguration(config)!;
-  if (!/^sub_[A-Za-z0-9]{1,200}$/.test(subscriptionId)) throw new Error('stripe_subscription_invalid');
-  return Object.freeze({ method: 'DELETE', path: '/v1/subscriptions/' + subscriptionId, apiVersion: stripeApiVersion, apiKeyEnv: c.apiKeyEnv,
-    idempotencyKey: key(accountId, 'cancel', subscriptionId) });
+  if (!accountUuid.test(accountId) || !/^sub_[A-Za-z0-9]{1,200}$/.test(subscriptionId)) throw new Error('stripe_subscription_invalid');
+  return Object.freeze({ method: 'DELETE', path: '/v1/subscriptions/' + subscriptionId, apiVersion: stripeApiVersion, apiKeyEnv: c.apiKeyEnv });
 }

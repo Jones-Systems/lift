@@ -40,7 +40,8 @@ export function subscriptionState(raw: Json, config: StripeConfiguration): Subsc
 export type SessionFacts = Readonly<{ sessionId: string; customerId: string; subscriptionId: string; accountId: string }>;
 /** Binding evidence: a completed, server-created (not Payment Link) subscription Checkout Session. */
 export function sessionFacts(raw: Json, config: StripeConfiguration): SessionFacts {
-  const sessionId = ref(raw.id, 'cs');
+  if (typeof raw.id !== 'string' || !/^cs_(?:(?:test|live)_)?[A-Za-z0-9]{1,200}$/.test(raw.id)) return invalid();
+  const sessionId = raw.id;
   if (raw.object !== 'checkout.session' || raw.livemode !== config.livemode) return invalid();
   if (raw.mode !== 'subscription' || raw.status !== 'complete') return reject('stripe_checkout_unsupported');
   if (raw.payment_link !== null) return reject('stripe_checkout_not_server_created');
@@ -71,13 +72,17 @@ export function chargeFacts(raw: Json, config: StripeConfiguration): ChargeFacts
     fullyRefunded: raw.refunded === true && amount > 0 && amountRefunded === amount });
 }
 
-export type DisputeStatus = 'open' | 'won' | 'lost' | 'unsupported';
+export type DisputeStatus = 'open' | 'won' | 'lost';
 export type DisputeFacts = Readonly<{ disputeId: string; chargeId: string; status: DisputeStatus }>;
 const openDispute = new Set(['warning_needs_response', 'warning_under_review', 'needs_response', 'under_review']);
 export function disputeFacts(raw: Json, config: StripeConfiguration): DisputeFacts {
   if (raw.object !== 'dispute' || raw.livemode !== config.livemode || typeof raw.status !== 'string') return invalid();
   usd(raw.currency); minor(raw.amount);
-  const status: DisputeStatus = openDispute.has(raw.status) ? 'open' : raw.status === 'won' || raw.status === 'lost' ? raw.status : 'unsupported';
+  let status: DisputeStatus;
+  if (openDispute.has(raw.status)) status = 'open';
+  else if (raw.status === 'won' || raw.status === 'warning_closed') status = 'won';
+  else if (raw.status === 'lost') status = 'lost';
+  else return invalid();
   return Object.freeze({ disputeId: ref(raw.id, 'dp|du'), chargeId: ref(raw.charge, chargePrefix), status });
 }
 

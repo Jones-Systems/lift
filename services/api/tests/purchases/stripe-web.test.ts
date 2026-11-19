@@ -42,13 +42,13 @@ function fixture(t: TestContext, options: { refs?: string[]; secrets?: (secret: 
   const subscription=(id='sub_one',customer='cus_one',changes:J={}):J=>({id,object:'subscription',customer,livemode:false,status:'active',
     created:at-86400,current_period_start:at-60,current_period_end:at+3600,cancel_at_period_end:false,latest_invoice:'in_one',metadata:{form_account_id:A},
     items:{object:'list',has_more:false,data:[{quantity:1,price:price()}]},...changes});
-  const session=(changes:J={}):J=>({id:'cs_one',object:'checkout.session',livemode:false,mode:'subscription',status:'complete',payment_link:null,
+  const session=(changes:J={}):J=>({id:'cs_test_one',object:'checkout.session',livemode:false,mode:'subscription',status:'complete',payment_link:null,
     subscription:'sub_one',customer:'cus_one',client_reference_id:A,...changes});
   const dispute=(changes:J={}):J=>({id:'dp_one',object:'dispute',livemode:false,charge:'ch_one',status:'needs_response',amount:2000,currency:'usd',...changes});
   const stripe={subscriptions:new Map<string,J>([['sub_one',subscription()]]),
     invoices:new Map<string,J>([['in_one',{id:'in_one',object:'invoice',livemode:false,currency:'usd',customer:'cus_one',subscription:'sub_one',charge:'ch_one'}]]),
     charges:new Map<string,J>([['ch_one',{id:'ch_one',object:'charge',livemode:false,currency:'usd',amount:2000,amount_refunded:0,refunded:false,customer:'cus_one',invoice:'in_one'}]]),
-    sessions:new Map<string,J[]>([['sub_one',[session()]]]),disputes:new Map<string,J[]>(),hasMore:false};
+    sessions:new Map<string,J[]>([['sub_one',[session()]]]),disputes:new Map<string,J[]>(),hasMore:false,invoicePageSize:100};
   const calls:StripeRequest[]=[], guardCalls:unknown[]=[], published:unknown[]=[];
   let failPath:string|null=null, lost=false, hook:((request:StripeRequest)=>Promise<void>)|null=null, channel:OtherChannel|'throw'|'invalid'='none';
   const client={async request(request:StripeRequest) {
@@ -57,7 +57,14 @@ function fixture(t: TestContext, options: { refs?: string[]; secrets?: (secret: 
     const url=new URL('https://api.stripe.test'+request.path), [, , kind, id]=url.pathname.split('/'), missing=():never=>{throw new Error('synthetic not found');};
     const list=(data:J[]|undefined)=>({object:'list',has_more:stripe.hasMore,data:clone(data??[])});
     if(kind==='subscriptions') { const s=stripe.subscriptions.get(id!)??missing(); return request.method==='DELETE'?{...clone(s),status:'canceled'}:clone(s); }
-    if(kind==='invoices') return clone(stripe.invoices.get(id!)??missing());
+    if(kind==='invoices') {
+      if(id) return clone(stripe.invoices.get(id)??missing());
+      const invoices=[...stripe.invoices.values()].filter(invoice=>invoice.subscription===url.searchParams.get('subscription'));
+      const cursor=url.searchParams.get('starting_after');
+      const start=cursor ? invoices.findIndex(invoice=>invoice.id===cursor)+1 : 0;
+      const end=start+stripe.invoicePageSize;
+      return {object:'list',has_more:end<invoices.length,data:clone(invoices.slice(start,end))};
+    }
     if(kind==='charges') return clone(stripe.charges.get(id!)??missing());
     if(kind==='checkout') return list(stripe.sessions.get(url.searchParams.get('subscription')!));
     if(kind==='disputes') return list(stripe.disputes.get(url.searchParams.get('charge')!));
@@ -100,7 +107,7 @@ test('catalog and pure builders bind account, price, mode, references and stable
   }
   assert.equal(buildPortalRequest(config,A,'cus_one','portal').form?.configuration,'bpc_test');
   const cancel=buildCancellationRequest(config,A,'sub_one');assert.equal(cancel.method,'DELETE');assert.equal(cancel.path,'/v1/subscriptions/sub_one');
-  assert.equal(cancel.idempotencyKey,buildCancellationRequest(config,A,'sub_one').idempotencyKey);assert.equal(cancel.form,undefined);
+  assert.equal(cancel.idempotencyKey,undefined);assert.equal(cancel.form,undefined);
 });
 for(const change of [{enabled:false},{prices:{...config.prices,monthly:'price_week'}},{apiKeyEnv:'sk_not_an_env'},{stripeAccount:'acct-bad'},
   {webhookSecretEnvs:[]},{successUrl:'http://example.test'},{secret:'never-allowed'}]) test('configuration rejects '+JSON.stringify(change),()=>{
@@ -183,6 +190,42 @@ test('dispute lost revokes permanently and records cancellation',async t=>{
   assert.equal(f.observe().status,'observed');assert.equal(f.observe().entitlement?.active,false);
   assert.equal(f.service().cancellations()[0]?.reason,'revoked');assert.equal(f.calls.filter(c=>c.method==='DELETE').length,0);
 });
+test('dispute win refreshes the subscription before restoring and catches an active Apple subscription',async t=>{
+  for(const status of ['active','canceled'] as const) {
+    const f=fixture(t);await f.bind();await f.send(f.event('charge.dispute.created'));
+    f.channel('apple');f.sub().status=status;
+    assert.equal((await f.send(f.event('charge.dispute.closed',2))).code,
+      status==='active'?'stripe_dual_channel_conflict_held':'stripe_event_applied');
+    assert.equal(f.observe().entitlement?.active,status==='active');
+    assert.equal(f.service().heldConflicts(actor).length,status==='active'?1:0);
+    assert.equal(f.service().cancellations().length,0);
+  }
+});
+test('a closed warning releases suspension while an unreadable dispute cannot reconcile successfully',async t=>{
+  const f=fixture(t);await f.bind();await f.send(f.event('charge.dispute.created'));
+  f.stripe.disputes.set('ch_one',[f.dispute({status:'unrecognized'})]);
+  assert.equal((await f.service().reconcile(actor,'sub_one')).status,'unknown');
+  assert.equal(f.observe().status,'pending');
+  assert.equal((await f.send(f.event('charge.dispute.closed',2,{payload:f.dispute({status:'warning_closed'})}))).code,'stripe_restored');
+  assert.equal(f.observe().entitlement?.active,true);
+});
+test('a dispute cannot change its charge, even within the same subscription',async t=>{
+  const f=fixture(t);await f.bind();await f.send(f.event('charge.dispute.created'));
+  f.stripe.charges.set('ch_other',{...f.stripe.charges.get('ch_one'),id:'ch_other'});
+  const contradictory=f.dispute({charge:'ch_other',status:'lost'});
+  assert.equal((await f.send(f.event('charge.dispute.closed',2,{payload:contradictory}))).code,'stripe_linkage_conflict');
+  assert.equal(f.service().cancellations().length,0);
+});
+test('a held dispute blocks its queued cancellation unless account suppression independently requires it',async t=>{
+  const f=fixture(t);await f.bind();
+  await f.send(f.event('charge.dispute.closed',1,{payload:f.dispute({status:'lost'})}));
+  assert.equal((await f.send(f.event('charge.dispute.closed',2))).code,'stripe_dispute_variant_held');
+  assert.deepEqual(await f.service().sendCancellation('sub_one'),{status:'pending',code:'stripe_cancellation_conflict_held'});
+  assert.equal(f.calls.filter(c=>c.method==='DELETE').length,0);
+  f.disable();assert.equal(f.service().lifecycle().suppress(A,1).status,'complete');
+  assert.equal((await f.service().sendCancellation('sub_one')).code,'stripe_cancellation_confirmed');
+  assert.equal(f.calls.filter(c=>c.method==='DELETE').length,1);
+});
 test('conflicting dispute outcomes stay held and replaying the earlier variant cannot unhold them',async t=>{
   const f=fixture(t);await f.bind();const won=f.event('charge.dispute.closed',1,{payload:f.dispute({status:'won'})});
   assert.equal((await f.send(won)).status,'processed');
@@ -248,15 +291,34 @@ test('missing Checkout event is recovered by account-bound reconcile from the sa
   const observed=f.observe();assert.equal(observed.entitlement?.active,true);assert.equal(observed.evidence.eventHighWater,null);
   assert.equal(f.service().grants(actor)[0]?.grantedAt,new Date((f.at-86400)*1000).toISOString());
 });
-test('reconcile after a missed refund reads the latest invoice charge and revokes',async t=>{
+test('reconcile after a missed refund reads the invoice charge and revokes',async t=>{
   const f=fixture(t);await f.bind();Object.assign(f.stripe.charges.get('ch_one')!,{refunded:true,amount_refunded:2000});
   assert.deepEqual(await f.service().reconcile(actor,'sub_one'),{status:'processed',code:'stripe_revoked'});
   assert.equal(f.observe().entitlement?.active,false);assert.equal(f.service().cancellations()[0]?.state,'pending_external');
-  assert.ok(['/v1/invoices/in_one','/v1/charges/ch_one','/v1/disputes?charge=ch_one'].every(p=>f.calls.some(c=>c.path===p)));
+  assert.ok(['/v1/invoices?subscription=sub_one&limit=100','/v1/charges/ch_one','/v1/disputes?charge=ch_one&limit=100'].every(p=>f.calls.some(c=>c.path===p)));
+});
+test('reconcile finds an older invoice refund after renewal even when Apple status is unavailable',async t=>{
+  const f=fixture(t);await f.bind();
+  f.stripe.invoicePageSize=1;
+  f.stripe.invoices.set('in_renewal',{...f.stripe.invoices.get('in_one'),id:'in_renewal',charge:'ch_renewal'});
+  f.stripe.charges.set('ch_renewal',{...f.stripe.charges.get('ch_one'),id:'ch_renewal',invoice:'in_renewal'});
+  f.sub().latest_invoice='in_renewal';
+  Object.assign(f.stripe.charges.get('ch_one')!,{refunded:true,amount_refunded:2000});
+  f.channel('unknown');
+  assert.deepEqual(await f.service().reconcile(actor,'sub_one'),{status:'processed',code:'stripe_revoked'});
+  assert.ok(f.calls.some(c=>c.path.includes('starting_after=in_one')));
+  assert.equal(f.observe().entitlement?.active,false);
+  assert.equal(f.service().cancellations()[0]?.state,'pending_external');
+});
+test('reconcile does not act on a fully refunded charge whose invoice backlink is wrong',async t=>{
+  const f=fixture(t);await f.bind();
+  Object.assign(f.stripe.charges.get('ch_one')!,{invoice:'in_other',refunded:true,amount_refunded:2000});
+  assert.equal((await f.service().reconcile(actor,'sub_one')).code,'stripe_linkage_conflict');
+  assert.equal(f.service().cancellations().length,0);
 });
 test('reconcile reads disputes and is unknown, never processed, when a fact cannot be read',async t=>{
   const f=fixture(t);await f.bind();
-  for(const path of ['/v1/invoices/','/v1/charges/','/v1/disputes']) {
+  for(const path of ['/v1/invoices','/v1/charges/','/v1/disputes']) {
     f.fail(path);assert.deepEqual(await f.service().reconcile(actor,'sub_one'),{status:'unknown',code:'stripe_reconciliation_unknown'});
   }
   f.fail(null);f.stripe.hasMore=true;assert.equal((await f.service().reconcile(actor,'sub_one')).status,'unknown');f.stripe.hasMore=false;
@@ -349,19 +411,43 @@ test('a Stripe subscription activated while Apple is active is held as dual_chan
   assert.equal(f.count('stripe_web_cancellations'),0);
   assert.deepEqual(f.service().heldConflicts(actor).map(c=>[c.kind,c.subscriptionRef,c.state]),[['dual_channel_conflict','sub_one','held']]);
   assert.equal(f.observe().status,'observed');assert.equal(f.observe().entitlement?.active,true);
-  f.channel('unknown');assert.deepEqual(await f.send(f.event('invoice.paid',2)),{status:'unknown',code:'stripe_other_channel_unknown'});
-  assert.equal(f.db.prepare("SELECT 1 FROM stripe_web_events WHERE event_id='evt_2'").get(),undefined);
+  f.channel('unknown');assert.deepEqual(await f.send(f.event('invoice.paid',2)),{status:'processed',code:'stripe_event_applied'});
+  assert.ok(f.db.prepare("SELECT 1 FROM stripe_web_events WHERE event_id='evt_2'").get());
 });
-test('cancellation send records unknown before confirmation and retries with the same idempotency key',async t=>{
-  const f=fixture(t);await f.bind();await f.send(f.event('charge.refunded'));f.fail('/v1/subscriptions/');
+test('checkout refuses a still-billing Stripe subscription whose access was revoked',async t=>{
+  const f=fixture(t);await f.bind();await f.send(f.event('charge.refunded'));
+  f.advance(3600);
+  assert.deepEqual(f.service().checkout(actor,'monthly','new'),{status:'refused',code:'already_subscribed_stripe',hint:'manage_in_billing_portal'});
+  assert.equal(f.service().cancellations()[0]?.state,'pending_external');
+});
+test('cancellation send records unknown before confirmation and retries after provider readback',async t=>{
+  const f=fixture(t);await f.bind();await f.send(f.event('charge.refunded'));
+  f.hook(async request=>{if(request.method==='DELETE') throw new Error('synthetic failure before effect');});
   assert.deepEqual(await f.service().sendCancellation('sub_one'),{status:'unknown',code:'stripe_cancellation_unknown'});
   assert.equal(f.service().cancellations()[0]?.state,'unknown');
-  f.fail(null);assert.deepEqual(await f.service().sendCancellation('sub_one'),{status:'processed',code:'stripe_cancellation_confirmed'});
-  const deletes=f.calls.filter(c=>c.method==='DELETE');assert.equal(deletes.length,2);assert.equal(deletes[0]!.idempotencyKey,deletes[1]!.idempotencyKey);
+  f.hook(null);assert.deepEqual(await f.service().sendCancellation('sub_one'),{status:'processed',code:'stripe_cancellation_confirmed'});
+  const dispatch=f.calls.filter(c=>c.path==='/v1/subscriptions/sub_one').slice(-4);
+  assert.deepEqual(dispatch.map(c=>c.method),['GET','DELETE','GET','DELETE']);
+  assert.deepEqual(dispatch[1],dispatch[3]);
   assert.deepEqual(f.service().cancellations(),[]);assert.equal((await f.service().sendCancellation('sub_one')).code,'stripe_cancellation_confirmed');
   assert.equal(f.calls.filter(c=>c.method==='DELETE').length,2);
   assert.throws(()=>f.db.prepare("UPDATE stripe_web_cancellations SET state='pending_external'").run(),/stripe_cancellation_progress/);
   assert.deepEqual(await f.service().sendCancellation('sub_none'),{status:'rejected',code:'stripe_cancellation_absent'});
+});
+test('cancellation with a lost effect response is settled on restart without a second DELETE',async t=>{
+  const f=fixture(t);await f.bind();await f.send(f.event('charge.refunded'));
+  f.hook(async request=>{
+    if(request.method!=='DELETE') return;
+    f.sub().status='canceled';
+    throw new Error('synthetic lost cancellation response');
+  });
+  assert.equal((await f.service().sendCancellation('sub_one')).status,'unknown');
+  assert.equal(f.service().cancellations()[0]?.state,'unknown');
+  f.hook(null);
+  assert.equal((await f.service().sendCancellation('sub_one')).code,'stripe_cancellation_confirmed');
+  assert.equal(f.calls.filter(c=>c.method==='DELETE').length,1);
+  assert.deepEqual(f.service().cancellations(),[]);
+  assert.equal(f.service().checkout(actor,'monthly','new').status,'built');
 });
 test('a refund whose customer does not match the subscription is held and never cancels',async t=>{
   const f=fixture(t);await f.bind();

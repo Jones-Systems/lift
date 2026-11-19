@@ -16,8 +16,9 @@ records `productId: null` and the grant ends. There is no trial grant.
 The registering server owns authenticated AccountContext creation, durable SQLite,
 schema application and backup, lifecycle registration and the injected ports:
 an HTTP client, a secret resolver for runtime environment references, and Platform's
-`activeOtherChannel` guard. It must not log secret values. Builders return form
-parameters and stable account-scoped idempotency keys; they perform no HTTP effects.
+`activeOtherChannel` guard. It must not log secret values. POST builders return
+form parameters and stable account-scoped idempotency keys. Request builders
+perform no HTTP effects.
 Portal customer IDs come from the authenticated owner's stored binding. Configure
 the referenced Billing Portal configuration for cancellation at period end; this
 source does not create or change that external configuration.
@@ -32,9 +33,11 @@ objects do not carry it, so the server must verify it out of band.
 
 ## Account binding
 
-Binding comes only from a completed, server-created (not Payment Link) subscription
-Checkout Session whose `client_reference_id` names an existing account. It is
-immutable. Subscription metadata, email and customer details never bind. Events for
+Binding uses a completed subscription Checkout Session whose `client_reference_id`
+names an existing account. The registering server must reserve this binding field
+for its authenticated Checkout creation path on the configured Stripe account.
+Payment Link sessions are refused. The binding is immutable. Subscription
+metadata, email and customer details never bind. Events for
 an unbound subscription return `pending` and apply after Checkout binding or an
 account-bound `reconcile`, which reads the same Session evidence. Reuse of a bound
 customer or subscription by another account is a held `binding` conflict and is
@@ -73,39 +76,46 @@ Policy (owner may override):
 - **Full refund** of a subscription charge: permanent revocation and cancellation.
 - **Partial refund**: no revocation.
 - **`charge.dispute.created`**: reversible suspension; no cancellation.
-- **`charge.dispute.closed`**: `won` restores; `lost` revokes permanently and
-  cancels. Other closed statuses are rejected and leave suspension in place.
+- **`charge.dispute.closed`**: `won` or `warning_closed` can release the suspension
+  after a current subscription read. `lost` revokes permanently and queues
+  cancellation. Unrecognized dispute state yields `unknown`.
 
 Revocation is sticky at the schema level; suspension is reversible. A refund or
 dispute whose customer does not match the bound subscription is a held `linkage`
-conflict and cancels nothing. Conflicting outcomes for one dispute are held;
+conflict and cancels nothing. A dispute stays bound to its original charge.
+Conflicting outcomes for one dispute are held;
 replaying the earlier variant does not release the hold. Held conflicts reject
 update and delete; resolution requires a separate owner-approved route.
 
 Permanent revocation and account suppression record a `pending_external` row in
-`stripe_web_cancellations` with a built immediate-cancellation request. Ingestion
-never sends it. `sendCancellation` is an explicit call: it records `unknown`
-before sending and `canceled` only after Stripe confirms; an unknown attempt
-retries with the same idempotency key.
+`stripe_web_cancellations` with a built immediate-cancellation request. The
+explicit `sendCancellation` call reads the bound provider subscription before
+dispatch. It records `unknown` before sending and settles when Stripe confirms
+the subscription is canceled, through response, later readback or refresh.
+A hold on the cancellation's subscription or owner blocks dispatch based on
+revocation alone. Account suppression supplies an independent basis.
 
-`reconcile(actor, subscriptionId)` re-reads the subscription, its latest invoice,
-that invoice's charge (refund state) and the charge's disputes. If any of these
-cannot be read, the result is `unknown`, never `processed`. Refunds or disputes on
-earlier invoices are recovered only through webhooks.
+`reconcile(actor, subscriptionId)` re-reads the subscription, pages through its
+invoices and checks the linked charges and their disputes. It verifies that each
+charge points back to the invoice. Unreadable or incomplete evidence returns
+`unknown`, including an unfinished list after ten pages or a missing latest
+invoice. The webhook path also handles events for older subscription charges.
 
 ## Second purchase and channel precedence
 
 Owner decision (Nov 17): a member with an active subscription on one channel
 cannot buy on the other, and access is granted if either channel is active.
-`checkout` refuses while the account has a live Stripe subscription
+`checkout` refuses while the account has a Stripe subscription with nonterminal
+billing status, including when access was revoked before cancellation settles
 (`already_subscribed_stripe`, manage in the billing portal), asks Platform's
 `activeOtherChannel` guard otherwise, refuses `apple` with
 `already_subscribed_other_channel` and the manage-in-App-Store hint, and returns an
-explicit `unknown` for `unknown`, a thrown guard or any other value. Webhooks have no
-session, so the guard receives `{ accountId }` only. If a Stripe subscription
-becomes active while Apple is active, it is recorded as a held
-`dual_channel_conflict` and never auto-cancelled. That hold does not fail the
-Stripe observation closed. Platform or the owner resolves it.
+explicit `unknown` for `unknown`, a thrown guard or any other value. For already
+completed payments, ingestion and reconciliation persist Stripe facts even when
+Apple status is unavailable. They consult the guard with `{ accountId }` when
+the resulting Stripe subscription is active and record a `dual_channel_conflict`
+when Apple also reports active. Platform owns current dual-channel status.
+The Stripe hold itself leaves access readable and triggers no cancellations.
 
 `proposePurchaseAccessMerge` is an unregistered, non-selecting proposal of that rule:
 `form_plus` is active when either channel is active; it reports dual-channel activity
@@ -119,8 +129,9 @@ fail-closed held conflict), `unavailable` (suppressed or inactive account) or
 `unknown`, with `{ productId, active, effectiveExpiresAtMs }` only when observed and
 evidence `{ provider: 'Stripe', environment, subscriptionRef, eventHighWater,
 observedAtMs }`. `eventHighWater` is the highest applied Stripe event `created`
-(seconds), or null when only reconciliation wrote state. `heldConflicts(ctx)` lists
-held conflicts. Platform's projection is Apple-only; this source never decides access.
+(seconds), or null when only reconciliation wrote state. `observedAtMs` is the
+time of the local read. `heldConflicts(ctx)` lists retained holds. Platform's
+projection is Apple-only; this source never decides access.
 
 ## Lifecycle
 
@@ -142,3 +153,6 @@ portal policy, operational restore, external cancellation or activation.
 Protocol references:
 - https://docs.stripe.com/webhooks
 - https://docs.stripe.com/billing/subscriptions/webhooks
+- https://docs.stripe.com/api/idempotent_requests
+- https://docs.stripe.com/api/invoices/list?api-version=2025-02-24.acacia
+- https://docs.stripe.com/api/disputes/object?api-version=2025-02-24.acacia

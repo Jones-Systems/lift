@@ -45,8 +45,9 @@ type Row = { namespace: string; subscription_id: string; account_id: string; cus
 type Receipt = Readonly<{ eventId: string; type: string; created: number; digest: string }>;
 type Facts = {
   subscriptionId: string; customerId: string; expectedRevision: number | null; linkageMismatch: boolean;
-  bind?: SessionFacts; state?: SubscriptionState; refund?: ChargeFacts; disputes?: readonly DisputeFacts[]; otherChannel?: 'none' | 'apple';
+  bind?: SessionFacts; state?: SubscriptionState; refund?: ChargeFacts; disputes?: readonly DisputeFacts[];
 };
+type CancellationRow = { account_id: string; customer_id: string; state: StripeCancellation['state']; reason: StripeCancellation['reason'] };
 type Applied = { outcome: StripeOutcome; notice: Readonly<{ accountId: string; subscriptionRef: string }> | null };
 const types = new Set(['checkout.session.completed', 'customer.subscription.created', 'customer.subscription.updated',
   'customer.subscription.deleted', 'invoice.paid', 'invoice.payment_failed', 'charge.refunded', 'charge.dispute.created', 'charge.dispute.closed']);
@@ -87,9 +88,6 @@ export class StripeWebPurchases {
     try { assertAccountActive(this.db, accountId); return false; }
     catch (error) { if (error instanceof DomainError && error.code === 'account_disabled') return true; throw error; }
   }
-  #live(row: Row, now: number): boolean {
-    return !row.revoked && row.period_end * 1000 > now && !['canceled', 'incomplete_expired'].includes(row.status);
-  }
   #active(row: Row, now: number): boolean {
     return row.product_id !== null && row.status === 'active' && !row.revoked && !row.suspended && !row.suppressed && row.period_end * 1000 > now;
   }
@@ -100,10 +98,33 @@ export class StripeWebPurchases {
     if (response.id !== path.split('/').at(-1) || response.livemode !== this.#config.livemode) invalid();
     return response;
   }
-  async #list(path: string): Promise<Json[]> {
+  async #listPage(path: string): Promise<{ items: Json[]; hasMore: boolean }> {
     const response = object(await this.#ports.client.request({ method: 'GET', path, apiVersion: stripeApiVersion, apiKeyEnv: this.#config.apiKeyEnv }));
-    if (response.object !== 'list' || response.has_more !== false || !Array.isArray(response.data) || response.data.length > 100) invalid();
-    return (response.data as unknown[]).map(object);
+    if (response.object !== 'list' || typeof response.has_more !== 'boolean' || !Array.isArray(response.data) || response.data.length > 100)
+      return invalid();
+    return { items: response.data.map(object), hasMore: response.has_more };
+  }
+  async #list(path: string): Promise<Json[]> {
+    const { items, hasMore } = await this.#listPage(path);
+    if (hasMore) return invalid();
+    return items;
+  }
+  async #listAll(path: string, prefix: string): Promise<Json[]> {
+    const result: Json[] = [];
+    const seen = new Set<string>();
+    let cursor = '';
+    for (let page = 0; page < 10; page++) {
+      const { items, hasMore } = await this.#listPage(path + '&limit=100' + (cursor ? '&starting_after=' + cursor : ''));
+      for (const item of items) {
+        cursor = ref(item.id, prefix);
+        if (seen.has(cursor)) return invalid();
+        seen.add(cursor);
+        result.push(item);
+      }
+      if (!hasMore) return result;
+      if (items.length === 0) return invalid();
+    }
+    return invalid();
   }
   async #subscription(subscriptionId: string): Promise<SubscriptionState> {
     const state = subscriptionState(await this.#get('/v1/subscriptions/' + subscriptionId), this.#config);
@@ -121,9 +142,9 @@ export class StripeWebPurchases {
   checkout(actor: AccountContext, plan: Plan, requestKey: string): StripeCheckoutResult {
     actor = Object.freeze({ ...actor });
     assertActive(this.db, actor);
-    const now = this.#clock();
-    if (this.#rows(actor.accountId).some(row => this.#live(row, now)))
+    if (this.#rows(actor.accountId).some(row => !['canceled', 'incomplete_expired'].includes(row.status)))
       return Object.freeze({ status: 'refused', code: 'already_subscribed_stripe', hint: 'manage_in_billing_portal' });
+    if (this.#heldFailClosed(actor.accountId)) return Object.freeze({ status: 'unknown', code: 'stripe_other_channel_unknown' });
     let channel: unknown;
     try { channel = this.#ports.activeOtherChannel(actor); } catch { channel = 'unknown'; }
     if (channel === 'apple') return Object.freeze({ status: 'refused', code: 'already_subscribed_other_channel', hint: 'manage_in_app_store' });
@@ -164,8 +185,6 @@ export class StripeWebPurchases {
       const result = await this.#eventFacts(receipt.type, payload);
       if ('status' in result) return result;
       facts = result;
-      const gate = this.#otherChannel(facts);
-      if (gate) return gate;
     } catch (error) { return error instanceof StripeRejection ? outcome('rejected', error.code) : outcome('unknown', 'stripe_processing_unknown'); }
     return this.#commit(facts, receipt, 'stripe_event_applied', null);
   }
@@ -200,18 +219,16 @@ export class StripeWebPurchases {
     const facts: Facts = { subscriptionId, customerId, expectedRevision: current.revision, linkageMismatch: mismatch };
     if (refund) facts.refund = refund;
     if (disputes) facts.disputes = disputes;
-    // Known charge linkage revokes/suspends without a subscription re-fetch; other events re-fetch current state.
-    if (!refund && !disputes) { facts.state = await this.#subscription(subscriptionId); facts.linkageMismatch ||= facts.state.customerId !== customerId; }
+    // A denial can be recorded from bound payment facts. Restoring access requires fresh subscription state.
+    if (!refund && (!disputes || disputes.some(dispute => dispute.status === 'won'))) {
+      facts.state = await this.#subscription(subscriptionId);
+      facts.linkageMismatch ||= facts.state.customerId !== customerId;
+    }
     return facts;
   }
-  #otherChannel(facts: Facts): StripeOutcome | null {
-    const state = facts.state, current = this.#row(facts.subscriptionId), accountId = current?.account_id ?? facts.bind?.accountId;
-    if (!state || !accountId || current?.revoked || state.productId === null || state.status !== 'active' || state.periodEnd * 1000 <= this.#clock()) return null;
-    if (this.#suppressed(accountId)) return null;
-    let channel: unknown;
-    try { channel = this.#ports.activeOtherChannel(Object.freeze({ accountId })); } catch { channel = 'unknown'; }
-    if (channel === 'none' || channel === 'apple') { facts.otherChannel = channel; return null; }
-    return outcome('unknown', 'stripe_other_channel_unknown');
+  #appleActive(accountId: string): boolean {
+    try { return this.#ports.activeOtherChannel(Object.freeze({ accountId })) === 'apple'; }
+    catch { return false; }
   }
   #commit(facts: Facts, receipt: Receipt | null, appliedCode: string, context: AccountContext | null): StripeOutcome {
     let applied: Applied;
@@ -258,6 +275,10 @@ export class StripeWebPurchases {
     this.db.prepare("INSERT INTO stripe_web_cancellations VALUES(?,?,?,?,?,'pending_external',?) ON CONFLICT DO NOTHING")
       .run(this.#ns, row.subscription_id, row.account_id, row.customer_id, reason, JSON.stringify(request));
   }
+  #markCancellationConfirmed(subscriptionId: string): void {
+    this.db.prepare("UPDATE stripe_web_cancellations SET state='canceled' WHERE namespace=? AND subscription_id=? AND state<>'canceled'")
+      .run(this.#ns, subscriptionId);
+  }
   /** Must run inside a write transaction. Conflicts are checked before any state write so a hold commits alone. */
   #apply(facts: Facts, receipt: Receipt | null, appliedCode: string): Applied {
     const now = this.#clock(), sub = facts.subscriptionId, none = { notice: null };
@@ -288,12 +309,12 @@ export class StripeWebPurchases {
     }
     const disputes = facts.disputes ?? [];
     const priorDispute = (id: string) => this.db.prepare('SELECT * FROM stripe_web_disputes WHERE namespace=? AND dispute_id=?').get(this.#ns, id) as
-      { account_id: string; subscription_id: string; status: 'open' | 'won' | 'lost' } | undefined;
+      { account_id: string; subscription_id: string; charge_id: string; status: 'open' | 'won' | 'lost' } | undefined;
     for (const dispute of disputes) {
       const prior = priorDispute(dispute.disputeId);
-      if (prior && (prior.account_id !== accountId || prior.subscription_id !== sub))
+      if (prior && (prior.account_id !== accountId || prior.subscription_id !== sub || prior.charge_id !== dispute.chargeId))
         return held(accountId, 'linkage', 'linkage:' + sub, sub, null, 'stripe_linkage_conflict');
-      if (prior && prior.status !== 'open' && dispute.status !== 'open' && dispute.status !== 'unsupported' && dispute.status !== prior.status)
+      if (prior && prior.status !== 'open' && dispute.status !== 'open' && dispute.status !== prior.status)
         return held(accountId, 'dispute_variant', 'dispute:' + dispute.disputeId, sub, null, 'stripe_dispute_variant_held');
     }
     const state = facts.state;
@@ -306,15 +327,14 @@ export class StripeWebPurchases {
         revision=revision+1 WHERE namespace=? AND subscription_id=?`).run(state.priceId, state.productId, state.status, Number(state.cancelAtPeriodEnd),
         state.periodStart, state.periodEnd, this.#ns, sub);
     }
-    let revoke = facts.refund?.fullyRefunded === true, restored = false, opened = false, unsupported = false;
+    let revoke = facts.refund?.fullyRefunded === true, won = false, opened = false;
     for (const dispute of disputes) {
       const prior = priorDispute(dispute.disputeId);
-      if (dispute.status === 'unsupported') { unsupported = true; continue; }
       if (!prior) this.db.prepare('INSERT INTO stripe_web_disputes VALUES(?,?,?,?,?,?)').run(this.#ns, dispute.disputeId, accountId, sub, dispute.chargeId, dispute.status);
       else if (prior.status === 'open' && dispute.status !== 'open')
         this.db.prepare('UPDATE stripe_web_disputes SET status=? WHERE namespace=? AND dispute_id=?').run(dispute.status, this.#ns, dispute.disputeId);
       if (dispute.status === 'lost' || prior?.status === 'lost') revoke = true;
-      if (dispute.status === 'won' && prior?.status === 'open') restored = true;
+      if (dispute.status === 'won' && prior?.status === 'open') won = true;
       if (dispute.status === 'open' && !prior) opened = true;
     }
     const suppressed = this.#suppressed(accountId);
@@ -326,17 +346,42 @@ export class StripeWebPurchases {
     const row = this.#row(sub)!;
     if (revoke) this.#cancel(row, 'revoked');
     if (suppressed) this.#cancel(row, 'suppressed');
-    // A race past the checkout guard is held for Platform/owner resolution and never auto-cancelled.
-    if (facts.otherChannel === 'apple' && this.#active(row, now)) this.#hold(accountId, 'dual_channel_conflict', 'dual:' + sub, sub, null, receipt?.eventId ?? null, now);
-    let result = outcome('processed', facts.otherChannel === 'apple' && this.#active(row, now) ? 'stripe_dual_channel_conflict_held'
-      : suppressed ? 'stripe_recorded_suppressed' : revoke ? 'stripe_revoked' : restored ? 'stripe_restored' : opened ? 'stripe_suspended'
+    if (state?.status === 'canceled') this.#markCancellationConfirmed(sub);
+    // Apple uncertainty blocks a new purchase, but does not discard facts about a completed Stripe payment.
+    const active = this.#active(row, now);
+    const dual = active && this.#appleActive(accountId);
+    if (dual) this.#hold(accountId, 'dual_channel_conflict', 'dual:' + sub, sub, null, receipt?.eventId ?? null, now);
+    const result = outcome('processed', dual ? 'stripe_dual_channel_conflict_held'
+      : suppressed ? 'stripe_recorded_suppressed' : revoke ? 'stripe_revoked' : won && active ? 'stripe_restored' : opened ? 'stripe_suspended'
       : facts.refund ? 'stripe_partial_refund_not_revoked' : appliedCode);
-    if (unsupported && receipt && !state && !facts.refund) result = outcome('rejected', 'stripe_dispute_status_unsupported');
-    if (receipt) this.#record(receipt, accountId, sub, result.status === 'processed' ? 'processed' : 'rejected', result.code);
+    if (receipt) this.#record(receipt, accountId, sub, 'processed', result.code);
     return { outcome: result, notice: suppressed ? null : Object.freeze({ accountId, subscriptionRef: sub }) };
   }
 
   // ---- account-bound reconciliation ----
+  async #paymentFacts(state: SubscriptionState): Promise<{ refund: ChargeFacts | undefined; disputes: DisputeFacts[]; mismatch: boolean }> {
+    const invoices = (await this.#listAll('/v1/invoices?subscription=' + state.subscriptionId, 'in'))
+      .map(raw => invoiceFacts(raw, this.#config));
+    if (state.latestInvoice && !invoices.some(invoice => invoice.invoiceId === state.latestInvoice)) return invalid();
+    let refund: ChargeFacts | undefined;
+    let mismatch = false;
+    const disputes: DisputeFacts[] = [];
+    for (const invoice of invoices) {
+      if (invoice.subscriptionId !== state.subscriptionId) return invalid();
+      mismatch ||= invoice.customerId !== state.customerId;
+      if (!invoice.chargeId) continue;
+      const charge = chargeFacts(await this.#get('/v1/charges/' + invoice.chargeId), this.#config);
+      mismatch ||= charge.customerId !== state.customerId || charge.invoiceId !== invoice.invoiceId;
+      if (charge.fullyRefunded) refund = charge;
+      for (const raw of await this.#listAll('/v1/disputes?charge=' + invoice.chargeId, 'dp|du')) {
+        const dispute = disputeFacts(raw, this.#config);
+        if (dispute.chargeId !== invoice.chargeId) return invalid();
+        disputes.push(dispute);
+      }
+    }
+    return { refund, disputes, mismatch };
+  }
+
   async reconcile(actor: AccountContext, subscriptionId: string): Promise<StripeOutcome> {
     actor = Object.freeze({ ...actor });
     try {
@@ -359,27 +404,13 @@ export class StripeWebPurchases {
         if (bind.accountId !== actor.accountId) return outcome('rejected', 'stripe_client_reference_mismatch');
       }
       const state = await this.#subscription(subscriptionId);
-      let refund: ChargeFacts | undefined, disputes: DisputeFacts[] = [], mismatch = false;
-      // Refunds and disputes on the latest invoice's charge; any unreadable fact leaves the result unknown.
-      if (state.latestInvoice) {
-        const invoice = invoiceFacts(await this.#get('/v1/invoices/' + state.latestInvoice), this.#config);
-        if (invoice.subscriptionId !== subscriptionId) invalid();
-        mismatch = invoice.customerId !== state.customerId;
-        if (invoice.chargeId) {
-          refund = chargeFacts(await this.#get('/v1/charges/' + invoice.chargeId), this.#config);
-          mismatch ||= refund.customerId !== state.customerId;
-          disputes = (await this.#list('/v1/disputes?charge=' + invoice.chargeId)).map(d => disputeFacts(d, this.#config));
-          if (disputes.some(d => d.chargeId !== invoice.chargeId)) invalid();
-        }
-      }
+      const { refund, disputes, mismatch } = await this.#paymentFacts(state);
       const customerId = current?.customer_id ?? bind!.customerId;
       const facts: Facts = { subscriptionId, customerId, expectedRevision, state, disputes,
         linkageMismatch: mismatch || state.customerId !== customerId };
       if (bind) facts.bind = bind;
       // Partial refunds do not revoke; only a full refund is carried as a fact.
-      if (refund?.fullyRefunded) facts.refund = refund;
-      const gate = this.#otherChannel(facts);
-      if (gate) return gate;
+      if (refund) facts.refund = refund;
       return this.#commit(facts, null, 'stripe_reconciled', actor);
     } catch (error) { return error instanceof StripeRejection ? outcome('rejected', error.code) : outcome('unknown', 'stripe_reconciliation_unknown'); }
   }
@@ -392,25 +423,40 @@ export class StripeWebPurchases {
         request: Object.freeze(JSON.parse(row.request) as StripeRequest) }));
   }
   async sendCancellation(subscriptionId: string): Promise<StripeOutcome> {
-    let request: StripeRequest | null;
+    const lookup = () => this.db.prepare('SELECT account_id,customer_id,state,reason FROM stripe_web_cancellations WHERE namespace=? AND subscription_id=?')
+      .get(this.#ns, subscriptionId) as CancellationRow | undefined;
+    const confirmed = outcome('processed', 'stripe_cancellation_confirmed');
+    const unknown = outcome('unknown', 'stripe_cancellation_unknown');
     try {
-      request = this.db.transaction((): StripeRequest | null => {
-        const row = this.db.prepare('SELECT * FROM stripe_web_cancellations WHERE namespace=? AND subscription_id=?').get(this.#ns, subscriptionId) as
-          { account_id: string; state: string } | undefined;
-        if (!row) return reject('stripe_cancellation_absent');
-        if (row.state === 'canceled') return null;
-        // The attempt is recorded as unknown before sending; only a confirmed canceled response settles it.
+      const row = lookup();
+      if (!row) return outcome('rejected', 'stripe_cancellation_absent');
+      if (row.state === 'canceled') return confirmed;
+      const settle = this.db.transaction(() => {
+        this.#markCancellationConfirmed(subscriptionId);
+        this.db.prepare("UPDATE stripe_web_subscriptions SET status='canceled',cancel_at_period_end=0,revision=revision+1 WHERE namespace=? AND subscription_id=? AND status<>'canceled'")
+          .run(this.#ns, subscriptionId);
+        return confirmed;
+      });
+      const provider = await this.#subscription(subscriptionId);
+      if (provider.customerId !== row.customer_id) return unknown;
+      if (provider.status === 'canceled') return settle.immediate();
+      const attempt = this.db.transaction(() => {
+        const current = lookup();
+        if (current?.state === 'canceled') return confirmed;
+        if (current?.state !== row.state) return unknown;
+        const held = this.db.prepare(`SELECT 1 FROM stripe_web_conflicts WHERE namespace=? AND account_id=? AND ${failClosedKinds}
+          AND (subscription_id=? OR subscription_id IS NULL)`).get(this.#ns, row.account_id, subscriptionId);
+        if (row.reason === 'revoked' && held && !this.#suppressed(row.account_id)) return outcome('pending', 'stripe_cancellation_conflict_held');
+        const request = buildCancellationRequest(this.#config, row.account_id, subscriptionId);
         this.db.prepare("UPDATE stripe_web_cancellations SET state='unknown' WHERE namespace=? AND subscription_id=?").run(this.#ns, subscriptionId);
-        return buildCancellationRequest(this.#config, row.account_id, subscriptionId);
+        return request;
       }).immediate();
-    } catch (error) { return error instanceof StripeRejection ? outcome('rejected', error.code) : outcome('unknown', 'stripe_cancellation_unknown'); }
-    if (!request) return outcome('processed', 'stripe_cancellation_confirmed');
-    try {
-      const response = object(await this.#ports.client.request(request));
-      if (response.id !== subscriptionId || response.object !== 'subscription' || response.livemode !== this.#config.livemode || response.status !== 'canceled') invalid();
-      this.db.prepare("UPDATE stripe_web_cancellations SET state='canceled' WHERE namespace=? AND subscription_id=? AND state<>'canceled'").run(this.#ns, subscriptionId);
-      return outcome('processed', 'stripe_cancellation_confirmed');
-    } catch { return outcome('unknown', 'stripe_cancellation_unknown'); }
+      if ('status' in attempt) return attempt;
+      const response = object(await this.#ports.client.request(attempt));
+      if (response.id !== subscriptionId || response.object !== 'subscription' || response.livemode !== this.#config.livemode
+        || response.customer !== row.customer_id || response.status !== 'canceled') return unknown;
+      return settle.immediate();
+    } catch { return unknown; }
   }
 
   // ---- Platform seam: pure, non-granting observation ----
