@@ -16,6 +16,16 @@ const cursorMarker = 'synthetic-private-cursor-marker';
 const receiptMarker = 'synthetic-private-receipt-marker';
 const intentMarker = 'synthetic-private-intent-marker';
 const revisionMarker = 'synthetic-private-revision-token';
+const omissionReasons = [
+  { code: 'credentials', reason: 'credentials_never_exported_auth_state_owned_separately' },
+  { code: 'cursors', reason: 'provider_sync_position_internal' },
+  { code: 'raw_provider_intents', reason: 'raw_provider_pages_restricted' },
+  { code: 'receipt_results', reason: 'idempotency_receipts_internal' },
+  { code: 'suggestion_plan_snapshots', reason: 'plan_snapshots_restricted' },
+  { code: 'connection_consent_metadata', reason: 'export_qualification_covers_measures_only' },
+  { code: 'suggestion_records', reason: 'export_qualification_covers_measures_only' },
+  { code: 'measure_tombstones', reason: 'deleted_records_not_exported' },
+];
 
 function fixture(t) {
   const db = new Database(':memory:');
@@ -88,6 +98,11 @@ function wearableValues(result) {
   return JSON.parse(result.json).records.filter(row => row.category === 'wearables').map(row => row.value);
 }
 
+function assertOmissions(manifest) {
+  assert.deepEqual(manifest.omissions, omissionReasons.map(({ code }) => code));
+  assert.deepEqual(manifest.omissionReasons, omissionReasons);
+}
+
 test('canonical writer rolls back a service page atomically, retries once, and rejects the invalidated original session', t => {
   const f = fixture(t);
   f.service.ingest(f.other, 'other-import', page([measure('other')]));
@@ -131,7 +146,9 @@ test('composed account export omits measures with missing or false qualification
     const result = exported(f, options), document = JSON.parse(result.json);
     assert.equal(result.complete, false);
     assert.equal(document.manifest.complete, false);
-    assert.deepEqual(wearableValues(result).filter(value => value.kind === 'measure'), []);
+    const values = wearableValues(result);
+    assert.deepEqual(values.map(value => value.kind), ['manifest']);
+    assertOmissions(values[0]);
     assert.equal(document.manifest.categories.find(value => value.category === 'wearables').status, 'unavailable');
     assert.equal(result.json.includes(revisionMarker), false);
   }
@@ -139,18 +156,29 @@ test('composed account export omits measures with missing or false qualification
 
 test('qualified composed export preserves allowed measure lineage, omits private state and keeps external coverage unavailable', t => {
   const f = fixture(t);
-  f.service.ingest(f.actor, 'import', page([measure(), measure('unqualified')]));
+  const credentialMarker = 'synthetic-provider-private-value';
+  f.service.ingest(f.actor, 'import', {
+    ...page([measure(), measure('unqualified')]), tombstones: [{ id: 'tombstone-marker', revision: { token: 'deleted-revision', order: 2 } }],
+  });
   f.service.ingest(f.other, 'other-import', page([measure('other-account-only')]));
+  f.writer.lifecycle.withActiveWrite(f.actor, () => {
+    const { store } = f.persistence;
+    store.putConnection(f.actor, { ...store.connection(f.actor, 'hk'), id: 'oura-connection-marker', provider: 'oura', consentVersion: 'consent-marker' });
+    store.putSuggestion(f.actor, {
+      id: 'suggestion-marker', planId: 'plan-marker', baseRevision: 1, appliedRevision: null, state: 'pending', beforeItems: [], afterItems: [],
+      reviewDigest: 'review-marker', expiresAt: '2026-12-01T00:00:00Z', reason: 'suggestion-reason-marker', limits: [], policyVersion: 'synthetic', evidenceRefs: [],
+    });
+  });
   f.db.prepare('INSERT INTO wearable_provider_intents VALUES(?,?,?,?,?,?,?,?,?)').run(
-    f.actor.accountId, 'hk', 1, 'synthetic-intent', f.actor.sessionId, f.actor.epoch,
-    intentMarker, intentMarker, JSON.stringify({ marker: intentMarker }),
+    f.actor.accountId, 'oura-connection-marker', 1, 'synthetic-intent', f.actor.sessionId, f.actor.epoch,
+    intentMarker, intentMarker, JSON.stringify({ marker: intentMarker, credentials: credentialMarker }),
   );
   const before = rows(f.db, f.actor), otherBefore = rows(f.db, f.other);
   const result = exported(f, { qualifyExport: (_ctx, record) => record.id === 'qualified' });
   const document = JSON.parse(result.json), values = wearableValues(result);
-  const measures = values.filter(value => value.kind === 'measure');
-  assert.equal(measures.length, 1);
-  const value = measures[0].data, original = measure();
+  assert.deepEqual(values.map(value => value.kind), ['measure', 'manifest']);
+  const [exportedMeasure, manifest] = values;
+  const value = exportedMeasure.data, original = measure();
   for (const key of ['id', 'metric', 'value', 'unit', 'start', 'end', 'day', 'zone', 'aggregation', 'source', 'quality'])
     assert.deepEqual(value[key], original[key]);
   assert.equal(value.provider, 'healthkit');
@@ -162,13 +190,14 @@ test('qualified composed export preserves allowed measure lineage, omits private
   assert.equal(value.provenance, 'unqualified_import');
   assert.equal(result.complete, false);
   assert.equal(document.manifest.complete, false);
-  const manifest = values.find(value => value.kind === 'manifest');
+  assertOmissions(manifest);
   assert.equal(manifest.exported, 1);
   assert.equal(manifest.unqualified, 1);
   assert.equal(manifest.externalStatus, 'unavailable');
   assert.equal(manifest.status, 'unavailable');
   assert.equal(document.manifest.categories.find(value => value.category === 'wearables').status, 'unavailable');
-  for (const marker of [cursorMarker, receiptMarker, intentMarker, revisionMarker, 'other-account-only'])
+  for (const marker of [cursorMarker, receiptMarker, intentMarker, revisionMarker, credentialMarker, `synthetic-session-${f.actor.sessionId}`,
+    '"credentials":', 'oura-connection-marker', 'consent-marker', 'suggestion-marker', 'plan-marker', 'review-marker', 'tombstone-marker', 'other-account-only'])
     assert.equal(result.json.includes(marker), false, marker);
   assert.deepEqual(rows(f.db, f.actor), before);
   assert.deepEqual(rows(f.db, f.other), otherBefore);
