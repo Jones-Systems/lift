@@ -256,6 +256,7 @@ test('the usage HTTP route exposes only the authenticated account aggregates wit
   assert.equal(first.headers.get('X-Content-Type-Options'), 'nosniff');
   const firstBody = await first.json();
   assert.deepEqual(firstBody, f.ledger.usage.status(actor));
+  assert.ok(firstBody.metrics);
   assert.deepEqual(firstBody.metrics.coach_messages, { limit: 5, settled: 1, reserved: 1, unknown: 1, remaining: 2 });
   assert.doesNotMatch(JSON.stringify(firstBody), /status-(settled|unknown|reserved)|subject-a|account-a|session-a/);
 
