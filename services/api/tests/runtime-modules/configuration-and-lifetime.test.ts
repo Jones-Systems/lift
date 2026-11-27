@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, linkSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseRuntimeModules, strictJson } from '../../src/runtime-modules/configuration.js';
 import { RuntimeOwner, initializeAuthority, admissionSchema } from '../../src/runtime-modules/admission.js';
 import { ledgerSchemaDigest } from '../../src/runtime-modules/currentness.js';
@@ -11,6 +14,83 @@ import { runtimeMigrations } from '../../src/runtime-modules/migrations.js';
 import { migrations } from '../../src/storage.js';
 import { createServer } from '../../src/server.js';
 import { deployment, provision, start, readAdmission, origin, secret } from './fixture.js';
+
+test('startup config preflight reports sanitized config and rejects invalid inputs without runtime effects', t => {
+  const root = mkdtempSync(join(tmpdir(), 'form-startup-config-test-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const cli = new URL('../../src/cli.js', import.meta.url);
+  const noRuntime = `
+    import net from 'node:net';
+    import { registerHooks } from 'node:module';
+    const unexpected = () => process.exit(97);
+    net.Server.prototype.listen = unexpected;
+    net.Socket.prototype.connect = unexpected;
+    globalThis.fetch = unexpected;
+    registerHooks({ resolve(specifier, context, nextResolve) {
+      if (['./server.js', './runtime-modules/admission.js', '@hono/node-server', 'better-sqlite3'].includes(specifier))
+        unexpected();
+      return nextResolve(specifier, context);
+    } });
+  `;
+  const guard = 'data:text/javascript,' + encodeURIComponent(noRuntime);
+  const dbPath = join(root, 'data', 'main.sqlite');
+  function check(overrides: Record<string, string> = {}, args = ['--check-config']) {
+    const child = spawnSync(process.execPath, ['--import', guard, fileURLToPath(cli), ...args], {
+      env: { FORM_DATABASE_PATH: dbPath, BETTER_AUTH_SECRET: secret, FORM_BASE_URL: origin, ...overrides },
+      encoding: 'utf8', timeout: 5000,
+    });
+    assert.ifError(child.error);
+    assert.equal(child.signal, null);
+    assert.notEqual(child.status, 97, 'preflight attempted to load or use runtime resources');
+    assert.deepEqual(readdirSync(root), [], 'preflight created database or authority files');
+    return { status: child.status, stdout: child.stdout, stderr: child.stderr };
+  }
+
+  const defaults = {
+    check: 'startup-config-preflight', valid: true, registration: 'closed', runtimeModulesConfigured: false,
+    promosConfigured: false, browserOriginsConfigured: false, googleConfigured: false, appleSignInConfigured: false,
+    grokTranscriptionConfigured: false, phoneConfigured: false, applePurchasesConfigured: false,
+  };
+  function assertSuccess(result: ReturnType<typeof check>, expected: typeof defaults) {
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    assert.deepEqual(JSON.parse(result.stdout), expected);
+  }
+  assertSuccess(check(), defaults);
+
+  const modules = {
+    version: 1, mode: 'private-modules', authorityDirectory: join(root, 'authority'), authorityId: randomUUID(),
+    ownerUid: 1000, publicLifecycle: 'disabled', communityLimiter: 'bounded-single-process-v1',
+  };
+  assertSuccess(check({
+    FORM_HOST: 'preflight-host.invalid',
+    FORM_REGISTRATION: JSON.stringify({ mode: 'allowlist', emails: ['preflight@synthetic.invalid'] }),
+    FORM_PROMOS: JSON.stringify([{ code: 'TEST_PROMO', entitlement: 'form_plus', days: 7, maxRedemptions: 1, expiresAt: '2099-01-01T00:00:00Z' }]),
+    FORM_BROWSER_ORIGINS: JSON.stringify(['https://preflight.synthetic.invalid']),
+    FORM_SOCIAL_PROVIDERS: JSON.stringify({ google: { clientId: 'synthetic-client', clientSecret: secret },
+      apple: { clientId: 'synthetic-apple-client', clientSecret: secret } }),
+    FORM_GROK_STT_ENABLED: 'true',
+    FORM_GROK_STT_KEY: secret,
+    FORM_PHONE: JSON.stringify({ allowCloudRequests: true, accountSid: 'AC' + 'a'.repeat(32), serviceSid: 'VA' + 'a'.repeat(32),
+      apiKeySid: 'SK' + 'a'.repeat(32), apiKeySecret: secret, allowedPhones: ['+12025550100'] }),
+    FORM_APPLE_PURCHASES: JSON.stringify({ bundleId: 'invalid.synthetic.form',
+      products: [{ productId: 'synthetic.product', type: 'Non-Consumable', entitlement: 'form_plus' }] }),
+    FORM_RUNTIME_MODULES: JSON.stringify(modules),
+  }), {
+    ...defaults, registration: 'allowlist', runtimeModulesConfigured: true, promosConfigured: true,
+    browserOriginsConfigured: true, googleConfigured: true, appleSignInConfigured: true,
+    grokTranscriptionConfigured: true, phoneConfigured: true, applePurchasesConfigured: true,
+  });
+
+  const failure = { status: 1, stdout: '', stderr: 'Form startup config preflight failed\n' };
+  assert.deepEqual(check({ FORM_SOCIAL_PROVIDERS: `{"google":{"clientSecret":"${secret}"` }), failure, 'malformed secret-bearing JSON');
+  assert.deepEqual(check({ FORM_SOCIAL_PROVIDERS: JSON.stringify({ [secret]: secret }) }), failure, 'schema errors can contain input keys');
+  assert.deepEqual(check({ FORM_DATABASE_PATH: fileURLToPath(new URL('./preflight.sqlite', cli)) }), failure, 'database inside source');
+  assert.deepEqual(check({ FORM_RUNTIME_MODULES: JSON.stringify({ ...modules, authorityDirectory: fileURLToPath(new URL('./authority', cli)) }) }),
+    failure, 'authority inside source');
+  assert.deepEqual(check({ FORM_RUNTIME_MODULES: JSON.stringify({ ...modules, authorityDirectory: root }) }), failure, 'authority overlaps database');
+  assert.deepEqual(check({}, ['--check-config', 'unexpected']), { status: 1, stdout: '', stderr: 'Usage: cli.js [--check-config]\n' });
+});
 
 test('omission keeps ordinary7; strict explicit selects actual contiguous16',()=>{
  assert.equal(parseRuntimeModules(undefined),undefined);assert.equal(migrations.length,7);assert.deepEqual(runtimeMigrations.map(m=>m.version),Array.from({length:16},(_,i)=>i+1));
