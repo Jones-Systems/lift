@@ -651,9 +651,15 @@ class JourneyContractTests(unittest.TestCase):
         for name in ('body-setup.yaml', 'body-measurement.yaml'):
             text = (REPO / 'apps/form/e2e/maestro/helpers' / name).read_text()
             with self.subTest(helper=name):
-                self.assertGreater(text.count('scrollUntilVisible:'), 0)
-                self.assertEqual(text.count('scrollUntilVisible:'), text.count('centerElement: true'))
-                self.assertNotIn('centerElement: false', text)
+                steps = re.findall(r'^- scrollUntilVisible:\n    element:\n      id: ([^\n]+)\n'
+                                   r'    direction: [A-Z]+\n    timeout: \d+\n'
+                                   r'    centerElement: (true|false)$', text, re.M)
+                self.assertTrue(steps)
+                self.assertEqual(len(steps), text.count('scrollUntilVisible:'))
+                exceptions = [target for target, center in steps if center == 'false']
+                # Run 46036153072 found the last row fully visible at the scroll limit.
+                expected = ['body-check-side_facing'] if name == 'body-setup.yaml' else []
+                self.assertEqual(exceptions, expected)
 
     def test_body_value_keyboard_is_dismissed_and_proved_gone_before_commit(self):
         # Run 39664906828: hideKeyboard left the decimal pad up and the commit tap typed a 0.
@@ -704,6 +710,7 @@ class JourneyContractTests(unittest.TestCase):
             'a-mode-advanced': '`a-mode-${mode}`', 'a-mode-basic': '`a-mode-${mode}`',
             'a-setlog-1': '`a-setlog-${set.setNumber}`', 'a-setlog-2': '`a-setlog-${set.setNumber}`',
             'body-construct-stature': '`body-construct-${id}`',
+            'body-view-side': '`${testID}-${item.value}`',
             'body-by-self': '`body-by-${by}`', 'body-tool-tape': '`body-tool-${tool}`',
             'body-added-stature:none': '`body-added-${m.id}`', 'body-added-.+': '`body-added-${m.id}`',
             'body-result-stature:none': '`body-result-${m.id}`', 'body-result-.+': '`body-result-${m.id}`',
