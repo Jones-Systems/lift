@@ -82,13 +82,15 @@ appId: com.jonessystems.form.private
     direction: UP
     timeout: 20000
     centerElement: true
-- tapOn: "Side"
+- tapOn:
+    id: body-view-side
+# The final checklist row can be fully visible at the scroll limit without centering.
 - scrollUntilVisible:
     element:
       id: body-check-side_facing
     direction: DOWN
     timeout: 20000
-    centerElement: true
+    centerElement: false
 - tapOn:
     id: body-check-side_facing
 - tapOn:
