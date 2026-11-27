@@ -17,6 +17,7 @@ const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
 const phonePattern = /^\+[1-9][0-9]{7,14}$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const keyPattern = /^[A-Za-z0-9_.:-]{16,128}$/;
+const resendDelayMs = 30_000;
 
 /** Exactly 32 cryptographic bytes become 43 unpadded base64url characters. No runtime global codecs. */
 export function encodePhoneBinding(bytes: Uint8Array): string {
@@ -79,9 +80,11 @@ export function createPhoneSignInAttempt(api: FormTransport, options: PhoneAttem
       || row.phoneNumber !== phone || row.status !== 'pending'
       || typeof row.expiresAt !== 'string' || typeof row.resendAfter !== 'string') throw invalid(true);
     const expires = Date.parse(row.expiresAt), resend = Date.parse(row.resendAfter), clock = timestamp();
+    // A resend can start within the final cooldown window without extending the original challenge.
+    const latestResend = expires + (previous ? resendDelayMs : 0);
     if (!Number.isFinite(expires) || !Number.isFinite(resend) || expires <= clock || expires > clock + 600_000
       || new Date(expires).toISOString() !== row.expiresAt || new Date(resend).toISOString() !== row.resendAfter
-      || resend > expires || (previous && (row.challengeId !== previous.challengeId || row.expiresAt !== previous.expiresAt
+      || resend > latestResend || (previous && (row.challengeId !== previous.challengeId || row.expiresAt !== previous.expiresAt
         || resend < Date.parse(previous.resendAfter)))) throw invalid(true);
     return { challengeId: row.challengeId, phoneNumber: phone, status: 'pending', expiresAt: row.expiresAt, resendAfter: row.resendAfter };
   };
@@ -106,6 +109,7 @@ export function createPhoneSignInAttempt(api: FormTransport, options: PhoneAttem
         throw new ApiError(409, 'phone_outcome_unknown', 'Reconcile the original phone operation before changing it.', true);
     } catch (error) { return Promise.reject(error); }
     const generation = epoch;
+    const replay = intent !== undefined;
     const guard: AuthAttemptGuard = {
       isCurrent: () => !disposed && generation === epoch && (options.isCurrentSession?.() ?? true),
       validateResult: kind !== 'verify' ? undefined : (value: unknown) => {
@@ -146,18 +150,20 @@ export function createPhoneSignInAttempt(api: FormTransport, options: PhoneAttem
         return { ...next };
       } catch (error) {
         if (!guard.isCurrent() || (error instanceof ApiError && error.code === 'session_changed')) {
-          erase(); throw changed(dispatched);
+          if (generation === epoch) erase();
+          throw changed(dispatched || replay);
         }
-        // Lost signed-session responses or consumed proofs must never mint another session from the old proof.
-        if (error instanceof ApiError && (error.originalEffectUnknown || ['phone_challenge_consumed', 'phone_challenge_expired', 'missing_session'].includes(error.code))) {
-          erase(); throw error;
-        }
-        if (error instanceof ApiError && (error.effectUnknown || error.code === 'phone_outcome_unknown')) {
-          context = api.captureAuthContext();
-          throw error;
+        context = api.captureAuthContext();
+        if (error instanceof ApiError) {
+          if (phoneChallengeEnd(error)) {
+            erase(); throw error;
+          }
+          if (dispatched && (error.effectUnknown || error.code === 'phone_outcome_unknown')) throw error;
+          const rejected = error.code === (kind === 'verify' ? 'invalid_phone_code' : 'phone_send_rejected');
+          // A replay can be rejected before the server looks up its receipt, including by the route rate limiter.
+          if (replay && !rejected) throw new ApiError(error.status, error.code, error.message, true);
         }
         intent = undefined;
-        context = api.captureAuthContext();
         throw error;
       } finally {
         if (generation === epoch) { flight = undefined; activeGuard = undefined; }
@@ -211,4 +217,11 @@ export function createPhoneSignInAttempt(api: FormTransport, options: PhoneAttem
     reset: erase,
     dispose() { if (disposed) return; disposed = true; erase(); subscription.remove(); },
   };
+}
+
+export function phoneChallengeEnd(error: ApiError): 'expired' | 'unavailable' | null {
+  if (error.code === 'phone_challenge_expired') return 'expired';
+  if (error.originalEffectUnknown || ['phone_challenge_consumed', 'phone_challenge_unavailable', 'missing_session'].includes(error.code))
+    return 'unavailable';
+  return null;
 }

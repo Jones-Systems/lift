@@ -229,9 +229,8 @@ export type BodySlotContext = FeatureSlotContext;
 export type IdentityPorts = {
   apple?: (guard?: AuthAttemptGuard) => Promise<unknown>;
   google?: (guard?: AuthAttemptGuard) => Promise<unknown>;
-  /** Construct an attempt for one current auth flow; default native binding uses async cryptographic bytes. */
+  /** Construct a disposable attempt that fences session issuance with the supplied auth guard. */
   phoneFactory?: (guard: AuthAttemptGuard) => PhoneAuthPort & { dispose(): void };
-  phone?: PhoneAuthPort;
 };
 
 export type PhoneChallenge = { challengeId: string; phoneNumber: string; status: string; expiresAt: string; resendAfter: string };

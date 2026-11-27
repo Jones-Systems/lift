@@ -4,7 +4,7 @@ import type { IdentityPorts, PhoneAuthPort } from '../features/contract';
 /** Root lifecycle fence; construction is inert and phone secrets exist only after an explicit action. */
 export function createAuthSession(api: FormTransport, identity: IdentityPorts = {}) {
   let active = false, epoch = 0;
-  let attempt: (PhoneAuthPort & { dispose?: () => void }) | null = null;
+  let attempt: (PhoneAuthPort & { dispose(): void }) | null = null;
   const guard = (): AuthAttemptGuard => {
     const generation = epoch;
     return { isCurrent: () => active && generation === epoch };
@@ -15,7 +15,7 @@ export function createAuthSession(api: FormTransport, identity: IdentityPorts = 
     epoch++;
     const previous = attempt;
     attempt = null;
-    previous?.dispose?.();
+    previous?.dispose();
   };
   async function run<T>(operation: (fence: AuthAttemptGuard) => Promise<T>): Promise<T> {
     const fence = guard();
@@ -32,7 +32,7 @@ export function createAuthSession(api: FormTransport, identity: IdentityPorts = 
   }
   const phoneAttempt = () => {
     if (!active) throw changed();
-    if (!attempt) attempt = identity.phoneFactory?.(guard()) ?? identity.phone ?? null;
+    if (!attempt) attempt = identity.phoneFactory?.(guard()) ?? null;
     if (!attempt) throw new ApiError(501, 'phone_unavailable', 'Phone sign-in is unavailable.');
     return attempt;
   };
@@ -46,7 +46,7 @@ export function createAuthSession(api: FormTransport, identity: IdentityPorts = 
     deactivate() { active = false; invalidate(); },
     invalidate,
     isActive: () => active,
-    phone: identity.phoneFactory || identity.phone ? phone : undefined,
+    phone: identity.phoneFactory ? phone : undefined,
     signIn: (email: string, password: string) => run(fence => api.signIn(email, password, fence)),
     signUp: (name: string, email: string, password: string) => run(fence => api.signUp(name, email, password, fence)),
     identity: (provider: 'apple' | 'google') => run(fence => {

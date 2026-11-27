@@ -44,7 +44,7 @@ class BreadthTests(unittest.TestCase):
         contract = breadth.selection(ROOT)
         manifest = json.loads((ROOT / breadth.MANIFEST).read_text())
         discovered, hosted = contract["discovered_test_files"], contract["existing_hosted_test_files"]
-        self.assertEqual(len(discovered), 313)
+        self.assertEqual(len(discovered), 314)
         self.assertEqual(len(hosted), 76)
         self.assertEqual(sum(len(g["files"]) for g in contract["blocked_groups"]), 32)
         self.assertFalse(contract["all_coverage_available"])
@@ -64,6 +64,7 @@ class BreadthTests(unittest.TestCase):
         self.assertEqual(len(selected["app-breadth"]["test_sources"]), 80)
         self.assertIn("src/api/tests/phone-signin.test.cjs", selected["app-breadth"]["argv"])
         self.assertNotIn("scripts/test-api-transport.cjs", selected["app-breadth"]["argv"])
+        self.assertIn("tests/renderer/phone-recovery.test.tsx", selected["app-renderer"]["argv"])
         self.assertIn("tests/voice/portable-session.test.mjs", selected["website"]["argv"])
         self.assertEqual(selected["adapter-unit"]["argv"], ["node", "--test", "--test-reporter=tap",
                          "--test-concurrency=1", "tests/adapter.test.mjs", "tests/domain-ports.test.mjs",
