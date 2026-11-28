@@ -922,7 +922,7 @@ def consume(args):
             device = create_simulator(name=name, cwd=scratch, env=env, manifest=manifest)
             run(['xcrun', 'simctl', 'boot', device], cwd=scratch, env=env, log=output / 'simulator-boot.log')
             run(['xcrun', 'simctl', 'bootstatus', device, '-b'], cwd=scratch, env=env,
-                log=output / 'simulator-bootstatus.log', timeout=180)
+                log=output / 'simulator-bootstatus.log', timeout=420)
             run(['xcrun', 'simctl', 'install', device, str(built)], cwd=scratch, env=env,
                 log=output / 'simulator-install.log')
             stage(manifest, 'journeys')
